@@ -73,6 +73,29 @@ R.I.T.U.A.L. follows a structured ritualistic workflow:
   - Write manifest updates and release locks
   - Clean exit with proper resource cleanup
 
+## Setup & Configuration
+
+### Environment Configuration
+
+Create environment configuration files:
+
+• **Copy `.env.example` to `.env`**
+• **Configure R2 storage credentials**
+
+Required environment variables:
+- `R2_ACCOUNT_ID` - Cloudflare R2 Account ID
+- `R2_ACCESS_KEY_ID` - Cloudflare R2 Access Key ID  
+- `R2_SECRET_ACCESS_KEY` - Cloudflare R2 Secret Access Key
+- `R2_BUCKET_NAME` - R2 Bucket Name
+
+### Quick Start
+
+1. Clone repository
+2. Copy `.env.example` to `.env`
+3. Fill in R2 credentials
+4. Run `go mod tidy`
+5. Execute `go run cmd/cli/main.go`
+
 ## Development & Quality Assurance
 
 ### CI/CD Pipeline
