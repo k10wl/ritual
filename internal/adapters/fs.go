@@ -2,7 +2,9 @@ package adapters
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"ritual/internal/core/ports"
@@ -222,7 +224,7 @@ func (f *FSRepository) Copy(ctx context.Context, sourceKey string, destKey strin
 			}
 		}
 		if err != nil {
-			if err.Error() == "EOF" {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			return fmt.Errorf("failed to read from source file %s: %w", sourceKey, err)
