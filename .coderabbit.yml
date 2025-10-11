@@ -45,9 +45,3 @@ reviews:
     - "!**/generated/**"
     - "!**/vendor/**"
     - "!**/node_modules/**"
-
-
-# Top-level chat configuration
-chat:
-  enabled: true
-
