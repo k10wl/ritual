@@ -1,6 +1,7 @@
 package mocks
 
 import (
+	"context"
 	"ritual/internal/core/ports"
 	"testing"
 )
@@ -17,14 +18,14 @@ func TestMockStorageRepository(t *testing.T) {
 	testData := []byte("test-data")
 
 	mockStorage := mock.(*MockStorageRepository)
-	mockStorage.GetFunc = func(key string) ([]byte, error) {
+	mockStorage.GetFunc = func(ctx context.Context, key string) ([]byte, error) {
 		if key != testKey {
 			t.Errorf("Expected key %s, got %s", testKey, key)
 		}
 		return testData, nil
 	}
 
-	result, err := storage.Get(testKey)
+	result, err := storage.Get(context.Background(), testKey)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -32,7 +33,7 @@ func TestMockStorageRepository(t *testing.T) {
 		t.Errorf("Expected %s, got %s", string(testData), string(result))
 	}
 
-	mockStorage.PutFunc = func(key string, data []byte) error {
+	mockStorage.PutFunc = func(ctx context.Context, key string, data []byte) error {
 		if key != testKey {
 			t.Errorf("Expected key %s, got %s", testKey, key)
 		}
@@ -42,28 +43,28 @@ func TestMockStorageRepository(t *testing.T) {
 		return nil
 	}
 
-	err = storage.Put(testKey, testData)
+	err = storage.Put(context.Background(), testKey, testData)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	mockStorage.DeleteFunc = func(key string) error {
+	mockStorage.DeleteFunc = func(ctx context.Context, key string) error {
 		if key != testKey {
 			t.Errorf("Expected key %s, got %s", testKey, key)
 		}
 		return nil
 	}
 
-	err = storage.Delete(testKey)
+	err = storage.Delete(context.Background(), testKey)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	mockStorage.ListFunc = func(prefix string) ([]string, error) {
+	mockStorage.ListFunc = func(ctx context.Context, prefix string) ([]string, error) {
 		return []string{"key1", "key2"}, nil
 	}
 
-	keys, err := storage.List("prefix")
+	keys, err := storage.List(context.Background(), "prefix")
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
