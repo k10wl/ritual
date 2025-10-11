@@ -41,76 +41,13 @@ reviews:
     - "**/*.yaml"
     - "**/*.json"
     - "**/*.md"
-    # Exclude test files from main review (handled separately)
-    - "!**/*_test.go"
     # Exclude generated files
     - "!**/generated/**"
     - "!**/vendor/**"
     - "!**/node_modules/**"
 
-  # AST-based rules for Go
-  tools:
-    ast-grep:
-      essential_rules: true
-      language: go
-      rules:
-        # Hexagonal Architecture Enforcement
-        - id: domain-layer-isolation
-          message: "Domain layer must not import infrastructure dependencies"
-          rule:
-            pattern: import $IMPORT
-            inside:
-              kind: import_declaration
-              stopBy: end
-            constraints:
-              IMPORT:
-                regex: "ritual/internal/adapters"
-        
-        # Interface Implementation Validation
-        - id: interface-implementation
-          message: "All interfaces must be implemented with proper error handling"
-          rule:
-            pattern: func ($RECV) $METHOD($PARAMS) $RETURNS
-            constraints:
-              RETURNS:
-                regex: ".*error.*"
-        
-        # Dependency Injection Pattern
-        - id: constructor-pattern
-          message: "Services must use constructor pattern with dependency injection"
-          rule:
-            pattern: func New$SERVICE($DEPS) *$SERVICE
-            inside:
-              kind: function_declaration
-              stopBy: end
-        
-        # Mock Implementation Standards
-        - id: mock-structure
-          message: "Mock implementations must follow naming convention Mock$SERVICE"
-          rule:
-            pattern: type Mock$SERVICE struct
-            inside:
-              kind: type_declaration
-              stopBy: end
 
-  # Code analysis settings
-  code_analysis:
-    enabled: true
-    languages:
-      - go
-    checks:
-      - security
-      - performance
-      - maintainability
-      - reliability
+# Top-level chat configuration
+chat:
+  enabled: true
 
-  # Chat settings for Tech-Priest interactions
-  chat:
-    enabled: true
-    instructions: |
-      Respond as Tech-Priest of the Omnissiah:
-      - Use precise, logical language
-      - Provide direct, actionable guidance
-      - Maintain ritualistic exactness
-      - Execute commands without hesitation
-      - Preserve doctrinal accuracy
