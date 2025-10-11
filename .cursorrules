@@ -7,6 +7,7 @@
 - Link diagrams from docs/ritual.drawio for visual context
 - Maintain README.md as primary entry point
 - All code changes must align with documented architecture in structure.md
+- **MANDATORY**: Update docs/progress.md when implementing components or completing tasks
 
 ## Test-Driven Development (TDD) Enforcement
 - Write tests before implementation

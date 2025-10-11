@@ -291,4 +291,20 @@ func NewR2Repository(client *s3.Client, bucket string) *R2Repository {
 - **State Management** - Mocks maintain realistic state for testing complex scenarios
 - **Testify Integration** - Use testify/mock for mock implementations and testify/assert for assertions
 
+## Documentation Requirements
+- Each component must have GoDoc comments
+- Architecture decisions must be documented
+- API contracts must be specified
+- Error handling strategies documented
+- **Always reference @structure.md for architectural context and component relationships**
+- Update structure.md when adding new components or changing architecture
+- **AI must update progress tracking in docs/progress.md when implementing components**
+
+## Structure.md Authority
+- **@structure.md is the authoritative source for project structure**
+- All architectural decisions must align with structure.md definitions
+- When in doubt about component placement or naming, consult structure.md first
+- Structure.md contains detailed examples and implementation patterns
+- Any structural changes require updating both code and structure.md documentation
+
 This structure ensures R.I.T.U.A.L. maintains clean architecture while supporting the complex requirements of Minecraft server orchestration, manifest management, and distributed storage synchronization.
