@@ -23,12 +23,10 @@ func TestNewArchiveService(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NewArchiveService()
+			got := NewArchiveService()
 			if tt.wantErr {
-				assert.Error(t, err)
 				assert.Nil(t, got)
 			} else {
-				assert.NoError(t, err)
 				assert.NotNil(t, got)
 			}
 		})
@@ -54,8 +52,7 @@ func TestArchiveService_Archive(t *testing.T) {
 	err = os.WriteFile(testSubFile, []byte("sub content"), 0644)
 	require.NoError(t, err)
 
-	archiver, err := NewArchiveService()
-	require.NoError(t, err)
+	archiver := NewArchiveService()
 
 	tests := []struct {
 		name        string
@@ -128,8 +125,7 @@ func TestArchiveService_Unarchive(t *testing.T) {
 	extractDir := filepath.Join(tempDir, "extracted")
 
 	// Create a valid zip file for testing using the archiver service
-	testArchiver, err := NewArchiveService()
-	require.NoError(t, err)
+	testArchiver := NewArchiveService()
 
 	// Create test content to archive
 	testContentDir := filepath.Join(tempDir, "test_content")
@@ -144,8 +140,7 @@ func TestArchiveService_Unarchive(t *testing.T) {
 	err = testArchiver.Archive(context.Background(), testContentDir, archivePath)
 	require.NoError(t, err)
 
-	archiver, err := NewArchiveService()
-	require.NoError(t, err)
+	archiver := NewArchiveService()
 
 	tests := []struct {
 		name        string
@@ -226,8 +221,7 @@ func TestArchiveService_Archive_Integration(t *testing.T) {
 	err = os.WriteFile(testFile2, []byte("content2"), 0644)
 	require.NoError(t, err)
 
-	archiver, err := NewArchiveService()
-	require.NoError(t, err)
+	archiver := NewArchiveService()
 
 	// Archive the directory
 	archivePath := filepath.Join(tempDir, "test.zip")

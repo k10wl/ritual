@@ -236,6 +236,32 @@ func (f *FSRepository) Copy(ctx context.Context, sourceKey string, destKey strin
 
 // copyDirectory recursively copies a directory and its contents
 func (f *FSRepository) copyDirectory(ctx context.Context, sourceDir string, destDir string) error {
+	// Defensive precondition checks
+	if ctx == nil {
+		return fmt.Errorf("context cannot be nil")
+	}
+	if f == nil {
+		return fmt.Errorf("filesystem repository receiver cannot be nil")
+	}
+	if f.root == nil {
+		return fmt.Errorf("filesystem root cannot be nil")
+	}
+	if sourceDir == "" {
+		return fmt.Errorf("source directory path cannot be empty")
+	}
+	if destDir == "" {
+		return fmt.Errorf("destination directory path cannot be empty")
+	}
+
+	// Verify source directory exists and is a directory
+	sourceInfo, err := f.root.Stat(sourceDir)
+	if err != nil {
+		return fmt.Errorf("failed to stat source directory %s: %w", sourceDir, err)
+	}
+	if !sourceInfo.IsDir() {
+		return fmt.Errorf("source path %s is not a directory", sourceDir)
+	}
+
 	// Create destination directory (ignore if already exists)
 	if err := f.root.MkdirAll(destDir, 0755); err != nil {
 		return fmt.Errorf("failed to create destination directory %s: %w", destDir, err)

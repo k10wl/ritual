@@ -14,15 +14,8 @@ import (
 type ArchiveService struct{}
 
 // NewArchiveService creates a new ArchiveService instance
-func NewArchiveService() (*ArchiveService, error) {
-	archiver := &ArchiveService{}
-
-	// Postcondition assertion (NASA JPL Rule 2)
-	if archiver == nil {
-		return nil, fmt.Errorf("archive service initialization failed")
-	}
-
-	return archiver, nil
+func NewArchiveService() *ArchiveService {
+	return &ArchiveService{}
 }
 
 // Archive compresses source to destination
@@ -60,51 +53,7 @@ func (a *ArchiveService) Archive(ctx context.Context, source string, destination
 
 	// Walk through source directory
 	err = filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Create relative path for archive
-		relPath, err := filepath.Rel(source, path)
-		if err != nil {
-			return err
-		}
-
-		// Skip root directory
-		if relPath == "." {
-			return nil
-		}
-
-		// Create zip file header
-		header, err := zip.FileInfoHeader(info)
-		if err != nil {
-			return err
-		}
-
-		// Set archive path
-		header.Name = strings.ReplaceAll(relPath, "\\", "/")
-
-		// Handle directories
-		if info.IsDir() {
-			header.Name += "/"
-			_, err = zipWriter.CreateHeader(header)
-			return err
-		}
-
-		// Handle files
-		writer, err := zipWriter.CreateHeader(header)
-		if err != nil {
-			return err
-		}
-
-		file, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-
-		_, err = io.Copy(writer, file)
-		return err
+		return a.archivePath(path, info, zipWriter, source)
 	})
 
 	if err != nil {
@@ -112,6 +61,52 @@ func (a *ArchiveService) Archive(ctx context.Context, source string, destination
 	}
 
 	return nil
+}
+
+// archivePath processes a single file or directory during archiving
+func (a *ArchiveService) archivePath(path string, info os.FileInfo, zipWriter *zip.Writer, source string) error {
+
+	// Create relative path for archive
+	relPath, err := filepath.Rel(source, path)
+	if err != nil {
+		return err
+	}
+
+	// Skip root directory
+	if relPath == "." {
+		return nil
+	}
+
+	// Create zip file header
+	header, err := zip.FileInfoHeader(info)
+	if err != nil {
+		return err
+	}
+
+	// Set archive path
+	header.Name = strings.ReplaceAll(relPath, "\\", "/")
+
+	// Handle directories
+	if info.IsDir() {
+		header.Name += "/"
+		_, err = zipWriter.CreateHeader(header)
+		return err
+	}
+
+	// Handle files
+	writer, err := zipWriter.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(writer, file)
+	file.Close()
+	return err
 }
 
 // Unarchive extracts archive to destination

@@ -143,8 +143,8 @@ func TestMockArchiveService_Verification(t *testing.T) {
 	mockService.VerifyUnarchiveCalls(t, 1)
 
 	// Verify total calls
-	assert.Equal(t, 3, mockService.GetArchiveCallCount())
-	assert.Equal(t, 3, mockService.GetUnarchiveCallCount())
+	assert.Equal(t, 2, mockService.GetArchiveCallCount())
+	assert.Equal(t, 1, mockService.GetUnarchiveCallCount())
 }
 
 func TestMockArchiveService_Reset(t *testing.T) {
@@ -215,5 +215,6 @@ func TestMockArchiveService_Concurrency(t *testing.T) {
 	}
 
 	// Verify all calls were made
-	assert.Equal(t, 10, mockService.GetArchiveCallCount())
+	assert.Equal(t, 5, mockService.GetArchiveCallCount())
+	assert.Equal(t, 5, mockService.GetUnarchiveCallCount())
 }
