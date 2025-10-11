@@ -4,6 +4,8 @@ import (
 	"errors"
 	"ritual/internal/core/ports"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestMockServerRunner_ImplementsInterface(t *testing.T) {
@@ -14,23 +16,18 @@ func TestMockServerRunner_Run(t *testing.T) {
 	mock := NewMockServerRunner()
 
 	err := mock.Run()
-	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
-	}
+	assert.NoError(t, err)
 }
 
 func TestMockServerRunner_RunWithError(t *testing.T) {
 	mockRunner, ok := NewMockServerRunner().(*MockServerRunner)
-	if !ok {
-		t.Fatalf("Failed to cast NewMockServerRunner() to *MockServerRunner")
-	}
+	assert.True(t, ok, "Failed to cast NewMockServerRunner() to *MockServerRunner")
+
 	expectedErr := errors.New("test error")
 	mockRunner.RunFunc = func() error {
 		return expectedErr
 	}
 
 	err := mockRunner.Run()
-	if err != expectedErr {
-		t.Errorf("Expected error %v, got %v", expectedErr, err)
-	}
+	assert.Equal(t, expectedErr, err)
 }

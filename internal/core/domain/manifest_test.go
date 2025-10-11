@@ -3,6 +3,8 @@ package domain
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestManifest_IsLocked(t *testing.T) {
@@ -30,9 +32,7 @@ func TestManifest_IsLocked(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tt.manifest.IsLocked()
-			if result != tt.expected {
-				t.Errorf("IsLocked() = %v, expected %v", result, tt.expected)
-			}
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -47,18 +47,9 @@ func TestManifest_Lock(t *testing.T) {
 	lockBy := "PC123__1640995200"
 	manifest.Lock(lockBy)
 
-	if manifest.LockedBy != lockBy {
-		t.Errorf("Lock() set LockedBy = %v, expected %v", manifest.LockedBy, lockBy)
-	}
-
-	if manifest.UpdatedAt.IsZero() {
-		t.Error("Lock() should update UpdatedAt timestamp")
-	}
-
-	// Check that UpdatedAt was updated to a more recent time
-	if manifest.UpdatedAt.Before(time.Now().Add(-time.Minute)) {
-		t.Error("UpdatedAt should be set to current time")
-	}
+	assert.Equal(t, lockBy, manifest.LockedBy)
+	assert.False(t, manifest.UpdatedAt.IsZero(), "Lock() should update UpdatedAt timestamp")
+	assert.True(t, manifest.UpdatedAt.After(time.Now().Add(-time.Minute)), "UpdatedAt should be set to current time")
 }
 
 func TestManifest_Unlock(t *testing.T) {
@@ -69,18 +60,9 @@ func TestManifest_Unlock(t *testing.T) {
 
 	manifest.Unlock()
 
-	if manifest.LockedBy != "" {
-		t.Errorf("Unlock() should clear LockedBy, got %v", manifest.LockedBy)
-	}
-
-	if manifest.UpdatedAt.IsZero() {
-		t.Error("Unlock() should update UpdatedAt timestamp")
-	}
-
-	// Check that UpdatedAt was updated to a more recent time
-	if manifest.UpdatedAt.Before(time.Now().Add(-time.Minute)) {
-		t.Error("UpdatedAt should be set to current time")
-	}
+	assert.Empty(t, manifest.LockedBy, "Unlock() should clear LockedBy")
+	assert.False(t, manifest.UpdatedAt.IsZero(), "Unlock() should update UpdatedAt timestamp")
+	assert.True(t, manifest.UpdatedAt.After(time.Now().Add(-time.Minute)), "UpdatedAt should be set to current time")
 }
 
 func TestManifest_AddWorld(t *testing.T) {
@@ -96,22 +78,10 @@ func TestManifest_AddWorld(t *testing.T) {
 
 	manifest.AddWorld(world)
 
-	if len(manifest.StoredWorlds) != 1 {
-		t.Errorf("AddWorld() should add 1 world, got %d", len(manifest.StoredWorlds))
-	}
-
-	if manifest.StoredWorlds[0].URI != world.URI {
-		t.Errorf("AddWorld() URI = %v, expected %v", manifest.StoredWorlds[0].URI, world.URI)
-	}
-
-	if manifest.UpdatedAt.IsZero() {
-		t.Error("AddWorld() should update UpdatedAt timestamp")
-	}
-
-	// Check that UpdatedAt was updated to a more recent time
-	if manifest.UpdatedAt.Before(time.Now().Add(-time.Minute)) {
-		t.Error("UpdatedAt should be set to current time")
-	}
+	assert.Len(t, manifest.StoredWorlds, 1, "AddWorld() should add 1 world")
+	assert.Equal(t, world.URI, manifest.StoredWorlds[0].URI)
+	assert.False(t, manifest.UpdatedAt.IsZero(), "AddWorld() should update UpdatedAt timestamp")
+	assert.True(t, manifest.UpdatedAt.After(time.Now().Add(-time.Minute)), "UpdatedAt should be set to current time")
 }
 
 func TestManifest_GetLatestWorld(t *testing.T) {
@@ -165,20 +135,12 @@ func TestManifest_GetLatestWorld(t *testing.T) {
 			result := tt.manifest.GetLatestWorld()
 
 			if tt.expected == nil {
-				if result != nil {
-					t.Errorf("GetLatestWorld() = %v, expected nil", result)
-				}
+				assert.Nil(t, result)
 				return
 			}
 
-			if result == nil {
-				t.Error("GetLatestWorld() returned nil, expected a world")
-				return
-			}
-
-			if result.URI != tt.expected.URI {
-				t.Errorf("GetLatestWorld() URI = %v, expected %v", result.URI, tt.expected.URI)
-			}
+			assert.NotNil(t, result, "GetLatestWorld() returned nil, expected a world")
+			assert.Equal(t, tt.expected.URI, result.URI)
 		})
 	}
 }
