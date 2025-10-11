@@ -83,11 +83,37 @@ func (f *FSRepository) Put(ctx context.Context, key string, data []byte) error {
 
 // Delete removes data by key from filesystem
 func (f *FSRepository) Delete(ctx context.Context, key string) error {
-	if err := f.root.Remove(key); err != nil {
+	// Check if key is a directory by trying to open it
+	file, err := f.root.Open(key)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("key not found: %s", key)
 		}
-		return fmt.Errorf("failed to delete file %s: %w", key, err)
+		return fmt.Errorf("failed to open %s: %w", key, err)
+	}
+	defer file.Close()
+
+	// Check if it's a directory
+	stat, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat %s: %w", key, err)
+	}
+
+	if stat.IsDir() {
+		// For directories, we need to recursively delete contents
+		// Since os.Root doesn't have RemoveAll, we'll use standard os.RemoveAll
+		fullPath := filepath.Join(f.root.Name(), key)
+		if err := os.RemoveAll(fullPath); err != nil {
+			return fmt.Errorf("failed to delete directory %s: %w", key, err)
+		}
+	} else {
+		// For files, use the existing Remove method
+		if err := f.root.Remove(key); err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("key not found: %s", key)
+			}
+			return fmt.Errorf("failed to delete file %s: %w", key, err)
+		}
 	}
 
 	return nil

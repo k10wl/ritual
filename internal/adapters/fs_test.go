@@ -96,6 +96,28 @@ func TestFSRepository_Delete(t *testing.T) {
 		err := repo.Delete(ctx, "nonexistent/key")
 		assert.Error(t, err, "Expected error for deleting nonexistent key")
 	})
+
+	t.Run("delete folder", func(t *testing.T) {
+		// Create folder with files
+		err := repo.Put(ctx, "folder/file1.txt", []byte("file1"))
+		assert.NoError(t, err)
+		err = repo.Put(ctx, "folder/file2.txt", []byte("file2"))
+		assert.NoError(t, err)
+		err = repo.Put(ctx, "folder/subfolder/file3.txt", []byte("file3"))
+		assert.NoError(t, err)
+
+		// Delete entire folder
+		err = repo.Delete(ctx, "folder")
+		assert.NoError(t, err)
+
+		// Verify folder and all contents deleted
+		_, err = repo.Get(ctx, "folder/file1.txt")
+		assert.Error(t, err, "Folder file1 should be deleted")
+		_, err = repo.Get(ctx, "folder/file2.txt")
+		assert.Error(t, err, "Folder file2 should be deleted")
+		_, err = repo.Get(ctx, "folder/subfolder/file3.txt")
+		assert.Error(t, err, "Folder subfolder file3 should be deleted")
+	})
 }
 
 func TestFSRepository_List(t *testing.T) {
