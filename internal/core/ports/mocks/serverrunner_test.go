@@ -20,13 +20,16 @@ func TestMockServerRunner_Run(t *testing.T) {
 }
 
 func TestMockServerRunner_RunWithError(t *testing.T) {
-	mock := NewMockServerRunner().(*MockServerRunner)
+	mockRunner, ok := NewMockServerRunner().(*MockServerRunner)
+	if !ok {
+		t.Fatalf("Failed to cast NewMockServerRunner() to *MockServerRunner")
+	}
 	expectedErr := errors.New("test error")
-	mock.RunFunc = func() error {
+	mockRunner.RunFunc = func() error {
 		return expectedErr
 	}
 
-	err := mock.Run()
+	err := mockRunner.Run()
 	if err != expectedErr {
 		t.Errorf("Expected error %v, got %v", expectedErr, err)
 	}
