@@ -23,12 +23,16 @@
 - [x] Add defensive validation compliance
 - [x] Implement comprehensive error handling for validation operations
 - [x] Add service dependency injection
-- [ ] Implement `ArchiveService`
-- [ ] Create `ArchiveService` tests
+- [x] Implement `ArchiveService`
+- [x] Create `ArchiveService` tests
 - [x] Add `Copy` method to `StorageRepository` interface
 - [x] Implement `Copy` method in `FSRepository` and `R2Repository`
 - [x] Create `ArchiveService` mock with comprehensive tests
 - [x] Update documentation for archive service integration
+- [x] Complete ArchiveService implementation with zip compression/extraction
+- [x] Add ArchiveService interface to ports.go
+- [x] Implement comprehensive test coverage for ArchiveService
+- [x] Create MockArchiveService with advanced verification methods
 
 # >>> We are here
 
