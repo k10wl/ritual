@@ -72,3 +72,14 @@ R.I.T.U.A.L. follows a structured ritualistic workflow:
   - Store updated local manifest
   - Write manifest updates and release locks
   - Clean exit with proper resource cleanup
+
+## Development & Quality Assurance
+
+### CI/CD Pipeline
+
+The project uses GitHub Actions workflow:
+
+• **Test Pipeline** - Runs on Windows with Go 1.25
+
+Configuration files:
+- `.github/workflows/ci.yml` - GitHub Actions workflow
