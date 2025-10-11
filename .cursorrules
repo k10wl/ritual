@@ -2,10 +2,11 @@
 # Replicate Instances, Track Updates, Archive Legacy
 
 ## Documentation Integration
+- **PRIMARY REFERENCE**: Always consult @structure.md for complete project structure and architecture
 - Reference docs/overview.md for system architecture
 - Link diagrams from docs/ritual.drawio for visual context
 - Maintain README.md as primary entry point
-- All code changes must align with documented architecture
+- All code changes must align with documented architecture in structure.md
 
 ## Test-Driven Development (TDD) Enforcement
 - Write tests before implementation
@@ -22,18 +23,13 @@
 - Adapters: Implementations of ports
 
 ## Component Structure
-```
-internal/
-├── domain/           # Core business entities
-│   ├── molfar/      # Orchestration engine
-│   ├── librarian/   # Manifest management
-│   └── validator/   # Validation system
-├── application/      # Use cases and services
-├── infrastructure/   # External adapters
-│   ├── storage/     # Storage abstraction
-│   └── minecraft/   # Server integration
-└── ports/           # Interface definitions
-```
+**See @structure.md for complete directory structure and detailed component descriptions**
+
+Key components per structure.md:
+- **Core Domain Layer** (`internal/core/domain/`): manifest.go, server.go, world.go
+- **Ports Layer** (`internal/core/ports/`): ports.go with all interfaces
+- **Services Layer** (`internal/core/services/`): molfar.go, librarian.go, validator.go
+- **Adapters Layer** (`internal/adapters/`): cli.go, fs.go, r2.go, minecraft.go
 
 ## Coding Standards
 - Use dependency injection
@@ -43,10 +39,15 @@ internal/
 - Mock external dependencies in tests
 
 ## File Naming Conventions
-- Domain entities: `entity.go`
-- Use cases: `usecase.go`
-- Ports: `port.go`
-- Adapters: `adapter.go`
+**Follow conventions defined in @structure.md**
+
+Per structure.md guidelines:
+- Use concise names: `fs.go` not `filesystem.go`
+- Technology-specific: `r2.go`, `minecraft.go`
+- Avoid underscores: Use camelCase for Go conventions
+- Domain entities: `manifest.go`, `server.go`, `world.go`
+- Services: `molfar.go`, `librarian.go`, `validator.go`
+- Adapters: `cli.go`, `fs.go`, `r2.go`, `minecraft.go`
 - Tests: `entity_test.go`
 
 ## Prohibited Patterns
@@ -67,3 +68,12 @@ internal/
 - Architecture decisions must be documented
 - API contracts must be specified
 - Error handling strategies documented
+- **Always reference @structure.md for architectural context and component relationships**
+- Update structure.md when adding new components or changing architecture
+
+## Structure.md Authority
+- **@structure.md is the authoritative source for project structure**
+- All architectural decisions must align with structure.md definitions
+- When in doubt about component placement or naming, consult structure.md first
+- Structure.md contains detailed examples and implementation patterns
+- Any structural changes require updating both code and structure.md documentation
