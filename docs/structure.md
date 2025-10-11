@@ -33,11 +33,14 @@ ritual/
     │   ├── cli.go               # CLI command handler
     │   ├── fs.go                # Local filesystem storage adapter
     │   ├── r2.go                # Cloudflare R2 storage adapter
-    │   └── serverrunner.go      # Server execution adapter
+    │   ├── serverrunner.go      # Server execution adapter
+    │   └── commandexecutor.go   # Command execution adapter
     └── core/
         ├── domain/
         │   ├── manifest.go      # Manifest entity
         │   ├── manifest_test.go # Manifest entity tests
+        │   ├── server.go        # Server entity
+        │   ├── server_test.go   # Server entity tests
         │   ├── world.go         # World entity
         │   └── world_test.go    # World entity tests
         ├── ports/
@@ -54,9 +57,11 @@ ritual/
         │       ├── serverrunner.go     # Mock ServerRunner implementation
         │       └── serverrunner_test.go # ServerRunner mock tests
         └── services/
-            ├── molfar.go        # Main orchestration service
+            ├── archive.go       # Archive management service
+            ├── archive_test.go  # ArchiveService tests
             ├── librarian.go     # Manifest management service
             ├── librarian_test.go # LibrarianService tests
+            ├── molfar.go        # Main orchestration service
             ├── validator.go     # Validation service
             └── validator_test.go # ValidatorService tests
 ```
@@ -68,6 +73,7 @@ ritual/
 Contains the core business entities:
 
 - **`manifest.go`** - Central manifest tracking instance/worlds versions, locks, and metadata
+- **`server.go`** - Server configuration entity with address parsing and validation
 - **`world.go`** - World data entity with URI validation and timestamp tracking
 
 #### Domain Entity Examples
@@ -281,16 +287,27 @@ func NewR2Repository(client *s3.Client, bucket string) *R2Repository {
 
 // internal/adapters/serverrunner.go
 type ServerRunner struct {
-    address string
-    memory  int
+    homedir         string
+    commandExecutor ports.CommandExecutor
 }
 
-func NewServerRunner(address string, memory int) *ServerRunner {
-    return &ServerRunner{address: address, memory: memory}
+func NewServerRunner(homedir string, commandExecutor ports.CommandExecutor) (*ServerRunner, error) {
+    if homedir == "" {
+        return nil, fmt.Errorf("homedir cannot be empty")
+    }
+    if commandExecutor == nil {
+        return nil, fmt.Errorf("command executor cannot be nil")
+    }
+    return &ServerRunner{
+        homedir:         homedir,
+        commandExecutor: commandExecutor,
+    }, nil
 }
 
-func (s *ServerRunner) Run() error {
-    // Execute server process at address with specified memory
+func (s *ServerRunner) Run(server *domain.Server) error {
+    // Execute Minecraft server process using command executor
+    // Validates server configuration and executes server.bat
+    // Returns error if server.bat not found or execution fails
 }
 ```
 

@@ -37,7 +37,15 @@
 # >>> We are here
 
 ### Sprint 3: Adapters Layer (2 weeks)
-- [ ] Implement `ServerRunner`
+- [x] Implement `ServerRunner`
+- [x] Create `Server` domain entity
+- [x] Implement `ServerRunnerService`
+- [x] Create `ServerRunnerAdapter`
+- [x] Add comprehensive test coverage
+- [x] Create mock implementations
+- [x] Implement `CommandExecutor` adapter
+- [x] Add `CommandExecutor` mock implementation
+- [x] Complete ServerRunner integration with CommandExecutor
 - [ ] Enhance CLI adapter
 - [ ] Complete storage adapter methods
 - [ ] Create adapter tests

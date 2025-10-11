@@ -1,24 +1,23 @@
 package mocks
 
-import "ritual/internal/core/ports"
+import (
+	"ritual/internal/core/domain"
 
-// MockServerRunner is a mock implementation of ServerRunner for testing
+	"github.com/stretchr/testify/mock"
+)
+
+// MockServerRunner is a mock implementation of ServerRunner interface
 type MockServerRunner struct {
-	RunFunc func() error
+	mock.Mock
 }
 
-// Compile-time check to ensure MockServerRunner implements ports.ServerRunner
-var _ ports.ServerRunner = (*MockServerRunner)(nil)
-
-// NewMockServerRunner creates a new mock server runner
-func NewMockServerRunner() ports.ServerRunner {
+// NewMockServerRunner creates a new MockServerRunner instance
+func NewMockServerRunner() *MockServerRunner {
 	return &MockServerRunner{}
 }
 
-// Run executes the server process
-func (m *MockServerRunner) Run() error {
-	if m.RunFunc != nil {
-		return m.RunFunc()
-	}
-	return nil
+// Run mocks the Run method
+func (m *MockServerRunner) Run(server *domain.Server) error {
+	args := m.Called(server)
+	return args.Error(0)
 }
