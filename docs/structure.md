@@ -1,5 +1,15 @@
 # R.I.T.U.A.L. Project Structure
 
+## Project Import Structure
+
+All project imports follow the pattern: `ritual/...`
+
+Example imports:
+- `ritual/internal/core/domain` - Domain entities
+- `ritual/internal/core/ports` - Interface definitions  
+- `ritual/internal/core/services` - Business logic services
+- `ritual/internal/adapters` - External system integrations
+
 ## Overview
 
 R.I.T.U.A.L. follows hexagonal architecture principles to achieve clean separation of concerns, testability, and maintainability. The structure is organized around the core domain of Minecraft server orchestration with mystical naming conventions.
@@ -27,8 +37,20 @@ ritual/
     └── core/
         ├── domain/
         │   ├── manifest.go      # Manifest entity
+        │   └── manifest_test.go # Manifest entity tests
         ├── ports/
-        │   └── ports.go         # Interface definitions
+        │   ├── ports.go         # Interface definitions
+        │   └── mocks/           # Mock implementations for testing
+        │       ├── storage.go       # Mock StorageRepository implementation
+        │       ├── storage_test.go  # StorageRepository mock tests
+        │       ├── molfar.go        # Mock MolfarService implementation
+        │       ├── molfar_test.go   # MolfarService mock tests
+        │       ├── librarian.go     # Mock LibrarianService implementation
+        │       ├── librarian_test.go # LibrarianService mock tests
+        │       ├── validator.go     # Mock ValidatorService implementation
+        │       ├── validator_test.go # ValidatorService mock tests
+        │       ├── minecraft.go     # Mock MinecraftAdapter implementation
+        │       └── minecraft_test.go # MinecraftAdapter mock tests
         └── services/
             ├── molfar.go        # Main orchestration service
             ├── librarian.go     # Manifest management service
@@ -66,13 +88,13 @@ func (m *Manifest) IsLocked() bool {
 
 func (m *Manifest) Lock(lockBy string) {
     m.LockedBy = lockBy
-    m.LastUpdated = time.Now()
+    m.UpdatedAt = time.Now()
 }
 ```
 
 ### Ports Layer (`internal/core/ports/`)
 
-Defines interfaces for external dependencies:
+Defines interfaces for external dependencies and provides comprehensive mock implementations for testing:
 
 - **`ports.go`** - All service and repository interfaces
   - `StorageRepository` - Storage operations interface
@@ -80,6 +102,18 @@ Defines interfaces for external dependencies:
   - `LibrarianService` - Manifest management interface
   - `ValidatorService` - Validation interface
   - `MinecraftAdapter` - Server control interface
+
+- **Mock Implementations** (`mocks/` folder) - Complete mock implementations with test coverage
+  - `storage.go` - MockStorageRepository with comprehensive testing utilities
+  - `molfar.go` - MockMolfarService with status tracking and error simulation
+  - `librarian.go` - MockLibrarianService with manifest synchronization logic
+  - `validator.go` - MockValidatorService with configurable validation results
+  - `minecraft.go` - MockMinecraftAdapter with server lifecycle simulation
+
+- **Test Coverage** (`mocks/` folder) - Each mock includes comprehensive test suites
+  - `*_test.go` files provide 100% test coverage for all mock functionality
+  - Tests cover success cases, error conditions, concurrency, and edge cases
+  - Mock utilities enable isolated testing of dependent modules
 
 #### Port Interface Examples
 
@@ -106,8 +140,8 @@ type LibrarianService interface {
 }
 
 type ValidatorService interface {
-    ValidateManifest(manifest *domain.Manifest) error
-    ValidateServer(server *domain.Server) error
+    CheckInstance(local *domain.Manifest, remote *domain.Manifest) error
+    CheckWorld(local *domain.Manifest, remote *domain.Manifest) error
     CheckLock(local *domain.Manifest, remote *domain.Manifest) error
 }
 ```
@@ -246,5 +280,13 @@ func NewR2Repository(client *s3.Client, bucket string) *R2Repository {
 - Mock external dependencies through interfaces
 - Test business logic in isolation
 - Integration tests for adapter implementations
+
+### Mock Testing Strategy
+- **Comprehensive Mock Coverage** - All ports have fully tested mock implementations
+- **Isolated Development** - Modules can be developed and tested independently using mocks
+- **Error Simulation** - Mocks support configurable error conditions for robust testing
+- **Concurrency Testing** - All mocks are thread-safe and support concurrent testing
+- **Call Verification** - Mocks track method calls for verification and debugging
+- **State Management** - Mocks maintain realistic state for testing complex scenarios
 
 This structure ensures R.I.T.U.A.L. maintains clean architecture while supporting the complex requirements of Minecraft server orchestration, manifest management, and distributed storage synchronization.

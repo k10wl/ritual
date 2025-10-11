@@ -1,5 +1,15 @@
 # R.I.T.U.A.L. Project Overview
 
+## Project Import Structure
+
+All project imports follow the pattern: `ritual/...`
+
+Example imports:
+- `ritual/internal/core/domain` - Domain entities
+- `ritual/internal/core/ports` - Interface definitions  
+- `ritual/internal/core/services` - Business logic services
+- `ritual/internal/adapters` - External system integrations
+
 ## High-Level Architecture
 
 ### Core Components
