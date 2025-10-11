@@ -71,7 +71,7 @@ R.I.T.U.A.L. follows a structured ritualistic workflow:
 • **Termination Phase**
   - Store updated local manifest
   - Write manifest updates and release locks
-  - Clean exit with proper resource cleanup
+- Clean exit with proper resource cleanup
 
 ## Development & Quality Assurance
 
