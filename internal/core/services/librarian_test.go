@@ -238,6 +238,9 @@ func TestLibrarianService_SaveLocalManifest(t *testing.T) {
 
 			if tt.expectedError {
 				assert.Error(t, err)
+				if tt.manifest == nil {
+					assert.Equal(t, 0, callCount)
+				}
 			} else {
 				assert.NoError(t, err)
 				assert.Equal(t, 1, callCount)
@@ -306,6 +309,9 @@ func TestLibrarianService_SaveRemoteManifest(t *testing.T) {
 
 			if tt.expectedError {
 				assert.Error(t, err)
+				if tt.manifest == nil {
+					assert.Equal(t, 0, callCount)
+				}
 			} else {
 				assert.NoError(t, err)
 				assert.Equal(t, 1, callCount)
