@@ -280,6 +280,7 @@ func NewR2Repository(client *s3.Client, bucket string) *R2Repository {
 - Mock external dependencies through interfaces
 - Test business logic in isolation
 - Integration tests for adapter implementations
+- Use testify framework for assertions and mocking
 
 ### Mock Testing Strategy
 - **Comprehensive Mock Coverage** - All ports have fully tested mock implementations
@@ -288,5 +289,6 @@ func NewR2Repository(client *s3.Client, bucket string) *R2Repository {
 - **Concurrency Testing** - All mocks are thread-safe and support concurrent testing
 - **Call Verification** - Mocks track method calls for verification and debugging
 - **State Management** - Mocks maintain realistic state for testing complex scenarios
+- **Testify Integration** - Use testify/mock for mock implementations and testify/assert for assertions
 
 This structure ensures R.I.T.U.A.L. maintains clean architecture while supporting the complex requirements of Minecraft server orchestration, manifest management, and distributed storage synchronization.
