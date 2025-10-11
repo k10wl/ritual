@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"ritual/internal/core/domain"
+	"ritual/internal/core/ports"
 	"ritual/internal/core/ports/mocks"
 	"testing"
 	"time"
@@ -78,9 +79,11 @@ func TestLibrarianService_GetLocalManifest(t *testing.T) {
 				return nil, errors.New("unexpected key")
 			}
 
-			service := NewLibrarianService(mockStorage, nil)
+			service, err := NewLibrarianService(mockStorage, mockStorage)
+			assert.NoError(t, err)
 
-			result, err := service.GetLocalManifest(context.Background())
+			result, err2 := service.GetLocalManifest(context.Background())
+			err = err2
 
 			if tt.expectedError {
 				assert.Error(t, err)
@@ -155,9 +158,11 @@ func TestLibrarianService_GetRemoteManifest(t *testing.T) {
 				return nil, errors.New("unexpected key")
 			}
 
-			service := NewLibrarianService(nil, mockStorage)
+			service, err := NewLibrarianService(mockStorage, mockStorage)
+			assert.NoError(t, err)
 
-			result, err := service.GetRemoteManifest(context.Background())
+			result, err2 := service.GetRemoteManifest(context.Background())
+			err = err2
 
 			if tt.expectedError {
 				assert.Error(t, err)
@@ -226,9 +231,10 @@ func TestLibrarianService_SaveLocalManifest(t *testing.T) {
 				return tt.storageError
 			}
 
-			service := NewLibrarianService(mockStorage, nil)
+			service, err := NewLibrarianService(mockStorage, mockStorage)
+			assert.NoError(t, err)
 
-			err := service.SaveLocalManifest(context.Background(), tt.manifest)
+			err = service.SaveLocalManifest(context.Background(), tt.manifest)
 
 			if tt.expectedError {
 				assert.Error(t, err)
@@ -293,9 +299,10 @@ func TestLibrarianService_SaveRemoteManifest(t *testing.T) {
 				return tt.storageError
 			}
 
-			service := NewLibrarianService(nil, mockStorage)
+			service, err := NewLibrarianService(mockStorage, mockStorage)
+			assert.NoError(t, err)
 
-			err := service.SaveRemoteManifest(context.Background(), tt.manifest)
+			err = service.SaveRemoteManifest(context.Background(), tt.manifest)
 
 			if tt.expectedError {
 				assert.Error(t, err)
@@ -307,11 +314,49 @@ func TestLibrarianService_SaveRemoteManifest(t *testing.T) {
 	}
 }
 
+func TestNewLibrarianService_NilParameters(t *testing.T) {
+	tests := []struct {
+		name          string
+		localStorage  ports.StorageRepository
+		remoteStorage ports.StorageRepository
+		expectedError string
+	}{
+		{
+			name:          "nil local storage",
+			localStorage:  nil,
+			remoteStorage: mocks.NewMockStorageRepository(),
+			expectedError: "localStorage cannot be nil",
+		},
+		{
+			name:          "nil remote storage",
+			localStorage:  mocks.NewMockStorageRepository(),
+			remoteStorage: nil,
+			expectedError: "remoteStorage cannot be nil",
+		},
+		{
+			name:          "both nil",
+			localStorage:  nil,
+			remoteStorage: nil,
+			expectedError: "localStorage cannot be nil",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service, err := NewLibrarianService(tt.localStorage, tt.remoteStorage)
+			assert.Error(t, err)
+			assert.Nil(t, service)
+			assert.Contains(t, err.Error(), tt.expectedError)
+		})
+	}
+}
+
 func TestLibrarianService_Integration(t *testing.T) {
 	mockLocalStorage := mocks.NewMockStorageRepository().(*mocks.MockStorageRepository)
 	mockRemoteStorage := mocks.NewMockStorageRepository().(*mocks.MockStorageRepository)
 
-	service := NewLibrarianService(mockLocalStorage, mockRemoteStorage)
+	service, err := NewLibrarianService(mockLocalStorage, mockRemoteStorage)
+	assert.NoError(t, err)
 
 	manifest := &domain.Manifest{
 		Version:    "1.0.0",
@@ -353,7 +398,7 @@ func TestLibrarianService_Integration(t *testing.T) {
 		return json.Marshal(manifest)
 	}
 
-	err := service.SaveLocalManifest(context.Background(), manifest)
+	err = service.SaveLocalManifest(context.Background(), manifest)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, localCallCount)
 

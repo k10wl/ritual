@@ -21,15 +21,24 @@ type LibrarianService struct {
 }
 
 // NewLibrarianService creates a new LibrarianService instance
-func NewLibrarianService(localStorage ports.StorageRepository, remoteStorage ports.StorageRepository) *LibrarianService {
+func NewLibrarianService(localStorage ports.StorageRepository, remoteStorage ports.StorageRepository) (*LibrarianService, error) {
+	if localStorage == nil {
+		return nil, fmt.Errorf("localStorage cannot be nil")
+	}
+	if remoteStorage == nil {
+		return nil, fmt.Errorf("remoteStorage cannot be nil")
+	}
 	return &LibrarianService{
 		localStorage:  localStorage,
 		remoteStorage: remoteStorage,
-	}
+	}, nil
 }
 
 // GetLocalManifest retrieves the local manifest
 func (l *LibrarianService) GetLocalManifest(ctx context.Context) (*domain.Manifest, error) {
+	if l.localStorage == nil {
+		return nil, fmt.Errorf("localStorage repository is nil")
+	}
 	data, err := l.localStorage.Get(ctx, "manifest.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get local manifest: %w", err)
@@ -49,6 +58,9 @@ func (l *LibrarianService) GetLocalManifest(ctx context.Context) (*domain.Manife
 
 // GetRemoteManifest retrieves the remote manifest
 func (l *LibrarianService) GetRemoteManifest(ctx context.Context) (*domain.Manifest, error) {
+	if l.remoteStorage == nil {
+		return nil, fmt.Errorf("remoteStorage repository is nil")
+	}
 	data, err := l.remoteStorage.Get(ctx, "manifest.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get remote manifest: %w", err)
@@ -68,6 +80,9 @@ func (l *LibrarianService) GetRemoteManifest(ctx context.Context) (*domain.Manif
 
 // SaveLocalManifest stores the manifest locally
 func (l *LibrarianService) SaveLocalManifest(ctx context.Context, manifest *domain.Manifest) error {
+	if l.localStorage == nil {
+		return fmt.Errorf("localStorage repository is nil")
+	}
 	if manifest == nil {
 		return ErrNilManifest
 	}
@@ -86,6 +101,9 @@ func (l *LibrarianService) SaveLocalManifest(ctx context.Context, manifest *doma
 
 // SaveRemoteManifest stores the manifest remotely
 func (l *LibrarianService) SaveRemoteManifest(ctx context.Context, manifest *domain.Manifest) error {
+	if l.remoteStorage == nil {
+		return fmt.Errorf("remoteStorage repository is nil")
+	}
 	if manifest == nil {
 		return ErrNilManifest
 	}

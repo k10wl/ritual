@@ -20,6 +20,7 @@
 ### Sprint 2: Services Layer (2 weeks)
 - [x] Implement `LibrarianService`
 - [x] Create `LibrarianService` tests
+- [x] Add context parameter to LibrarianService operations
 - [ ] Implement `ValidatorService`
 - [ ] Add service dependency injection
 - [ ] Create service tests
