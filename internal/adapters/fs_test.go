@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -288,10 +289,7 @@ func TestFSRepository_BoundaryValues(t *testing.T) {
 	})
 
 	t.Run("very long key", func(t *testing.T) {
-		longKey := "long/" + string(make([]byte, 200))
-		for i := range longKey[5:] {
-			longKey = longKey[:5+i] + "a" + longKey[6+i:]
-		}
+		longKey := "long/" + strings.Repeat("a", 200)
 
 		data := []byte("long key test")
 		err := repo.Put(longKey, data)
