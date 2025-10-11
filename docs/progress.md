@@ -11,9 +11,8 @@
 # >>> We are here
 
 ### Sprint 1: Foundation Layer (1 week)
-- [ ] Implement `server.go` entity
-- [ ] Implement `world.go` entity  
-- [ ] Add `MinecraftAdapter` interface
+- [ ] Implement `world.go` entity
+- [ ] Add `ServerRunner` interface
 - [ ] Complete mock implementations
 - [ ] Create domain entity tests
 
@@ -26,7 +25,7 @@
 - [ ] Create service tests
 
 ### Sprint 3: Adapters Layer (2 weeks)
-- [ ] Implement `MinecraftAdapter`
+- [ ] Implement `ServerRunner`
 - [ ] Enhance CLI adapter
 - [ ] Complete storage adapter methods
 - [ ] Create adapter tests

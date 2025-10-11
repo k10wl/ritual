@@ -33,7 +33,7 @@ ritual/
     │   ├── cli.go               # CLI command handler
     │   ├── fs.go                # Local filesystem storage adapter
     │   ├── r2.go                # Cloudflare R2 storage adapter
-    │   └── minecraft.go         # Minecraft server integration adapter
+    │   └── serverrunner.go      # Server execution adapter
     └── core/
         ├── domain/
         │   ├── manifest.go      # Manifest entity
@@ -49,8 +49,8 @@ ritual/
         │       ├── librarian_test.go # LibrarianService mock tests
         │       ├── validator.go     # Mock ValidatorService implementation
         │       ├── validator_test.go # ValidatorService mock tests
-        │       ├── minecraft.go     # Mock MinecraftAdapter implementation
-        │       └── minecraft_test.go # MinecraftAdapter mock tests
+        │       ├── serverrunner.go     # Mock ServerRunner implementation
+        │       └── serverrunner_test.go # ServerRunner mock tests
         └── services/
             ├── molfar.go        # Main orchestration service
             ├── librarian.go     # Manifest management service
@@ -101,14 +101,14 @@ Defines interfaces for external dependencies and provides comprehensive mock imp
   - `MolfarService` - Main orchestration interface
   - `LibrarianService` - Manifest management interface
   - `ValidatorService` - Validation interface
-  - `MinecraftAdapter` - Server control interface
+  - `ServerRunner` - Server execution interface
 
 - **Mock Implementations** (`mocks/` folder) - Complete mock implementations with test coverage
   - `storage.go` - MockStorageRepository with comprehensive testing utilities
   - `molfar.go` - MockMolfarService with status tracking and error simulation
   - `librarian.go` - MockLibrarianService with manifest synchronization logic
   - `validator.go` - MockValidatorService with configurable validation results
-  - `minecraft.go` - MockMinecraftAdapter with server lifecycle simulation
+  - `serverrunner.go` - MockServerRunner with server execution simulation
 
 - **Test Coverage** (`mocks/` folder) - Each mock includes comprehensive test suites
   - `*_test.go` files provide 100% test coverage for all mock functionality
@@ -208,7 +208,7 @@ Implements external system integrations:
 - **`cli.go`** - Command-line interface handler
 - **`fs.go`** - Local filesystem storage implementation
 - **`r2.go`** - Cloudflare R2 cloud storage implementation
-- **`minecraft.go`** - Minecraft server control implementation
+- **`serverrunner.go`** - Server execution implementation
 
 #### Adapter Implementation Examples
 
@@ -233,6 +233,20 @@ func NewR2Repository(client *s3.Client, bucket string) *R2Repository {
         client: client,
         bucket: bucket,
     }
+}
+
+// internal/adapters/serverrunner.go
+type ServerRunner struct {
+    address string
+    memory  int
+}
+
+func NewServerRunner(address string, memory int) *ServerRunner {
+    return &ServerRunner{address: address, memory: memory}
+}
+
+func (s *ServerRunner) Run() error {
+    // Execute server process at address with specified memory
 }
 ```
 

@@ -62,3 +62,10 @@ type ValidatorService interface {
 	// CheckLock validates lock mechanism compliance
 	CheckLock(local *domain.Manifest, remote *domain.Manifest) error
 }
+
+// ServerRunner defines the server execution interface
+// ServerRunner handles the execution of Minecraft server processes
+type ServerRunner interface {
+	// Run executes the server process
+	Run() error
+}
