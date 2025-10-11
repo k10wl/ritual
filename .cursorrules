@@ -1,0 +1,69 @@
+# R.I.T.U.A.L. Cursor Rules
+# Replicate Instances, Track Updates, Archive Legacy
+
+## Documentation Integration
+- Reference docs/overview.md for system architecture
+- Link diagrams from docs/ritual.drawio for visual context
+- Maintain README.md as primary entry point
+- All code changes must align with documented architecture
+
+## Test-Driven Development (TDD) Enforcement
+- Write tests before implementation
+- Follow Red-Green-Refactor cycle
+- All public methods require unit tests
+- Integration tests for external dependencies
+- Test coverage minimum 80%
+
+## Hexagonal Architecture Patterns
+- Domain layer: Core business logic (Molfar, Librarian, Validator)
+- Application layer: Use cases and orchestration
+- Infrastructure layer: External adapters (Storage, Minecraft API)
+- Ports: Interfaces defining contracts
+- Adapters: Implementations of ports
+
+## Component Structure
+```
+internal/
+├── domain/           # Core business entities
+│   ├── molfar/      # Orchestration engine
+│   ├── librarian/   # Manifest management
+│   └── validator/   # Validation system
+├── application/      # Use cases and services
+├── infrastructure/   # External adapters
+│   ├── storage/     # Storage abstraction
+│   └── minecraft/   # Server integration
+└── ports/           # Interface definitions
+```
+
+## Coding Standards
+- Use dependency injection
+- Implement interfaces for all external dependencies
+- Separate concerns by layer
+- No direct external API calls in domain layer
+- Mock external dependencies in tests
+
+## File Naming Conventions
+- Domain entities: `entity.go`
+- Use cases: `usecase.go`
+- Ports: `port.go`
+- Adapters: `adapter.go`
+- Tests: `entity_test.go`
+
+## Prohibited Patterns
+- No if-else chains (use strategy pattern)
+- No direct external API calls in domain
+- No business logic in infrastructure layer
+- No dependencies from domain to infrastructure
+
+## Required Patterns
+- Repository pattern for data access
+- Service layer for business logic
+- Factory pattern for object creation
+- Observer pattern for events
+- Command pattern for operations
+
+## Documentation Requirements
+- Each component must have GoDoc comments
+- Architecture decisions must be documented
+- API contracts must be specified
+- Error handling strategies documented
