@@ -8,14 +8,13 @@
 - [x] Basic CLI `main.go` created
 - [x] Mock framework established
 
-# >>> We are here
-
 ### Sprint 1: Foundation Layer (1 week)
-- [ ] Implement `server.go` entity
-- [ ] Implement `world.go` entity  
-- [ ] Add `MinecraftAdapter` interface
-- [ ] Complete mock implementations
-- [ ] Create domain entity tests
+- [x] Implement `world.go` entity
+- [x] Add `ServerRunner` interface
+- [x] Complete mock implementations
+- [x] Create domain entity tests
+
+# >>> We are here
 
 ### Sprint 2: Services Layer (2 weeks)
 - [x] Implement `LibrarianService`
@@ -26,7 +25,7 @@
 - [ ] Create service tests
 
 ### Sprint 3: Adapters Layer (2 weeks)
-- [ ] Implement `MinecraftAdapter`
+- [ ] Implement `ServerRunner`
 - [ ] Enhance CLI adapter
 - [ ] Complete storage adapter methods
 - [ ] Create adapter tests

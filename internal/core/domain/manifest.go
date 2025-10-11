@@ -11,12 +11,6 @@ type Manifest struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-// World represents a world data entity
-type World struct {
-	URI       string    `json:"uri"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
 // IsLocked returns true if the manifest is currently locked
 func (m *Manifest) IsLocked() bool {
 	return m.LockedBy != ""
