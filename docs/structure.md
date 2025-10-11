@@ -27,8 +27,6 @@ ritual/
     └── core/
         ├── domain/
         │   ├── manifest.go      # Manifest entity
-        │   ├── server.go        # Minecraft server instance entity
-        │   └── world.go         # World data entity
         ├── ports/
         │   └── ports.go         # Interface definitions
         └── services/
