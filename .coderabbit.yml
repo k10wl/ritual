@@ -25,6 +25,9 @@ reviews:
         - Enforce interface contracts in ports layer
         - Validate dependency injection patterns
         - Ensure test coverage for all public methods
+        - **CRITICAL FAILURE**: Reject PR if docs/progress.md not updated with completed tasks
+        - **NO EXCEPTIONS**: Every component implementation MUST update progress tracking
+        - **ZERO TOLERANCE**: Progress tracking is sacred - no PR approval without it
         
         Go Standards:
         - Use concise naming: fs.go not filesystem.go
