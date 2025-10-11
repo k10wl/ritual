@@ -38,6 +38,9 @@ func NewLibrarianService(localStorage ports.StorageRepository, remoteStorage por
 
 // GetLocalManifest retrieves the local manifest
 func (l *LibrarianService) GetLocalManifest(ctx context.Context) (*domain.Manifest, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("context cannot be nil")
+	}
 	if l.localStorage == nil {
 		return nil, fmt.Errorf("localStorage repository is nil")
 	}
@@ -60,6 +63,9 @@ func (l *LibrarianService) GetLocalManifest(ctx context.Context) (*domain.Manife
 
 // GetRemoteManifest retrieves the remote manifest
 func (l *LibrarianService) GetRemoteManifest(ctx context.Context) (*domain.Manifest, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("context cannot be nil")
+	}
 	if l.remoteStorage == nil {
 		return nil, fmt.Errorf("remoteStorage repository is nil")
 	}
@@ -82,6 +88,9 @@ func (l *LibrarianService) GetRemoteManifest(ctx context.Context) (*domain.Manif
 
 // SaveLocalManifest stores the manifest locally
 func (l *LibrarianService) SaveLocalManifest(ctx context.Context, manifest *domain.Manifest) error {
+	if ctx == nil {
+		return fmt.Errorf("context cannot be nil")
+	}
 	if l.localStorage == nil {
 		return fmt.Errorf("localStorage repository is nil")
 	}
@@ -103,6 +112,9 @@ func (l *LibrarianService) SaveLocalManifest(ctx context.Context, manifest *doma
 
 // SaveRemoteManifest stores the manifest remotely
 func (l *LibrarianService) SaveRemoteManifest(ctx context.Context, manifest *domain.Manifest) error {
+	if ctx == nil {
+		return fmt.Errorf("context cannot be nil")
+	}
 	if l.remoteStorage == nil {
 		return fmt.Errorf("remoteStorage repository is nil")
 	}
