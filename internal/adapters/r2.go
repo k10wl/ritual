@@ -19,6 +19,7 @@ type S3Client interface {
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 	DeleteObject(ctx context.Context, params *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 	ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+	CopyObject(ctx context.Context, params *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error)
 }
 
 type R2Repository struct {
@@ -116,6 +117,43 @@ func (r *R2Repository) List(ctx context.Context, prefix string) ([]string, error
 	}
 
 	return keys, nil
+}
+
+// Copy copies data from source key to destination key
+func (r *R2Repository) Copy(ctx context.Context, sourceKey string, destKey string) error {
+	if ctx == nil {
+		return fmt.Errorf("context cannot be nil")
+	}
+	if r == nil {
+		return fmt.Errorf("R2 repository cannot be nil")
+	}
+	if sourceKey == "" {
+		return fmt.Errorf("source key cannot be empty")
+	}
+	if destKey == "" {
+		return fmt.Errorf("destination key cannot be empty")
+	}
+	if r.client == nil {
+		return fmt.Errorf("S3 client cannot be nil")
+	}
+	if r.bucket == "" {
+		return fmt.Errorf("bucket name cannot be empty")
+	}
+
+	// Create source URI for copy operation
+	sourceURI := fmt.Sprintf("%s/%s", r.bucket, sourceKey)
+
+	// Copy object within same bucket
+	_, err := r.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(r.bucket),
+		Key:        aws.String(destKey),
+		CopySource: aws.String(sourceURI),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to copy object from %s to %s: %w", sourceKey, destKey, err)
+	}
+
+	return nil
 }
 
 var _ ports.StorageRepository = (*R2Repository)(nil)

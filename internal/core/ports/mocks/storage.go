@@ -11,6 +11,7 @@ type MockStorageRepository struct {
 	PutFunc    func(ctx context.Context, key string, data []byte) error
 	DeleteFunc func(ctx context.Context, key string) error
 	ListFunc   func(ctx context.Context, prefix string) ([]string, error)
+	CopyFunc   func(ctx context.Context, sourceKey string, destKey string) error
 }
 
 // NewMockStorageRepository creates a new mock storage repository
@@ -48,4 +49,12 @@ func (m *MockStorageRepository) List(ctx context.Context, prefix string) ([]stri
 		return m.ListFunc(ctx, prefix)
 	}
 	return []string{}, nil
+}
+
+// Copy copies data from source key to destination key
+func (m *MockStorageRepository) Copy(ctx context.Context, sourceKey string, destKey string) error {
+	if m.CopyFunc != nil {
+		return m.CopyFunc(ctx, sourceKey, destKey)
+	}
+	return nil
 }

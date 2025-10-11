@@ -4,11 +4,11 @@ import "time"
 
 // Manifest represents the central manifest tracking instance/worlds versions, locks, and metadata
 type Manifest struct {
-	Version      string    `json:"version"`
-	LockedBy     string    `json:"locked_by"` // {PC name}__{UNIX timestamp on 0 meridian}, or empty string if not locked
-	InstanceID   string    `json:"instance_id"`
-	StoredWorlds []World   `json:"worlds"` // queue of latest worlds
-	UpdatedAt    time.Time `json:"updated_at"`
+	RitualVersion   string    `json:"ritual_version"`
+	LockedBy        string    `json:"locked_by"` // {PC name}__{UNIX timestamp on 0 meridian}, or empty string if not locked
+	InstanceVersion string    `json:"instance_version"`
+	StoredWorlds    []World   `json:"worlds"` // queue of latest worlds
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // IsLocked returns true if the manifest is currently locked

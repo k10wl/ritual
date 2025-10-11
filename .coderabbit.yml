@@ -49,6 +49,8 @@ reviews:
         - Implement proper error handling
         - Maintain clean interfaces
         - Apply dependency injection
+        - **PROHIBITED**: No godoc comments required - silence documentation enforcement
+        - **ZERO TOLERANCE**: Reject any godoc-related suggestions or requirements
 
   path_filters:
     # Include Go source files

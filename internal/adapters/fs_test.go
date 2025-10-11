@@ -96,6 +96,28 @@ func TestFSRepository_Delete(t *testing.T) {
 		err := repo.Delete(ctx, "nonexistent/key")
 		assert.Error(t, err, "Expected error for deleting nonexistent key")
 	})
+
+	t.Run("delete folder", func(t *testing.T) {
+		// Create folder with files
+		err := repo.Put(ctx, "folder/file1.txt", []byte("file1"))
+		assert.NoError(t, err)
+		err = repo.Put(ctx, "folder/file2.txt", []byte("file2"))
+		assert.NoError(t, err)
+		err = repo.Put(ctx, "folder/subfolder/file3.txt", []byte("file3"))
+		assert.NoError(t, err)
+
+		// Delete entire folder
+		err = repo.Delete(ctx, "folder")
+		assert.NoError(t, err)
+
+		// Verify folder and all contents deleted
+		_, err = repo.Get(ctx, "folder/file1.txt")
+		assert.Error(t, err, "Folder file1 should be deleted")
+		_, err = repo.Get(ctx, "folder/file2.txt")
+		assert.Error(t, err, "Folder file2 should be deleted")
+		_, err = repo.Get(ctx, "folder/subfolder/file3.txt")
+		assert.Error(t, err, "Folder subfolder file3 should be deleted")
+	})
 }
 
 func TestFSRepository_List(t *testing.T) {
@@ -126,6 +148,154 @@ func TestFSRepository_List(t *testing.T) {
 		result, err := repo.List(ctx, "nonexistent")
 		assert.NoError(t, err)
 		assert.Len(t, result, 0, "Expected 0 keys")
+	})
+
+	t.Run("list includes directories", func(t *testing.T) {
+		// Create files and directories
+		err := repo.Put(ctx, "dir1/file1.txt", []byte("data1"))
+		assert.NoError(t, err)
+		err = repo.Put(ctx, "dir1/file2.txt", []byte("data2"))
+		assert.NoError(t, err)
+		err = repo.Put(ctx, "dir2/file3.txt", []byte("data3"))
+		assert.NoError(t, err)
+
+		result, err := repo.List(ctx, "")
+		assert.NoError(t, err)
+		assert.Contains(t, result, "dir1", "Expected dir1 in results")
+		assert.Contains(t, result, "dir2", "Expected dir2 in results")
+		assert.NotContains(t, result, "dir1/file1.txt", "Should not show nested files")
+		assert.NotContains(t, result, "dir1/file2.txt", "Should not show nested files")
+		assert.NotContains(t, result, "dir2/file3.txt", "Should not show nested files")
+	})
+}
+
+func TestFSRepository_Copy(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	repo, err := NewFSRepository(tempDir)
+	assert.NoError(t, err)
+	defer repo.Close()
+
+	t.Run("successful copy", func(t *testing.T) {
+		sourceKey := "source/file.txt"
+		destKey := "dest/copied.txt"
+		expectedData := []byte("test copy data")
+
+		err := repo.Put(ctx, sourceKey, expectedData)
+		assert.NoError(t, err)
+
+		err = repo.Copy(ctx, sourceKey, destKey)
+		assert.NoError(t, err)
+
+		copiedData, err := repo.Get(ctx, destKey)
+		assert.NoError(t, err)
+		assert.Equal(t, string(expectedData), string(copiedData))
+
+		originalData, err := repo.Get(ctx, sourceKey)
+		assert.NoError(t, err)
+		assert.Equal(t, string(expectedData), string(originalData))
+	})
+
+	t.Run("copy to nested directory", func(t *testing.T) {
+		sourceKey := "file.txt"
+		destKey := "deep/nested/path/copied.txt"
+		expectedData := []byte("nested copy data")
+
+		err := repo.Put(ctx, sourceKey, expectedData)
+		assert.NoError(t, err)
+
+		err = repo.Copy(ctx, sourceKey, destKey)
+		assert.NoError(t, err)
+
+		copiedData, err := repo.Get(ctx, destKey)
+		assert.NoError(t, err)
+		assert.Equal(t, string(expectedData), string(copiedData))
+	})
+
+	t.Run("copy nonexistent source", func(t *testing.T) {
+		err := repo.Copy(ctx, "nonexistent.txt", "dest.txt")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "source key not found")
+	})
+
+	t.Run("copy with empty source key", func(t *testing.T) {
+		err := repo.Copy(ctx, "", "dest.txt")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "source key cannot be empty")
+	})
+
+	t.Run("copy with empty dest key", func(t *testing.T) {
+		err := repo.Put(ctx, "source.txt", []byte("data"))
+		assert.NoError(t, err)
+
+		err = repo.Copy(ctx, "source.txt", "")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "destination key cannot be empty")
+	})
+
+	t.Run("copy with nil context", func(t *testing.T) {
+		err := repo.Copy(nil, "source.txt", "dest.txt")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "context cannot be nil")
+	})
+
+	t.Run("copy directory", func(t *testing.T) {
+		// Create source directory structure
+		err := repo.Put(ctx, "sourceDir/file1.txt", []byte("file1 content"))
+		assert.NoError(t, err)
+		err = repo.Put(ctx, "sourceDir/file2.txt", []byte("file2 content"))
+		assert.NoError(t, err)
+		err = repo.Put(ctx, "sourceDir/subdir/file3.txt", []byte("file3 content"))
+		assert.NoError(t, err)
+
+		// Copy directory
+		err = repo.Copy(ctx, "sourceDir", "destDir")
+		assert.NoError(t, err)
+
+		// Verify copied files
+		data1, err := repo.Get(ctx, "destDir/file1.txt")
+		assert.NoError(t, err)
+		assert.Equal(t, "file1 content", string(data1))
+
+		data2, err := repo.Get(ctx, "destDir/file2.txt")
+		assert.NoError(t, err)
+		assert.Equal(t, "file2 content", string(data2))
+
+		data3, err := repo.Get(ctx, "destDir/subdir/file3.txt")
+		assert.NoError(t, err)
+		assert.Equal(t, "file3 content", string(data3))
+
+		// Verify original files still exist
+		original1, err := repo.Get(ctx, "sourceDir/file1.txt")
+		assert.NoError(t, err)
+		assert.Equal(t, "file1 content", string(original1))
+	})
+
+	t.Run("copy nested directory structure", func(t *testing.T) {
+		// Create complex directory structure
+		err := repo.Put(ctx, "complex/a/b/file1.txt", []byte("level1"))
+		assert.NoError(t, err)
+		err = repo.Put(ctx, "complex/a/file2.txt", []byte("level2"))
+		assert.NoError(t, err)
+		err = repo.Put(ctx, "complex/c/file3.txt", []byte("level3"))
+		assert.NoError(t, err)
+
+		// Copy entire structure
+		err = repo.Copy(ctx, "complex", "backup")
+		assert.NoError(t, err)
+
+		// Verify all files copied
+		data1, err := repo.Get(ctx, "backup/a/b/file1.txt")
+		assert.NoError(t, err)
+		assert.Equal(t, "level1", string(data1))
+
+		data2, err := repo.Get(ctx, "backup/a/file2.txt")
+		assert.NoError(t, err)
+		assert.Equal(t, "level2", string(data2))
+
+		data3, err := repo.Get(ctx, "backup/c/file3.txt")
+		assert.NoError(t, err)
+		assert.Equal(t, "level3", string(data3))
 	})
 }
 

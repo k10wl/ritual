@@ -19,6 +19,9 @@ type StorageRepository interface {
 
 	// List returns all keys with the given prefix
 	List(ctx context.Context, prefix string) ([]string, error)
+
+	// Copy copies data from source key to destination key
+	Copy(ctx context.Context, sourceKey string, destKey string) error
 }
 
 // MolfarService defines the main orchestration interface
@@ -61,6 +64,16 @@ type ValidatorService interface {
 
 	// CheckLock validates lock mechanism compliance
 	CheckLock(local *domain.Manifest, remote *domain.Manifest) error
+}
+
+// ArchiveService defines the archive management interface
+// ArchiveService handles compression and extraction of data archives
+type ArchiveService interface {
+	// Archive compresses source to destination
+	Archive(ctx context.Context, source string, destination string) error
+
+	// Unarchive extracts archive to destination
+	Unarchive(ctx context.Context, archive string, destination string) error
 }
 
 // ServerRunner defines the server execution interface

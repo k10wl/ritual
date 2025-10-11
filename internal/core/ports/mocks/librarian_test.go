@@ -16,8 +16,8 @@ func TestMockLibrarianService(t *testing.T) {
 	}
 
 	testManifest := &domain.Manifest{
-		InstanceID: "test-instance",
-		Version:    "1.0.0",
+		InstanceVersion: "test-instance",
+		RitualVersion:   "1.0.0",
 	}
 
 	mockLibrarian := mock.(*MockLibrarianService)
@@ -29,8 +29,8 @@ func TestMockLibrarianService(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
-	if result.InstanceID != testManifest.InstanceID {
-		t.Errorf("Expected instance %s, got %s", testManifest.InstanceID, result.InstanceID)
+	if result.InstanceVersion != testManifest.InstanceVersion {
+		t.Errorf("Expected instance %s, got %s", testManifest.InstanceVersion, result.InstanceVersion)
 	}
 
 	mockLibrarian.GetRemoteManifestFunc = func(ctx context.Context) (*domain.Manifest, error) {
@@ -41,13 +41,13 @@ func TestMockLibrarianService(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
-	if result.InstanceID != testManifest.InstanceID {
-		t.Errorf("Expected instance %s, got %s", testManifest.InstanceID, result.InstanceID)
+	if result.InstanceVersion != testManifest.InstanceVersion {
+		t.Errorf("Expected instance %s, got %s", testManifest.InstanceVersion, result.InstanceVersion)
 	}
 
 	mockLibrarian.SaveLocalManifestFunc = func(ctx context.Context, manifest *domain.Manifest) error {
-		if manifest.InstanceID != testManifest.InstanceID {
-			t.Errorf("Expected instance %s, got %s", testManifest.InstanceID, manifest.InstanceID)
+		if manifest.InstanceVersion != testManifest.InstanceVersion {
+			t.Errorf("Expected instance %s, got %s", testManifest.InstanceVersion, manifest.InstanceVersion)
 		}
 		return nil
 	}
@@ -58,8 +58,8 @@ func TestMockLibrarianService(t *testing.T) {
 	}
 
 	mockLibrarian.SaveRemoteManifestFunc = func(ctx context.Context, manifest *domain.Manifest) error {
-		if manifest.InstanceID != testManifest.InstanceID {
-			t.Errorf("Expected instance %s, got %s", testManifest.InstanceID, manifest.InstanceID)
+		if manifest.InstanceVersion != testManifest.InstanceVersion {
+			t.Errorf("Expected instance %s, got %s", testManifest.InstanceVersion, manifest.InstanceVersion)
 		}
 		return nil
 	}

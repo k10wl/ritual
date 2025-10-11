@@ -39,9 +39,9 @@ func TestManifest_IsLocked(t *testing.T) {
 
 func TestManifest_Lock(t *testing.T) {
 	manifest := Manifest{
-		Version:    "1.0.0",
-		InstanceID: "test-instance",
-		UpdatedAt:  time.Now().Add(-time.Hour), // Set to past time
+		RitualVersion:   "1.0.0",
+		InstanceVersion: "test-instance",
+		UpdatedAt:       time.Now().Add(-time.Hour), // Set to past time
 	}
 
 	lockBy := "PC123__1640995200"
