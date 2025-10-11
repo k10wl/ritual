@@ -39,6 +39,11 @@ func (m *MockS3Client) ListObjectsV2(ctx context.Context, params *s3.ListObjects
 	return args.Get(0).(*s3.ListObjectsV2Output), args.Error(1)
 }
 
+func (m *MockS3Client) CopyObject(ctx context.Context, params *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	return args.Get(0).(*s3.CopyObjectOutput), args.Error(1)
+}
+
 func TestR2Repository_SuccessCases(t *testing.T) {
 	mockClient := new(MockS3Client)
 	repo := NewR2RepositoryWithClient(mockClient, "test-bucket")
@@ -99,6 +104,18 @@ func TestR2Repository_SuccessCases(t *testing.T) {
 		assert.Equal(t, expectedKeys, result)
 		mockClient.AssertExpectations(t)
 	})
+
+	t.Run("copy success", func(t *testing.T) {
+		sourceKey := "source-key"
+		destKey := "dest-key"
+
+		mockClient.On("CopyObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.CopyObjectOutput{}, nil)
+
+		err := repo.Copy(context.Background(), sourceKey, destKey)
+
+		assert.NoError(t, err)
+		mockClient.AssertExpectations(t)
+	})
 }
 
 func TestR2Repository_ErrorConditions(t *testing.T) {
@@ -153,6 +170,19 @@ func TestR2Repository_ErrorConditions(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("copy error", func(t *testing.T) {
+		sourceKey := "source-key"
+		destKey := "dest-key"
+		mockErr := errors.New("s3 copy error")
+
+		mockClient.On("CopyObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.CopyObjectOutput{}, mockErr)
+
+		err := repo.Copy(context.Background(), sourceKey, destKey)
+
+		assert.Error(t, err)
 		mockClient.AssertExpectations(t)
 	})
 }

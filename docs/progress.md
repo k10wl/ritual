@@ -23,6 +23,12 @@
 - [x] Add defensive validation compliance
 - [x] Implement comprehensive error handling for validation operations
 - [x] Add service dependency injection
+- [x] Implement `ArchiveService`
+- [x] Create `ArchiveService` tests
+- [x] Add `Copy` method to `StorageRepository` interface
+- [x] Implement `Copy` method in `FSRepository` and `R2Repository`
+- [x] Create `ArchiveService` mock with comprehensive tests
+- [x] Update documentation for archive service integration
 
 # >>> We are here
 

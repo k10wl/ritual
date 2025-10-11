@@ -116,6 +116,7 @@ Defines interfaces for external dependencies and provides comprehensive mock imp
   - `MolfarService` - Main orchestration interface
   - `LibrarianService` - Manifest management interface
   - `ValidatorService` - Validation interface
+  - `ArchiveService` - Archive management interface
   - `ServerRunner` - Server execution interface
 
 - **Mock Implementations** (`mocks/` folder) - Complete mock implementations with test coverage
@@ -123,6 +124,7 @@ Defines interfaces for external dependencies and provides comprehensive mock imp
   - `molfar.go` - MockMolfarService with status tracking and error simulation
   - `librarian.go` - MockLibrarianService with manifest synchronization logic
   - `validator.go` - MockValidatorService with configurable validation results
+  - `archive.go` - MockArchiveService with archive operation simulation
   - `serverrunner.go` - MockServerRunner with server execution simulation
 
 - **Test Coverage** (`mocks/` folder) - Each mock includes comprehensive test suites
@@ -139,6 +141,7 @@ type StorageRepository interface {
     Put(ctx context.Context, key string, data []byte) error
     Delete(ctx context.Context, key string) error
     List(ctx context.Context, prefix string) ([]string, error)
+    Copy(ctx context.Context, sourceKey string, destKey string) error
 }
 
 type MolfarService interface {
@@ -159,6 +162,11 @@ type ValidatorService interface {
     CheckWorld(local *domain.Manifest, remote *domain.Manifest) error
     CheckLock(local *domain.Manifest, remote *domain.Manifest) error
 }
+
+type ArchiveService interface {
+    Archive(ctx context.Context, source string, destination string) error
+    Unarchive(ctx context.Context, archive string, destination string) error
+}
 ```
 
 ### Services Layer (`internal/core/services/`)
@@ -168,6 +176,7 @@ Implements core business logic:
 - **`molfar.go`** - Central orchestration engine coordinating all operations
 - **`librarian.go`** - Manifest synchronization and management
 - **`validator.go`** - Instance integrity and conflict validation
+- **`archive.go`** - Archive compression and extraction operations
 
 #### Service Implementation Examples
 
@@ -320,9 +329,16 @@ func (s *ServerRunner) Run() error {
 - Implements CheckInstance, CheckWorld, and CheckLock operations
 - Provides comprehensive test coverage with testify framework
 
+### Archive (Archive Management)
+- Handles compression and extraction of data archives
+- Supports ZIP archive format for world/plugin backups
+- Manages archive lifecycle operations
+- Integrates with storage abstraction for remote archive operations
+
 ### Storage Abstraction
 - Unified interface for local (filesystem) and remote (R2) storage
 - Supports manifest, world data, and backup operations
+- Provides Copy operation for efficient data movement
 - Enables easy switching between storage backends
 
 ## Development Guidelines

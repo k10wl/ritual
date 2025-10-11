@@ -133,6 +133,69 @@ func (f *FSRepository) List(ctx context.Context, prefix string) ([]string, error
 	return keys, nil
 }
 
+// Copy copies data from source key to destination key
+func (f *FSRepository) Copy(ctx context.Context, sourceKey string, destKey string) error {
+	if ctx == nil {
+		return fmt.Errorf("context cannot be nil")
+	}
+	if f == nil {
+		return fmt.Errorf("filesystem repository cannot be nil")
+	}
+	if sourceKey == "" {
+		return fmt.Errorf("source key cannot be empty")
+	}
+	if destKey == "" {
+		return fmt.Errorf("destination key cannot be empty")
+	}
+	if f.root == nil {
+		return fmt.Errorf("root filesystem cannot be nil")
+	}
+
+	// Open source file
+	sourceFile, err := f.root.Open(sourceKey)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("source key not found: %s", sourceKey)
+		}
+		return fmt.Errorf("failed to open source file %s: %w", sourceKey, err)
+	}
+	defer sourceFile.Close()
+
+	// Create destination directory if needed
+	destDir := filepath.Dir(destKey)
+	if destDir != "." {
+		if err := f.root.MkdirAll(destDir, 0755); err != nil {
+			return fmt.Errorf("failed to create destination directory %s: %w", destDir, err)
+		}
+	}
+
+	// Create destination file
+	destFile, err := f.root.Create(destKey)
+	if err != nil {
+		return fmt.Errorf("failed to create destination file %s: %w", destKey, err)
+	}
+	defer destFile.Close()
+
+	// Copy file content
+	buf := make([]byte, 1024)
+	for {
+		n, err := sourceFile.Read(buf)
+		if n > 0 {
+			if _, writeErr := destFile.Write(buf[:n]); writeErr != nil {
+				return fmt.Errorf("failed to write to destination file %s: %w", destKey, writeErr)
+			}
+		}
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			return fmt.Errorf("failed to read from source file %s: %w", sourceKey, err)
+		}
+	}
+
+	return nil
+}
+
 // Close closes the root filesystem
 func (f *FSRepository) Close() error {
 	return f.root.Close()
