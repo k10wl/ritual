@@ -69,6 +69,10 @@ func parseAddress(address string) (string, int, error) {
 		return "", 0, fmt.Errorf("port cannot be empty")
 	}
 
+	if net.ParseIP(host) == nil {
+		return "", 0, fmt.Errorf("host must be a valid IP address, got: %s", host)
+	}
+
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		return "", 0, fmt.Errorf("invalid port format: %w", err)

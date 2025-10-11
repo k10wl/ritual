@@ -47,19 +47,23 @@ func TestNewServerRunner_NilExecutor(t *testing.T) {
 func TestServerRunner_Run(t *testing.T) {
 	tempDir := t.TempDir()
 	instanceDir := filepath.Join(tempDir, "instance")
-	os.MkdirAll(instanceDir, 0755)
+	err := os.MkdirAll(instanceDir, 0755)
+	assert.NoError(t, err)
 
 	batPath := filepath.Join(instanceDir, "server.bat")
-	os.WriteFile(batPath, []byte("echo server"), 0644)
+	err = os.WriteFile(batPath, []byte("echo server"), 0644)
+	assert.NoError(t, err)
 
 	expectedArgs := []string{"/C", "start", batPath, "127.0.0.1", "25565", "1024"}
 	mockExecutor := &MockCommandExecutor{}
 	mockExecutor.On("Execute", "cmd", expectedArgs, instanceDir).Return(nil)
 
-	runner, _ := NewServerRunner(tempDir, mockExecutor)
-	server, _ := domain.NewServer("127.0.0.1:25565", 1024)
+	runner, err := NewServerRunner(tempDir, mockExecutor)
+	assert.NoError(t, err)
+	server, err := domain.NewServer("127.0.0.1:25565", 1024)
+	assert.NoError(t, err)
 
-	err := runner.Run(server)
+	err = runner.Run(server)
 
 	assert.NoError(t, err)
 	mockExecutor.AssertExpectations(t)
@@ -67,9 +71,10 @@ func TestServerRunner_Run(t *testing.T) {
 
 func TestServerRunner_Run_NilRunner(t *testing.T) {
 	var runner *ServerRunner
-	server, _ := domain.NewServer("127.0.0.1:25565", 1024)
+	server, err := domain.NewServer("127.0.0.1:25565", 1024)
+	assert.NoError(t, err)
 
-	err := runner.Run(server)
+	err = runner.Run(server)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "server runner cannot be nil")
@@ -77,9 +82,10 @@ func TestServerRunner_Run_NilRunner(t *testing.T) {
 
 func TestServerRunner_Run_NilServer(t *testing.T) {
 	mockExecutor := &MockCommandExecutor{}
-	runner, _ := NewServerRunner("/test", mockExecutor)
+	runner, err := NewServerRunner("/test", mockExecutor)
+	assert.NoError(t, err)
 
-	err := runner.Run(nil)
+	err = runner.Run(nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "server cannot be nil")
@@ -89,10 +95,12 @@ func TestServerRunner_Run_BatFileNotFound(t *testing.T) {
 	tempDir := t.TempDir()
 	mockExecutor := &MockCommandExecutor{}
 
-	runner, _ := NewServerRunner(tempDir, mockExecutor)
-	server, _ := domain.NewServer("127.0.0.1:25565", 1024)
+	runner, err := NewServerRunner(tempDir, mockExecutor)
+	assert.NoError(t, err)
+	server, err := domain.NewServer("127.0.0.1:25565", 1024)
+	assert.NoError(t, err)
 
-	err := runner.Run(server)
+	err = runner.Run(server)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "server.bat not found")
@@ -101,20 +109,24 @@ func TestServerRunner_Run_BatFileNotFound(t *testing.T) {
 func TestServerRunner_Run_CommandExecutionError(t *testing.T) {
 	tempDir := t.TempDir()
 	instanceDir := filepath.Join(tempDir, "instance")
-	os.MkdirAll(instanceDir, 0755)
+	err := os.MkdirAll(instanceDir, 0755)
+	assert.NoError(t, err)
 
 	batPath := filepath.Join(instanceDir, "server.bat")
-	os.WriteFile(batPath, []byte("echo server"), 0644)
+	err = os.WriteFile(batPath, []byte("echo server"), 0644)
+	assert.NoError(t, err)
 
 	expectedArgs := []string{"/C", "start", batPath, "127.0.0.1", "25565", "1024"}
 	mockExecutor := &MockCommandExecutor{}
 	expectedError := errors.New("command failed")
 	mockExecutor.On("Execute", "cmd", expectedArgs, instanceDir).Return(expectedError)
 
-	runner, _ := NewServerRunner(tempDir, mockExecutor)
-	server, _ := domain.NewServer("127.0.0.1:25565", 1024)
+	runner, err := NewServerRunner(tempDir, mockExecutor)
+	assert.NoError(t, err)
+	server, err := domain.NewServer("127.0.0.1:25565", 1024)
+	assert.NoError(t, err)
 
-	err := runner.Run(server)
+	err = runner.Run(server)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to start server")

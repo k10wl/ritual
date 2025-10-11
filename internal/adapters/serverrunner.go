@@ -41,12 +41,18 @@ func (s *ServerRunner) Run(server *domain.Server) error {
 	if server == nil {
 		return fmt.Errorf("server cannot be nil")
 	}
+	if server.BatPath == "" {
+		return fmt.Errorf("server bat path cannot be empty")
+	}
 
 	instancePath := filepath.Join(s.homedir, "instance")
 	batPath := filepath.Join(instancePath, server.BatPath)
 
-	if _, err := os.Stat(batPath); os.IsNotExist(err) {
-		return fmt.Errorf("server.bat not found at %s", batPath)
+	if _, err := os.Stat(batPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("server.bat not found at %s", batPath)
+		}
+		return fmt.Errorf("failed to check server.bat at %s: %w", batPath, err)
 	}
 
 	args := []string{

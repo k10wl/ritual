@@ -49,6 +49,24 @@ func TestNewServer(t *testing.T) {
 			memory:    1024,
 			wantError: true,
 		},
+		{
+			name:      "hostname instead of IP",
+			address:   "localhost:25565",
+			memory:    1024,
+			wantError: true,
+		},
+		{
+			name:      "domain name instead of IP",
+			address:   "example.com:25565",
+			memory:    1024,
+			wantError: true,
+		},
+		{
+			name:      "IPv6 address",
+			address:   "[::1]:25565",
+			memory:    1024,
+			wantError: false,
+		},
 	}
 
 	for _, tt := range tests {
