@@ -29,8 +29,7 @@ func NewLibrarianService(localStorage ports.StorageRepository, remoteStorage por
 }
 
 // GetLocalManifest retrieves the local manifest
-func (l *LibrarianService) GetLocalManifest() (*domain.Manifest, error) {
-	ctx := context.Background()
+func (l *LibrarianService) GetLocalManifest(ctx context.Context) (*domain.Manifest, error) {
 	data, err := l.localStorage.Get(ctx, "manifest.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get local manifest: %w", err)
@@ -49,8 +48,7 @@ func (l *LibrarianService) GetLocalManifest() (*domain.Manifest, error) {
 }
 
 // GetRemoteManifest retrieves the remote manifest
-func (l *LibrarianService) GetRemoteManifest() (*domain.Manifest, error) {
-	ctx := context.Background()
+func (l *LibrarianService) GetRemoteManifest(ctx context.Context) (*domain.Manifest, error) {
 	data, err := l.remoteStorage.Get(ctx, "manifest.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get remote manifest: %w", err)
@@ -69,12 +67,11 @@ func (l *LibrarianService) GetRemoteManifest() (*domain.Manifest, error) {
 }
 
 // SaveLocalManifest stores the manifest locally
-func (l *LibrarianService) SaveLocalManifest(manifest *domain.Manifest) error {
+func (l *LibrarianService) SaveLocalManifest(ctx context.Context, manifest *domain.Manifest) error {
 	if manifest == nil {
 		return ErrNilManifest
 	}
 
-	ctx := context.Background()
 	data, err := json.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("failed to marshal manifest: %w", err)
@@ -88,12 +85,11 @@ func (l *LibrarianService) SaveLocalManifest(manifest *domain.Manifest) error {
 }
 
 // SaveRemoteManifest stores the manifest remotely
-func (l *LibrarianService) SaveRemoteManifest(manifest *domain.Manifest) error {
+func (l *LibrarianService) SaveRemoteManifest(ctx context.Context, manifest *domain.Manifest) error {
 	if manifest == nil {
 		return ErrNilManifest
 	}
 
-	ctx := context.Background()
 	data, err := json.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("failed to marshal manifest: %w", err)

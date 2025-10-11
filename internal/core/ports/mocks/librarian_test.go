@@ -1,6 +1,7 @@
 package mocks
 
 import (
+	"context"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"testing"
@@ -20,11 +21,11 @@ func TestMockLibrarianService(t *testing.T) {
 	}
 
 	mockLibrarian := mock.(*MockLibrarianService)
-	mockLibrarian.GetLocalManifestFunc = func() (*domain.Manifest, error) {
+	mockLibrarian.GetLocalManifestFunc = func(ctx context.Context) (*domain.Manifest, error) {
 		return testManifest, nil
 	}
 
-	result, err := librarian.GetLocalManifest()
+	result, err := librarian.GetLocalManifest(context.Background())
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -32,11 +33,11 @@ func TestMockLibrarianService(t *testing.T) {
 		t.Errorf("Expected instance %s, got %s", testManifest.InstanceID, result.InstanceID)
 	}
 
-	mockLibrarian.GetRemoteManifestFunc = func() (*domain.Manifest, error) {
+	mockLibrarian.GetRemoteManifestFunc = func(ctx context.Context) (*domain.Manifest, error) {
 		return testManifest, nil
 	}
 
-	result, err = librarian.GetRemoteManifest()
+	result, err = librarian.GetRemoteManifest(context.Background())
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -44,26 +45,26 @@ func TestMockLibrarianService(t *testing.T) {
 		t.Errorf("Expected instance %s, got %s", testManifest.InstanceID, result.InstanceID)
 	}
 
-	mockLibrarian.SaveLocalManifestFunc = func(manifest *domain.Manifest) error {
+	mockLibrarian.SaveLocalManifestFunc = func(ctx context.Context, manifest *domain.Manifest) error {
 		if manifest.InstanceID != testManifest.InstanceID {
 			t.Errorf("Expected instance %s, got %s", testManifest.InstanceID, manifest.InstanceID)
 		}
 		return nil
 	}
 
-	err = librarian.SaveLocalManifest(testManifest)
+	err = librarian.SaveLocalManifest(context.Background(), testManifest)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	mockLibrarian.SaveRemoteManifestFunc = func(manifest *domain.Manifest) error {
+	mockLibrarian.SaveRemoteManifestFunc = func(ctx context.Context, manifest *domain.Manifest) error {
 		if manifest.InstanceID != testManifest.InstanceID {
 			t.Errorf("Expected instance %s, got %s", testManifest.InstanceID, manifest.InstanceID)
 		}
 		return nil
 	}
 
-	err = librarian.SaveRemoteManifest(testManifest)
+	err = librarian.SaveRemoteManifest(context.Background(), testManifest)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}

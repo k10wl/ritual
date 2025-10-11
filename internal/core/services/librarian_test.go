@@ -80,7 +80,7 @@ func TestLibrarianService_GetLocalManifest(t *testing.T) {
 
 			service := NewLibrarianService(mockStorage, nil)
 
-			result, err := service.GetLocalManifest()
+			result, err := service.GetLocalManifest(context.Background())
 
 			if tt.expectedError {
 				assert.Error(t, err)
@@ -157,7 +157,7 @@ func TestLibrarianService_GetRemoteManifest(t *testing.T) {
 
 			service := NewLibrarianService(nil, mockStorage)
 
-			result, err := service.GetRemoteManifest()
+			result, err := service.GetRemoteManifest(context.Background())
 
 			if tt.expectedError {
 				assert.Error(t, err)
@@ -228,7 +228,7 @@ func TestLibrarianService_SaveLocalManifest(t *testing.T) {
 
 			service := NewLibrarianService(mockStorage, nil)
 
-			err := service.SaveLocalManifest(tt.manifest)
+			err := service.SaveLocalManifest(context.Background(), tt.manifest)
 
 			if tt.expectedError {
 				assert.Error(t, err)
@@ -295,7 +295,7 @@ func TestLibrarianService_SaveRemoteManifest(t *testing.T) {
 
 			service := NewLibrarianService(nil, mockStorage)
 
-			err := service.SaveRemoteManifest(tt.manifest)
+			err := service.SaveRemoteManifest(context.Background(), tt.manifest)
 
 			if tt.expectedError {
 				assert.Error(t, err)
@@ -353,20 +353,20 @@ func TestLibrarianService_Integration(t *testing.T) {
 		return json.Marshal(manifest)
 	}
 
-	err := service.SaveLocalManifest(manifest)
+	err := service.SaveLocalManifest(context.Background(), manifest)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, localCallCount)
 
-	err = service.SaveRemoteManifest(manifest)
+	err = service.SaveRemoteManifest(context.Background(), manifest)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, remoteCallCount)
 
-	retrievedLocal, err := service.GetLocalManifest()
+	retrievedLocal, err := service.GetLocalManifest(context.Background())
 	assert.NoError(t, err)
 	assert.Equal(t, manifest.Version, retrievedLocal.Version)
 	assert.Equal(t, manifest.LockedBy, retrievedLocal.LockedBy)
 
-	retrievedRemote, err := service.GetRemoteManifest()
+	retrievedRemote, err := service.GetRemoteManifest(context.Background())
 	assert.NoError(t, err)
 	assert.Equal(t, manifest.Version, retrievedRemote.Version)
 	assert.Equal(t, manifest.LockedBy, retrievedRemote.LockedBy)
