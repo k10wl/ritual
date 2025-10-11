@@ -61,8 +61,8 @@ func NewR2RepositoryWithClient(client S3Client, bucket string) *R2Repository {
 	}
 }
 
-func (r *R2Repository) Get(key string) ([]byte, error) {
-	result, err := r.client.GetObject(context.TODO(), &s3.GetObjectInput{
+func (r *R2Repository) Get(ctx context.Context, key string) ([]byte, error) {
+	result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
 	})
@@ -74,8 +74,8 @@ func (r *R2Repository) Get(key string) ([]byte, error) {
 	return io.ReadAll(result.Body)
 }
 
-func (r *R2Repository) Put(key string, data []byte) error {
-	_, err := r.client.PutObject(context.TODO(), &s3.PutObjectInput{
+func (r *R2Repository) Put(ctx context.Context, key string, data []byte) error {
+	_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
 		Body:   bytes.NewReader(data),
@@ -87,8 +87,8 @@ func (r *R2Repository) Put(key string, data []byte) error {
 	return nil
 }
 
-func (r *R2Repository) Delete(key string) error {
-	_, err := r.client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+func (r *R2Repository) Delete(ctx context.Context, key string) error {
+	_, err := r.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
 	})
@@ -99,8 +99,8 @@ func (r *R2Repository) Delete(key string) error {
 	return nil
 }
 
-func (r *R2Repository) List(prefix string) ([]string, error) {
-	result, err := r.client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
+func (r *R2Repository) List(ctx context.Context, prefix string) ([]string, error) {
+	result, err := r.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket: aws.String(r.bucket),
 		Prefix: aws.String(prefix),
 	})

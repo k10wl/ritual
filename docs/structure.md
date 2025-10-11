@@ -120,10 +120,10 @@ Defines interfaces for external dependencies and provides comprehensive mock imp
 ```go
 // internal/core/ports/ports.go
 type StorageRepository interface {
-    Get(key string) ([]byte, error)
-    Put(key string, data []byte) error
-    Delete(key string) error
-    List(prefix string) ([]string, error)
+    Get(ctx context.Context, key string) ([]byte, error)
+    Put(ctx context.Context, key string, data []byte) error
+    Delete(ctx context.Context, key string) error
+    List(ctx context.Context, prefix string) ([]string, error)
 }
 
 type MolfarService interface {

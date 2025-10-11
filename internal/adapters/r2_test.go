@@ -52,7 +52,7 @@ func TestR2Repository_SuccessCases(t *testing.T) {
 			Body: body,
 		}, nil)
 
-		result, err := repo.Get(key)
+		result, err := repo.Get(context.Background(), key)
 
 		assert.NoError(t, err)
 		assert.Equal(t, expectedData, result)
@@ -65,7 +65,7 @@ func TestR2Repository_SuccessCases(t *testing.T) {
 
 		mockClient.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
 
-		err := repo.Put(key, data)
+		err := repo.Put(context.Background(), key, data)
 
 		assert.NoError(t, err)
 		mockClient.AssertExpectations(t)
@@ -76,7 +76,7 @@ func TestR2Repository_SuccessCases(t *testing.T) {
 
 		mockClient.On("DeleteObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.DeleteObjectOutput{}, nil)
 
-		err := repo.Delete(key)
+		err := repo.Delete(context.Background(), key)
 
 		assert.NoError(t, err)
 		mockClient.AssertExpectations(t)
@@ -93,7 +93,7 @@ func TestR2Repository_SuccessCases(t *testing.T) {
 			},
 		}, nil)
 
-		result, err := repo.List(prefix)
+		result, err := repo.List(context.Background(), prefix)
 
 		assert.NoError(t, err)
 		assert.Equal(t, expectedKeys, result)
@@ -111,7 +111,7 @@ func TestR2Repository_ErrorConditions(t *testing.T) {
 
 		mockClient.On("GetObject", mock.Anything, mock.Anything, mock.Anything).Return((*s3.GetObjectOutput)(nil), mockErr)
 
-		result, err := repo.Get(key)
+		result, err := repo.Get(context.Background(), key)
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
@@ -125,7 +125,7 @@ func TestR2Repository_ErrorConditions(t *testing.T) {
 
 		mockClient.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, mockErr)
 
-		err := repo.Put(key, data)
+		err := repo.Put(context.Background(), key, data)
 
 		assert.Error(t, err)
 		mockClient.AssertExpectations(t)
@@ -137,7 +137,7 @@ func TestR2Repository_ErrorConditions(t *testing.T) {
 
 		mockClient.On("DeleteObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.DeleteObjectOutput{}, mockErr)
 
-		err := repo.Delete(key)
+		err := repo.Delete(context.Background(), key)
 
 		assert.Error(t, err)
 		mockClient.AssertExpectations(t)
@@ -149,7 +149,7 @@ func TestR2Repository_ErrorConditions(t *testing.T) {
 
 		mockClient.On("ListObjectsV2", mock.Anything, mock.Anything, mock.Anything).Return(&s3.ListObjectsV2Output{}, mockErr)
 
-		result, err := repo.List(prefix)
+		result, err := repo.List(context.Background(), prefix)
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
@@ -169,7 +169,7 @@ func TestR2Repository_EdgeCases(t *testing.T) {
 			Body: body,
 		}, nil)
 
-		result, err := repo.Get(key)
+		result, err := repo.Get(context.Background(), key)
 
 		assert.NoError(t, err)
 		assert.Equal(t, expectedData, result)
@@ -184,7 +184,7 @@ func TestR2Repository_EdgeCases(t *testing.T) {
 
 		mockClient.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
 
-		err := repo.Put(key, data)
+		err := repo.Put(context.Background(), key, data)
 
 		assert.NoError(t, err)
 		mockClient.AssertExpectations(t)
@@ -198,7 +198,7 @@ func TestR2Repository_EdgeCases(t *testing.T) {
 
 		mockClient.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
 
-		err := repo.Put(key, data)
+		err := repo.Put(context.Background(), key, data)
 
 		assert.NoError(t, err)
 		mockClient.AssertExpectations(t)
@@ -217,7 +217,7 @@ func TestR2Repository_EdgeCases(t *testing.T) {
 			},
 		}, nil)
 
-		result, err := repo.List(prefix)
+		result, err := repo.List(context.Background(), prefix)
 
 		assert.NoError(t, err)
 		assert.Equal(t, expectedKeys, result)
@@ -237,7 +237,7 @@ func TestR2Repository_EdgeCases(t *testing.T) {
 			},
 		}, nil)
 
-		result, err := repo.List(prefix)
+		result, err := repo.List(context.Background(), prefix)
 
 		assert.NoError(t, err)
 		assert.Equal(t, []string{"valid-key"}, result)
@@ -247,8 +247,4 @@ func TestR2Repository_EdgeCases(t *testing.T) {
 
 func TestR2Repository_InterfaceCompliance(t *testing.T) {
 	var _ ports.StorageRepository = (*R2Repository)(nil)
-}
-
-func stringPtr(s string) *string {
-	return &s
 }

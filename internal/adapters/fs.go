@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,7 +31,7 @@ func NewFSRepository(basePath string) (*FSRepository, error) {
 }
 
 // Get retrieves data by key from filesystem
-func (f *FSRepository) Get(key string) ([]byte, error) {
+func (f *FSRepository) Get(ctx context.Context, key string) ([]byte, error) {
 	file, err := f.root.Open(key)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -59,7 +60,7 @@ func (f *FSRepository) Get(key string) ([]byte, error) {
 }
 
 // Put stores data with the given key to filesystem
-func (f *FSRepository) Put(key string, data []byte) error {
+func (f *FSRepository) Put(ctx context.Context, key string, data []byte) error {
 	dir := filepath.Dir(key)
 	if dir != "." {
 		if err := f.root.MkdirAll(dir, 0755); err != nil {
@@ -81,7 +82,7 @@ func (f *FSRepository) Put(key string, data []byte) error {
 }
 
 // Delete removes data by key from filesystem
-func (f *FSRepository) Delete(key string) error {
+func (f *FSRepository) Delete(ctx context.Context, key string) error {
 	if err := f.root.Remove(key); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("key not found: %s", key)
@@ -93,7 +94,7 @@ func (f *FSRepository) Delete(key string) error {
 }
 
 // List returns all keys with the given prefix from filesystem
-func (f *FSRepository) List(prefix string) ([]string, error) {
+func (f *FSRepository) List(ctx context.Context, prefix string) ([]string, error) {
 	var keys []string
 
 	if prefix == "" {
