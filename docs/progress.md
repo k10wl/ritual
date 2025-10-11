@@ -11,9 +11,9 @@
 # >>> We are here
 
 ### Sprint 1: Foundation Layer (1 week)
-- [ ] Implement `world.go` entity
-- [ ] Add `ServerRunner` interface
-- [ ] Complete mock implementations
+- [x] Implement `world.go` entity
+- [x] Add `ServerRunner` interface
+- [x] Complete mock implementations
 - [ ] Create domain entity tests
 
 ### Sprint 2: Services Layer (2 weeks)
