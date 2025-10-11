@@ -8,13 +8,13 @@
 - [x] Basic CLI `main.go` created
 - [x] Mock framework established
 
-# >>> We are here
-
 ### Sprint 1: Foundation Layer (1 week)
 - [x] Implement `world.go` entity
 - [x] Add `ServerRunner` interface
 - [x] Complete mock implementations
 - [x] Create domain entity tests
+
+# >>> We are here
 
 ### Sprint 2: Services Layer (2 weeks)
 - [x] Implement `LibrarianService`

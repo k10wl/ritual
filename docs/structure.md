@@ -37,7 +37,9 @@ ritual/
     └── core/
         ├── domain/
         │   ├── manifest.go      # Manifest entity
-        │   └── manifest_test.go # Manifest entity tests
+        │   ├── manifest_test.go # Manifest entity tests
+        │   ├── world.go         # World entity
+        │   └── world_test.go    # World entity tests
         ├── ports/
         │   ├── ports.go         # Interface definitions
         │   └── mocks/           # Mock implementations for testing
@@ -64,6 +66,7 @@ ritual/
 Contains the core business entities:
 
 - **`manifest.go`** - Central manifest tracking instance/worlds versions, locks, and metadata
+- **`world.go`** - World data entity with URI validation and timestamp tracking
 
 #### Domain Entity Examples
 
@@ -78,8 +81,18 @@ type Manifest struct {
 }
 
 type World struct {
-  URI       string    `json:"uri"`
-  CreatedAt time.Time `json:"created_at"`
+    URI       string    `json:"uri"`
+    CreatedAt time.Time `json:"created_at"`
+}
+
+func NewWorld(uri string) (*World, error) {
+    if uri == "" {
+        return nil, fmt.Errorf("URI cannot be empty")
+    }
+    return &World{
+        URI:       uri,
+        CreatedAt: time.Now(),
+    }, nil
 }
 
 func (m *Manifest) IsLocked() bool {
