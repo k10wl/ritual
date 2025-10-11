@@ -56,7 +56,9 @@ ritual/
         └── services/
             ├── molfar.go        # Main orchestration service
             ├── librarian.go     # Manifest management service
-            └── validator.go     # Validation service
+            ├── librarian_test.go # LibrarianService tests
+            ├── validator.go     # Validation service
+            └── validator_test.go # ValidatorService tests
 ```
 
 ## Architecture Layers
@@ -209,8 +211,28 @@ func NewLibrarianService(localStorage StorageRepository, remoteStorage StorageRe
 // internal/core/services/validator.go
 type ValidatorService struct{}
 
-func NewValidatorService() *ValidatorService {
-    return &ValidatorService{}
+func NewValidatorService() (*ValidatorService, error) {
+    validator := &ValidatorService{}
+    
+    // Postcondition assertion (NASA JPL Rule 2)
+    if validator == nil {
+        return nil, ErrValidatorInitializationFailed
+    }
+    
+    return validator, nil
+}
+
+func (v *ValidatorService) CheckInstance(local *domain.Manifest, remote *domain.Manifest) error {
+    if v == nil {
+        return errors.New("validator service cannot be nil")
+    }
+    if local == nil {
+        return ErrLocalManifestNil
+    }
+    if remote == nil {
+        return ErrRemoteManifestNil
+    }
+    // Additional validation logic...
 }
 ```
 
@@ -295,6 +317,8 @@ func (s *ServerRunner) Run() error {
 - Performs instance integrity checks
 - Validates world data consistency
 - Enforces lock mechanism compliance
+- Implements CheckInstance, CheckWorld, and CheckLock operations
+- Provides comprehensive test coverage with testify framework
 
 ### Storage Abstraction
 - Unified interface for local (filesystem) and remote (R2) storage

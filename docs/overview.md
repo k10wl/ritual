@@ -33,6 +33,7 @@ Example imports:
   - Performs instance integrity checks against manifests
   - Validates world data consistency
   - Enforces lock mechanism compliance
+  - Implements CheckInstance, CheckWorld, and CheckLock operations
 
 • **Storage Abstraction Layer**
   - Unified interface for local and remote data operations

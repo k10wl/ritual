@@ -4,10 +4,11 @@ import (
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"testing"
+	"time"
 )
 
 func TestMockValidatorService(t *testing.T) {
-	mock := NewMockValidatorService()
+	mock := &MockValidatorService{}
 
 	var validator ports.ValidatorService = mock
 	if validator == nil {
@@ -15,17 +16,17 @@ func TestMockValidatorService(t *testing.T) {
 	}
 
 	testManifest := &domain.Manifest{
-		InstanceID: "test-instance",
-		Version:    "1.0.0",
+		InstanceVersion: "1.0.0",
+		RitualVersion:   "1.0.0",
+		UpdatedAt:       time.Now(),
 	}
 
-	mockValidator := mock.(*MockValidatorService)
-	mockValidator.CheckInstanceFunc = func(local *domain.Manifest, remote *domain.Manifest) error {
-		if local.InstanceID != testManifest.InstanceID {
-			t.Errorf("Expected local instance %s, got %s", testManifest.InstanceID, local.InstanceID)
+	mock.CheckInstanceFunc = func(local *domain.Manifest, remote *domain.Manifest) error {
+		if local.InstanceVersion != testManifest.InstanceVersion {
+			t.Errorf("Expected local instance %s, got %s", testManifest.InstanceVersion, local.InstanceVersion)
 		}
-		if remote.InstanceID != testManifest.InstanceID {
-			t.Errorf("Expected remote instance %s, got %s", testManifest.InstanceID, remote.InstanceID)
+		if remote.InstanceVersion != testManifest.InstanceVersion {
+			t.Errorf("Expected remote instance %s, got %s", testManifest.InstanceVersion, remote.InstanceVersion)
 		}
 		return nil
 	}
@@ -35,12 +36,12 @@ func TestMockValidatorService(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	mockValidator.CheckWorldFunc = func(local *domain.Manifest, remote *domain.Manifest) error {
-		if local.InstanceID != testManifest.InstanceID {
-			t.Errorf("Expected local instance %s, got %s", testManifest.InstanceID, local.InstanceID)
+	mock.CheckWorldFunc = func(local *domain.Manifest, remote *domain.Manifest) error {
+		if local.InstanceVersion != testManifest.InstanceVersion {
+			t.Errorf("Expected local instance %s, got %s", testManifest.InstanceVersion, local.InstanceVersion)
 		}
-		if remote.InstanceID != testManifest.InstanceID {
-			t.Errorf("Expected remote instance %s, got %s", testManifest.InstanceID, remote.InstanceID)
+		if remote.InstanceVersion != testManifest.InstanceVersion {
+			t.Errorf("Expected remote instance %s, got %s", testManifest.InstanceVersion, remote.InstanceVersion)
 		}
 		return nil
 	}
@@ -50,12 +51,12 @@ func TestMockValidatorService(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	mockValidator.CheckLockFunc = func(local *domain.Manifest, remote *domain.Manifest) error {
-		if local.InstanceID != testManifest.InstanceID {
-			t.Errorf("Expected local instance %s, got %s", testManifest.InstanceID, local.InstanceID)
+	mock.CheckLockFunc = func(local *domain.Manifest, remote *domain.Manifest) error {
+		if local.InstanceVersion != testManifest.InstanceVersion {
+			t.Errorf("Expected local instance %s, got %s", testManifest.InstanceVersion, local.InstanceVersion)
 		}
-		if remote.InstanceID != testManifest.InstanceID {
-			t.Errorf("Expected remote instance %s, got %s", testManifest.InstanceID, remote.InstanceID)
+		if remote.InstanceVersion != testManifest.InstanceVersion {
+			t.Errorf("Expected remote instance %s, got %s", testManifest.InstanceVersion, remote.InstanceVersion)
 		}
 		return nil
 	}

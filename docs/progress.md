@@ -14,15 +14,17 @@
 - [x] Complete mock implementations
 - [x] Create domain entity tests
 
-# >>> We are here
-
 ### Sprint 2: Services Layer (2 weeks)
 - [x] Implement `LibrarianService`
 - [x] Create `LibrarianService` tests
 - [x] Add context parameter to LibrarianService operations
-- [ ] Implement `ValidatorService`
-- [ ] Add service dependency injection
-- [ ] Create service tests
+- [x] Implement `ValidatorService`
+- [x] Create `ValidatorService` tests
+- [x] Add defensive validation compliance
+- [x] Implement comprehensive error handling for validation operations
+- [x] Add service dependency injection
+
+# >>> We are here
 
 ### Sprint 3: Adapters Layer (2 weeks)
 - [ ] Implement `ServerRunner`

@@ -16,6 +16,10 @@
 - All public methods require unit tests
 - Integration tests for external dependencies
 - Test coverage minimum 80%
+- **MANDATORY**: Use testify/assert and testify/mock for all test assertions and mocking
+- Import testify packages: `github.com/stretchr/testify/assert` and `github.com/stretchr/testify/mock`
+- Use `assert.Equal`, `assert.NoError`, `assert.True`, `assert.False` for assertions
+- Use `mock.Mock` interface for mocking external dependencies
 
 ## Hexagonal Architecture Patterns
 - Domain layer: Core business logic (Molfar, Librarian, Validator)
