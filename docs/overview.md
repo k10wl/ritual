@@ -82,3 +82,9 @@ Example imports:
   - Minecraft server API integration for instance control
   - External backup storage systems via storage abstraction
   - Monitoring and alerting systems for operational oversight
+
+### Testing Strategy
+- Mock external dependencies through interfaces
+- Test business logic in isolation
+- Integration tests for adapter implementations
+- Use testify framework for assertions and mocking

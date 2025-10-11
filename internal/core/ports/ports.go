@@ -1,6 +1,7 @@
 package ports
 
 import (
+	"context"
 	"ritual/internal/core/domain"
 )
 
@@ -8,16 +9,16 @@ import (
 // This abstraction allows switching between local filesystem and cloud storage
 type StorageRepository interface {
 	// Get retrieves data by key
-	Get(key string) ([]byte, error)
+	Get(ctx context.Context, key string) ([]byte, error)
 
 	// Put stores data with the given key
-	Put(key string, data []byte) error
+	Put(ctx context.Context, key string, data []byte) error
 
 	// Delete removes data by key
-	Delete(key string) error
+	Delete(ctx context.Context, key string) error
 
 	// List returns all keys with the given prefix
-	List(prefix string) ([]string, error)
+	List(ctx context.Context, prefix string) ([]string, error)
 }
 
 // MolfarService defines the main orchestration interface
