@@ -133,10 +133,10 @@ type MolfarService interface {
 }
 
 type LibrarianService interface {
-    GetLocalManifest() (*domain.Manifest, error)
-    GetRemoteManifest() (*domain.Manifest, error)
-    SaveLocalManifest(manifest *domain.Manifest) error
-    SaveRemoteManifest(manifest *domain.Manifest) error
+    GetLocalManifest(ctx context.Context) (*domain.Manifest, error)
+    GetRemoteManifest(ctx context.Context) (*domain.Manifest, error)
+    SaveLocalManifest(ctx context.Context, manifest *domain.Manifest) error
+    SaveRemoteManifest(ctx context.Context, manifest *domain.Manifest) error
 }
 
 type ValidatorService interface {
@@ -176,11 +176,21 @@ func NewMolfarService(librarian LibrarianService, validator ValidatorService, st
 
 // internal/core/services/librarian.go
 type LibrarianService struct {
-    storage StorageRepository
+    localStorage  StorageRepository
+    remoteStorage StorageRepository
 }
 
-func NewLibrarianService(localStorage StorageRepository, remoteStorage StorageRepository) *LibrarianService {
-    return &LibrarianService{storage: storage}
+func NewLibrarianService(localStorage StorageRepository, remoteStorage StorageRepository) (*LibrarianService, error) {
+    if localStorage == nil {
+        return nil, fmt.Errorf("localStorage cannot be nil")
+    }
+    if remoteStorage == nil {
+        return nil, fmt.Errorf("remoteStorage cannot be nil")
+    }
+    return &LibrarianService{
+        localStorage: localStorage,
+        remoteStorage: remoteStorage,
+    }, nil
 }
 
 // internal/core/services/validator.go
@@ -291,6 +301,31 @@ func NewR2Repository(client *s3.Client, bucket string) *R2Repository {
 - **State Management** - Mocks maintain realistic state for testing complex scenarios
 - **Testify Integration** - Use testify/mock for mock implementations and testify/assert for assertions
 
+## Architecture Compliance
+
+### Defensive Programming Standards
+
+R.I.T.U.A.L. enforces NASA JPL Power of Ten defensive programming standards for mission-critical reliability:
+
+**MANDATORY RULES:**
+1. **Nil Validation** - All constructors and functions accepting interface/pointer parameters MUST validate non-nil before use. Return error, not panic.
+2. **Runtime Assertions** - Average ≥2 assertions per function. Check preconditions, postconditions, invariants.
+3. **Error Handling** - Check ALL return values from non-void functions. No ignored errors.
+4. **Input Validation** - Validate all function parameters at entry. Check ranges, bounds, nil pointers.
+5. **Fixed Bounds** - All loops must have statically determinable upper bounds.
+6. **Function Size** - Limit functions to 60 lines. Extract complex logic.
+7. **Pointer Safety** - Minimize pointer indirection. Validate before dereferencing.
+8. **Memory Safety** - No dynamic heap allocation after initialization phase.
+9. **Compiler Warnings** - Enable all warnings (-Wall -Wextra). Zero tolerance for warnings.
+10. **Static Analysis** - Run static analysis tools. Fix all findings before merge.
+
+**Implementation Requirements:**
+- Reference [NASA JPL Power of Ten Rules](https://spinroot.com/static10/Src/DOC/PowerOfTen.pdf)
+- Follow defensive programming patterns in `docs/coding-practices.md`
+- All code must pass static analysis with zero warnings
+- Functions must include pre/post condition assertions
+- Error propagation must be explicit and handled at every layer
+
 ## Documentation Requirements
 - Each component must have GoDoc comments
 - Architecture decisions must be documented
@@ -299,6 +334,7 @@ func NewR2Repository(client *s3.Client, bucket string) *R2Repository {
 - **Always reference @structure.md for architectural context and component relationships**
 - Update structure.md when adding new components or changing architecture
 - **AI must update progress tracking in docs/progress.md when implementing components**
+- **MANDATORY**: Follow defensive programming standards per NASA JPL Power of Ten
 
 ## Structure.md Authority
 - **@structure.md is the authoritative source for project structure**

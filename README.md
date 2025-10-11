@@ -101,6 +101,7 @@ Required environment variables:
 ### Project Documentation
 - **[Architecture Overview](docs/overview.md)** - High-level system architecture and components
 - **[Project Structure](docs/structure.md)** - Detailed directory structure and component descriptions
+- **[Defensive Programming Standards](docs/coding-practices.md)** - NASA JPL Power of Ten compliance guidelines
 - **[Sprint Tracker](docs/progress.md)** - Development progress and sprint planning
 - **[Architecture Diagrams](docs/ritual.drawio)** - Visual system architecture diagrams
 

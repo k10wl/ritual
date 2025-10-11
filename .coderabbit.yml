@@ -29,6 +29,20 @@ reviews:
         - **NO EXCEPTIONS**: Every component implementation MUST update progress tracking
         - **ZERO TOLERANCE**: Progress tracking is sacred - no PR approval without it
         
+        NASA JPL Power of Ten Defensive Programming:
+        - **MANDATORY**: All functions must validate nil parameters before use
+        - **CRITICAL**: Average ≥2 assertions per function (pre/post conditions)
+        - **ZERO TOLERANCE**: No ignored errors - check ALL return values
+        - **INPUT VALIDATION**: Validate all function parameters at entry
+        - **FIXED BOUNDS**: All loops must have statically determinable upper bounds
+        - **FUNCTION SIZE**: Limit functions to 60 lines maximum
+        - **POINTER SAFETY**: Minimize pointer indirection, validate before dereferencing
+        - **MEMORY SAFETY**: No dynamic heap allocation after initialization
+        - **COMPILER WARNINGS**: Zero tolerance for warnings - enable all warnings
+        - **STATIC ANALYSIS**: Run golangci-lint, go vet, staticcheck - fix all findings
+        - **REFERENCE**: Follow patterns in docs/coding-practices.md
+        - **REJECTION CRITERIA**: PR fails if defensive programming standards violated
+        
         Go Standards:
         - Use concise naming: fs.go not filesystem.go
         - Follow camelCase conventions

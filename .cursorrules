@@ -4,6 +4,7 @@
 ## Documentation Integration
 - **PRIMARY REFERENCE**: Always consult @structure.md for complete project structure and architecture
 - Reference docs/overview.md for system architecture
+- Reference docs/coding-practices.md for NASA JPL Power of Ten defensive programming standards
 - Link diagrams from docs/ritual.drawio for visual context
 - Maintain README.md as primary entry point
 - All code changes must align with documented architecture in structure.md
@@ -38,6 +39,10 @@ Key components per structure.md:
 - Separate concerns by layer
 - No direct external API calls in domain layer
 - Mock external dependencies in tests
+- **MANDATORY**: Follow NASA JPL Power of Ten defensive programming standards per docs/coding-practices.md
+- **CRITICAL**: All functions must validate nil parameters and include ≥2 assertions
+- **ZERO TOLERANCE**: No ignored errors, all return values must be checked
+- **STATIC ANALYSIS**: All code must pass golangci-lint with zero warnings
 
 ## File Naming Conventions
 **Follow conventions defined in @structure.md**

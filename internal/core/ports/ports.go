@@ -38,16 +38,16 @@ type MolfarService interface {
 // Librarian handles synchronization between local and remote manifests
 type LibrarianService interface {
 	// GetLocalManifest retrieves the local manifest
-	GetLocalManifest() (*domain.Manifest, error)
+	GetLocalManifest(ctx context.Context) (*domain.Manifest, error)
 
 	// GetRemoteManifest retrieves the remote manifest
-	GetRemoteManifest() (*domain.Manifest, error)
+	GetRemoteManifest(ctx context.Context) (*domain.Manifest, error)
 
 	// SaveLocalManifest stores the manifest locally
-	SaveLocalManifest(manifest *domain.Manifest) error
+	SaveLocalManifest(ctx context.Context, manifest *domain.Manifest) error
 
 	// SaveRemoteManifest stores the manifest remotely
-	SaveRemoteManifest(manifest *domain.Manifest) error
+	SaveRemoteManifest(ctx context.Context, manifest *domain.Manifest) error
 }
 
 // ValidatorService defines the validation interface
