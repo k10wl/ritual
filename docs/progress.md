@@ -55,14 +55,29 @@
 - [x] Create orchestration tests
 - [x] Implement outdated instance handling
 - [x] Add instance update mechanism
+- [x] Implement local backup functionality
+- [x] Add local backup retention management (5 files max)
+- [x] Add time-based backup scheduling (every 2 months)
+- [x] Create comprehensive local backup tests
+- [x] **CRITICAL**: Identify retention policy violations
+- [x] **CRITICAL**: Define centralized retention policy architecture
+- [x] **CRITICAL**: Document retention compliance requirements
 
 # >>> We are here
 
-### Sprint 5: CLI Interface (1 week)
-- [ ] Implement main application
-- [ ] Add CLI commands
-- [ ] Enhance user experience
-- [ ] Create CLI tests
+### Sprint 5: Retention Policy Implementation (1 week)
+- [ ] **ROLLBACK**: Remove current O(n²) bubble sort from `RemoveOldestWorlds`
+- [ ] **ROLLBACK**: Remove scattered retention logic from `manageWorldRetention`
+- [ ] **ROLLBACK**: Remove dual-criteria conflict from `ManageLocalBackupRetention`
+- [ ] **ROLLBACK**: Remove hardcoded retention limits and constants
+- [ ] Implement centralized `RetentionPolicy` interface
+- [ ] Create `RetentionEngine` with strategy pattern
+- [ ] Implement efficient O(n log n) sorting algorithms
+- [ ] Add data integrity validation before deletion
+- [ ] Create retention configuration management
+- [ ] Replace current retention implementation with centralized policy
+- [ ] Add comprehensive retention policy tests
+- [ ] Update `MolfarService` to use centralized retention
 
 ### Sprint 6: Integration Testing (1 week)
 - [ ] Create end-to-end tests

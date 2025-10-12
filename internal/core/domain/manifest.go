@@ -76,11 +76,24 @@ func (m *Manifest) RemoveOldestWorlds(maxCount int) []World {
 		return nil
 	}
 
+	// Sort worlds by creation time (oldest first)
+	sortedWorlds := make([]World, len(m.StoredWorlds))
+	copy(sortedWorlds, m.StoredWorlds)
+
+	for i := 0; i < len(sortedWorlds)-1; i++ {
+		for j := i + 1; j < len(sortedWorlds); j++ {
+			if sortedWorlds[i].CreatedAt.After(sortedWorlds[j].CreatedAt) {
+				sortedWorlds[i], sortedWorlds[j] = sortedWorlds[j], sortedWorlds[i]
+			}
+		}
+	}
+
 	removedCount := len(m.StoredWorlds) - maxCount
 	removed := make([]World, removedCount)
-	copy(removed, m.StoredWorlds[:removedCount])
+	copy(removed, sortedWorlds[:removedCount])
 
-	m.StoredWorlds = m.StoredWorlds[removedCount:]
+	// Keep only the newest worlds
+	m.StoredWorlds = sortedWorlds[removedCount:]
 	m.UpdatedAt = time.Now()
 
 	return removed

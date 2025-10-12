@@ -314,7 +314,7 @@ func TestMolfarService_Run(t *testing.T) {
 
 func TestMolfarService_Exit(t *testing.T) {
 	t.Run("successful exit sequence", func(t *testing.T) {
-		molfar, librarian, _, remoteStorage, workdir, cleanup := setupIntegrationTest(t)
+		molfar, librarian, localStorage, remoteStorage, workdir, cleanup := setupIntegrationTest(t)
 		defer cleanup()
 
 		ctx := context.Background()
@@ -365,6 +365,13 @@ func TestMolfarService_Exit(t *testing.T) {
 		worldData, err := remoteStorage.Get(ctx, worldURI)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, worldData)
+
+		// Verify local backup was created
+		backupKeys, err := localStorage.List(ctx, "local-backups/")
+		assert.NoError(t, err)
+		assert.Len(t, backupKeys, 1)
+		assert.Contains(t, backupKeys[0], "local-backups/")
+		assert.Contains(t, backupKeys[0], ".zip")
 	})
 
 	t.Run("nil service error handling", func(t *testing.T) {
@@ -428,10 +435,13 @@ func TestMolfarService_manageWorldRetention(t *testing.T) {
 
 		ctx := context.Background()
 
-		// Create 7 worlds (exceeds limit of 5)
+		// Create 7 worlds with different timestamps (exceeds limit of 5)
 		worlds := make([]domain.World, 7)
+		baseTime := time.Now().Add(-time.Hour * 7) // Start 7 hours ago
 		for i := 0; i < 7; i++ {
-			worlds[i] = createTestWorld(fmt.Sprintf("worlds/world%d.zip", i))
+			world := createTestWorld(fmt.Sprintf("worlds/world%d.zip", i))
+			world.CreatedAt = baseTime.Add(time.Hour * time.Duration(i)) // Each world 1 hour older
+			worlds[i] = world
 		}
 		manifest := createTestManifest("v1.0.0", worlds)
 		manifest.LockedBy = "test-host__1234567890"
@@ -457,18 +467,18 @@ func TestMolfarService_manageWorldRetention(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Len(t, updatedManifest.StoredWorlds, 5) // 7 original + 1 new from Exit - 3 removed = 5
 
-		// Check that oldest worlds (world0, world1, world2) were removed
+		// Check that oldest worlds (world0, world1, world2) were removed chronologically
 		worldURIs := make([]string, len(updatedManifest.StoredWorlds))
 		for i, world := range updatedManifest.StoredWorlds {
 			worldURIs[i] = world.URI
 		}
 
-		// Verify world0, world1, and world2 are not present
+		// Verify oldest worlds (world0, world1, world2) are not present
 		assert.NotContains(t, worldURIs, "worlds/world0.zip")
 		assert.NotContains(t, worldURIs, "worlds/world1.zip")
 		assert.NotContains(t, worldURIs, "worlds/world2.zip")
 
-		// Verify worlds 3-6 are present
+		// Verify newest worlds (world3, world4, world5, world6) are present
 		assert.Contains(t, worldURIs, "worlds/world3.zip")
 		assert.Contains(t, worldURIs, "worlds/world4.zip")
 		assert.Contains(t, worldURIs, "worlds/world5.zip")
@@ -487,5 +497,147 @@ func TestMolfarService_manageWorldRetention(t *testing.T) {
 
 		// Verify exactly 5 worlds remain (worlds 3-6 + 1 new)
 		assert.Len(t, updatedManifest.StoredWorlds, 5)
+	})
+}
+
+func TestMolfarService_createLocalBackup(t *testing.T) {
+	t.Run("successful local backup creation", func(t *testing.T) {
+		molfar, _, localStorage, _, workdir, cleanup := setupIntegrationTest(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		timestamp := time.Now().Unix()
+
+		// Create test archive file
+		archivePath := filepath.Join(workdir, "test-backup.zip")
+		testData := []byte("test archive data")
+		err := os.WriteFile(archivePath, testData, 0644)
+		assert.NoError(t, err)
+
+		// Create local backup
+		err = molfar.CreateLocalBackup(ctx, archivePath, timestamp)
+		assert.NoError(t, err)
+
+		// Verify backup was created
+		backupKeys, err := localStorage.List(ctx, "local-backups/")
+		assert.NoError(t, err)
+		assert.Len(t, backupKeys, 1)
+
+		// Verify backup content
+		backupData, err := localStorage.Get(ctx, backupKeys[0])
+		assert.NoError(t, err)
+		assert.Equal(t, testData, backupData)
+	})
+
+	t.Run("nil context error", func(t *testing.T) {
+		molfar, _, _, _, workdir, cleanup := setupIntegrationTest(t)
+		defer cleanup()
+
+		archivePath := filepath.Join(workdir, "test-backup.zip")
+		err := os.WriteFile(archivePath, []byte("test"), 0644)
+		assert.NoError(t, err)
+
+		var ctx context.Context
+		err = molfar.CreateLocalBackup(ctx, archivePath, time.Now().Unix())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "context cannot be nil")
+	})
+
+	t.Run("empty archive path error", func(t *testing.T) {
+		molfar, _, _, _, _, cleanup := setupIntegrationTest(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		err := molfar.CreateLocalBackup(ctx, "", time.Now().Unix())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "archive path cannot be empty")
+	})
+}
+
+func TestMolfarService_manageLocalBackupRetention(t *testing.T) {
+	t.Run("backup retention within limits", func(t *testing.T) {
+		molfar, _, localStorage, _, _, cleanup := setupIntegrationTest(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		// Create 3 backups (within limit of 5)
+		for i := 0; i < 3; i++ {
+			backupKey := fmt.Sprintf("local-backups/%d.zip", time.Now().Unix()+int64(i))
+			err := localStorage.Put(ctx, backupKey, []byte("test data"))
+			assert.NoError(t, err)
+		}
+
+		err := molfar.ManageLocalBackupRetention(ctx)
+		assert.NoError(t, err)
+
+		// Verify all backups remain
+		backupKeys, err := localStorage.List(ctx, "local-backups/")
+		assert.NoError(t, err)
+		assert.Len(t, backupKeys, 3)
+	})
+
+	t.Run("backup retention exceeds limits", func(t *testing.T) {
+		molfar, _, localStorage, _, _, cleanup := setupIntegrationTest(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		// Create 7 backups (exceeds limit of 5)
+		for i := 0; i < 7; i++ {
+			backupKey := fmt.Sprintf("local-backups/%d.zip", time.Now().Unix()+int64(i))
+			err := localStorage.Put(ctx, backupKey, []byte("test data"))
+			assert.NoError(t, err)
+		}
+
+		err := molfar.ManageLocalBackupRetention(ctx)
+		assert.NoError(t, err)
+
+		// Verify only 5 backups remain
+		backupKeys, err := localStorage.List(ctx, "local-backups/")
+		assert.NoError(t, err)
+		assert.Len(t, backupKeys, 5)
+	})
+
+	t.Run("nil context error", func(t *testing.T) {
+		molfar, _, _, _, _, cleanup := setupIntegrationTest(t)
+		defer cleanup()
+
+		var ctx context.Context
+		err := molfar.ManageLocalBackupRetention(ctx)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "context cannot be nil")
+	})
+}
+
+func TestMolfarService_extractTimestampFromBackupKey(t *testing.T) {
+	molfar, _, _, _, _, cleanup := setupIntegrationTest(t)
+	defer cleanup()
+
+	t.Run("valid backup key", func(t *testing.T) {
+		timestamp := int64(1234567890)
+		backupKey := fmt.Sprintf("local-backups/%d.zip", timestamp)
+
+		result, err := molfar.ExtractTimestampFromBackupKey(backupKey)
+		assert.NoError(t, err)
+		assert.Equal(t, timestamp, result)
+	})
+
+	t.Run("empty backup key", func(t *testing.T) {
+		_, err := molfar.ExtractTimestampFromBackupKey("")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "backup key cannot be empty")
+	})
+
+	t.Run("invalid backup key format", func(t *testing.T) {
+		_, err := molfar.ExtractTimestampFromBackupKey("invalid-key")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid backup key format")
+	})
+
+	t.Run("invalid timestamp", func(t *testing.T) {
+		_, err := molfar.ExtractTimestampFromBackupKey("local-backups/invalid.zip")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to parse timestamp")
 	})
 }

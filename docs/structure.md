@@ -352,6 +352,14 @@ func (s *ServerRunner) Run(server *domain.Server) error {
 - Manages archive lifecycle operations
 - Integrates with storage abstraction for remote archive operations
 
+### Retention (Data Lifecycle Management)
+- **Centralized Retention Engine**: Single `RetentionPolicy` interface for all retention decisions
+- **Strategy Pattern**: Configurable retention strategies per data type (World, Local Backup, Manifest)
+- **Performance Compliance**: O(n log n) sorting algorithms, bounded operations
+- **Data Integrity**: Backup verification before deletion
+- **Configuration Management**: Structured configuration objects with weighted scoring
+- **NASA JPL Compliance**: Defensive programming standards for mission-critical reliability
+
 ### Storage Abstraction
 - Unified interface for local (filesystem) and remote (R2) storage
 - Supports manifest, world data, and backup operations
@@ -409,6 +417,25 @@ R.I.T.U.A.L. enforces NASA JPL Power of Ten defensive programming standards for 
 - All code must pass static analysis with zero warnings
 - Functions must include pre/post condition assertions
 - Error propagation must be explicit and handled at every layer
+
+### Retention Policy Compliance
+
+**CRITICAL PATH REQUIREMENTS:**
+- **Centralized Retention**: All retention decisions flow through `RetentionPolicy` interface
+- **Performance Compliance**: O(n log n) sorting algorithms, bounded operations
+- **Data Integrity**: Backup verification before deletion
+- **Strategy Pattern**: Configurable retention strategies per data type
+- **Configuration Management**: Structured configuration objects with weighted scoring
+
+**Retention Categories:**
+- **World Retention**: Time-based with usage weighting (5 max)
+- **Local Backup Retention**: Dual-criteria time+count (5 max, 60 days)
+
+**Compliance Validation:**
+- All retention operations must pass integrity validation
+- Retention decisions must be logged with reasoning
+- Failed retention operations must support rollback
+- Concurrent retention operations must be thread-safe
 
 ## Documentation Requirements
 - Each component must have GoDoc comments
