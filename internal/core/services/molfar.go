@@ -113,72 +113,18 @@ func (m *MolfarService) Prepare() error {
 	m.logger.Info("Starting preparation phase", "workdir", m.workdir)
 	ctx := context.Background()
 
-	remoteManifest, err := m.librarian.GetRemoteManifest(ctx)
+	remoteManifest, err := m.getRemoteManifest(ctx)
 	if err != nil {
-		m.logger.Error("Failed to get remote manifest", "error", err)
 		return err
 	}
-	m.logger.Info("Retrieved remote manifest", "ritual_version", remoteManifest.RitualVersion, "instance_version", remoteManifest.InstanceVersion)
 
-	localManifest, err := m.librarian.GetLocalManifest(ctx)
+	localManifest, err := m.getOrInitializeLocalManifest(ctx, remoteManifest)
 	if err != nil {
-		if strings.Contains(err.Error(), "key not found") {
-			m.logger.Info("Local manifest not found, initializing new instance")
-			if initErr := m.initializeLocalInstance(ctx, remoteManifest); initErr != nil {
-				m.logger.Error("Failed to initialize local instance", "error", initErr)
-				return initErr
-			}
-			// Re-fetch local manifest after initialization
-			localManifest, err = m.librarian.GetLocalManifest(ctx)
-			if err != nil {
-				m.logger.Error("Failed to get local manifest after initialization", "error", err)
-				return err
-			}
-			m.logger.Info("Successfully initialized local instance")
-		} else {
-			m.logger.Error("Failed to get local manifest", "error", err)
-			return err
-		}
-	} else {
-		m.logger.Info("Retrieved local manifest", "ritual_version", localManifest.RitualVersion, "instance_version", localManifest.InstanceVersion)
-	}
-
-	if err := m.validator.CheckLock(localManifest, remoteManifest); err != nil {
-		m.logger.Error("Lock validation failed", "error", err)
 		return err
 	}
-	m.logger.Info("Lock validation passed")
 
-	if err := m.validator.CheckInstance(localManifest, remoteManifest); err != nil {
-		if errors.Is(err, ErrOutdatedInstance) {
-			m.logger.Info("Instance is outdated, updating local instance")
-			if updateErr := m.updateLocalInstance(ctx, remoteManifest); updateErr != nil {
-				m.logger.Error("Failed to update local instance", "error", updateErr)
-				return updateErr
-			}
-			m.logger.Info("Successfully updated local instance")
-		} else {
-			m.logger.Error("Instance validation failed", "error", err)
-			return err
-		}
-	} else {
-		m.logger.Info("Instance validation passed")
-	}
-
-	if err := m.validator.CheckWorld(localManifest, remoteManifest); err != nil {
-		if errors.Is(err, ErrOutdatedWorld) {
-			m.logger.Info("World is outdated, updating local worlds")
-			if updateErr := m.updateLocalWorlds(ctx, remoteManifest); updateErr != nil {
-				m.logger.Error("Failed to update local worlds", "error", updateErr)
-				return updateErr
-			}
-			m.logger.Info("Successfully updated local worlds")
-		} else {
-			m.logger.Error("World validation failed", "error", err)
-			return err
-		}
-	} else {
-		m.logger.Info("World validation passed")
+	if err := m.validateManifests(localManifest, remoteManifest); err != nil {
+		return err
 	}
 
 	m.logger.Info("Preparation phase completed successfully")
@@ -209,49 +155,15 @@ func (m *MolfarService) initializeLocalInstance(ctx context.Context, remoteManif
 	m.logger.Info("Initializing new local instance", "instance_version", remoteManifest.InstanceVersion)
 	instancePath := filepath.Join(m.workdir, InstanceDir)
 
-	m.logger.Info("Downloading instance from remote storage", "key", InstanceZipKey)
-	instanceZipData, err := m.remoteStorage.Get(ctx, InstanceZipKey)
-	if err != nil {
-		m.logger.Error("Failed to get instance from remote storage", "key", InstanceZipKey, "error", err)
-		return fmt.Errorf("failed to get %s from remote storage: %w", InstanceZipKey, err)
-	}
-
-	tempKey := filepath.Join(TempPrefix, InstanceZipKey)
-	m.logger.Info("Storing instance in temporary storage", "temp_key", tempKey)
-	err = m.localStorage.Put(ctx, tempKey, instanceZipData)
-	if err != nil {
-		m.logger.Error("Failed to store instance in temp storage", "temp_key", tempKey, "error", err)
-		return fmt.Errorf("failed to store %s in temp storage: %w", InstanceZipKey, err)
-	}
-
-	// Get the actual file path for unarchiving
-	tempFilePath := filepath.Join(m.workdir, tempKey)
-	m.logger.Info("Extracting instance archive", "source", tempFilePath, "destination", instancePath)
-	err = m.archive.Unarchive(ctx, tempFilePath, instancePath)
-	if err != nil {
-		m.logger.Error("Failed to extract instance archive", "source", tempFilePath, "destination", instancePath, "error", err)
+	if err := m.downloadAndExtractInstance(ctx, instancePath); err != nil {
 		return err
 	}
 
-	m.logger.Info("Cleaning up temporary files", "temp_key", tempKey)
-	err = m.localStorage.Delete(ctx, tempKey)
-	if err != nil {
-		m.logger.Error("Failed to cleanup temp files", "temp_key", tempKey, "error", err)
-		return fmt.Errorf("failed to cleanup temp %s: %w", InstanceZipKey, err)
-	}
-
-	// Always download latest world during initialization
-	m.logger.Info("Downloading latest world during initialization")
-	err = m.downloadAndExtractWorlds(ctx, remoteManifest, instancePath)
-	if err != nil {
-		m.logger.Error("Failed to download worlds during initialization", "error", err)
+	if err := m.downloadAndExtractWorlds(ctx, remoteManifest, instancePath); err != nil {
 		return err
 	}
-	m.logger.Info("Successfully downloaded worlds during initialization")
 
-	m.logger.Info("Saving local manifest", "instance_version", remoteManifest.InstanceVersion)
-	err = m.librarian.SaveLocalManifest(ctx, remoteManifest)
-	if err != nil {
+	if err := m.librarian.SaveLocalManifest(ctx, remoteManifest); err != nil {
 		m.logger.Error("Failed to save local manifest", "error", err)
 		return err
 	}
@@ -284,40 +196,11 @@ func (m *MolfarService) updateLocalInstance(ctx context.Context, remoteManifest 
 	m.logger.Info("Updating local instance", "instance_version", remoteManifest.InstanceVersion)
 	instancePath := filepath.Join(m.workdir, InstanceDir)
 
-	m.logger.Info("Downloading updated instance from remote storage", "key", InstanceZipKey)
-	instanceZipData, err := m.remoteStorage.Get(ctx, InstanceZipKey)
-	if err != nil {
-		m.logger.Error("Failed to get updated instance from remote storage", "key", InstanceZipKey, "error", err)
-		return fmt.Errorf("failed to get %s from remote storage: %w", InstanceZipKey, err)
-	}
-
-	tempKey := filepath.Join(TempPrefix, InstanceZipKey)
-	m.logger.Info("Storing updated instance in temporary storage", "temp_key", tempKey)
-	err = m.localStorage.Put(ctx, tempKey, instanceZipData)
-	if err != nil {
-		m.logger.Error("Failed to store updated instance in temp storage", "temp_key", tempKey, "error", err)
-		return fmt.Errorf("failed to store %s in temp storage: %w", InstanceZipKey, err)
-	}
-
-	// Get the actual file path for unarchiving
-	tempFilePath := filepath.Join(m.workdir, tempKey)
-	m.logger.Info("Extracting updated instance archive", "source", tempFilePath, "destination", instancePath)
-	err = m.archive.Unarchive(ctx, tempFilePath, instancePath)
-	if err != nil {
-		m.logger.Error("Failed to extract updated instance archive", "source", tempFilePath, "destination", instancePath, "error", err)
+	if err := m.downloadAndExtractInstance(ctx, instancePath); err != nil {
 		return err
 	}
 
-	m.logger.Info("Cleaning up temporary files", "temp_key", tempKey)
-	err = m.localStorage.Delete(ctx, tempKey)
-	if err != nil {
-		m.logger.Error("Failed to cleanup temp files", "temp_key", tempKey, "error", err)
-		return fmt.Errorf("failed to cleanup temp %s: %w", InstanceZipKey, err)
-	}
-
-	m.logger.Info("Saving updated local manifest", "instance_version", remoteManifest.InstanceVersion)
-	err = m.librarian.SaveLocalManifest(ctx, remoteManifest)
-	if err != nil {
+	if err := m.librarian.SaveLocalManifest(ctx, remoteManifest); err != nil {
 		m.logger.Error("Failed to save updated local manifest", "error", err)
 		return err
 	}
@@ -393,8 +276,8 @@ func (m *MolfarService) copyWorldsToBackup(instancePath, backupPath string) erro
 	worldDirs := []string{"world", "world_nether", "world_the_end"}
 
 	for _, worldDir := range worldDirs {
-		sourceKey := filepath.Join("instance", worldDir)
-		destKey := filepath.Join("backup", worldDir)
+		sourceKey := filepath.Join(InstanceDir, worldDir)
+		destKey := filepath.Join(BackupDir, worldDir)
 
 		m.logger.Debug("Copying world directory", "world", worldDir, "source", sourceKey, "dest", destKey)
 		err := m.localStorage.Copy(ctx, sourceKey, destKey)
@@ -435,46 +318,23 @@ func (m *MolfarService) downloadAndExtractWorlds(ctx context.Context, remoteMani
 		return ErrStorageNil
 	}
 
-	// Get the latest world URI from remote manifest
 	latestWorld := remoteManifest.GetLatestWorld()
 	if latestWorld == nil {
 		m.logger.Error("No worlds available in remote manifest")
 		return fmt.Errorf("no worlds available in remote manifest")
 	}
 
-	m.logger.Info("Downloading worlds from remote storage", "world_uri", latestWorld.URI, "created_at", latestWorld.CreatedAt)
-	// Download worlds from remote storage
-	worldZipData, err := m.remoteStorage.Get(ctx, latestWorld.URI)
+	sanitizedURI, err := m.sanitizeWorldURI(latestWorld.URI)
 	if err != nil {
-		m.logger.Error("Failed to get worlds from remote storage", "world_uri", latestWorld.URI, "error", err)
-		return fmt.Errorf("failed to get %s from remote storage: %w", latestWorld.URI, err)
+		return err
 	}
 
-	// Store in temp storage
-	tempKey := filepath.Join(TempPrefix, latestWorld.URI)
-	m.logger.Info("Storing worlds in temporary storage", "temp_key", tempKey)
-	err = m.localStorage.Put(ctx, tempKey, worldZipData)
-	if err != nil {
-		m.logger.Error("Failed to store worlds in temp storage", "temp_key", tempKey, "error", err)
-		return fmt.Errorf("failed to store %s in temp storage: %w", latestWorld.URI, err)
+	if err := m.downloadWorldArchive(ctx, sanitizedURI, latestWorld.CreatedAt); err != nil {
+		return err
 	}
 
-	// Extract worlds to instance directory
-	// Get the actual file path for unarchiving
-	tempFilePath := filepath.Join(m.workdir, tempKey)
-	m.logger.Info("Extracting worlds archive", "source", tempFilePath, "destination", instancePath)
-	err = m.archive.Unarchive(ctx, tempFilePath, instancePath)
-	if err != nil {
-		m.logger.Error("Failed to extract worlds archive", "source", tempFilePath, "destination", instancePath, "error", err)
-		return fmt.Errorf("failed to extract worlds: %w", err)
-	}
-
-	// Cleanup temporary storage
-	m.logger.Info("Cleaning up temporary world files", "temp_key", tempKey)
-	err = m.localStorage.Delete(ctx, tempKey)
-	if err != nil {
-		m.logger.Error("Failed to cleanup temp world files", "temp_key", tempKey, "error", err)
-		return fmt.Errorf("failed to cleanup %s: %w", latestWorld.URI, err)
+	if err := m.extractWorldArchive(ctx, sanitizedURI, instancePath); err != nil {
+		return err
 	}
 
 	m.logger.Info("World download and extraction completed successfully")
@@ -505,13 +365,11 @@ func (m *MolfarService) Run(server *domain.Server) error {
 		return err
 	}
 
-	err = m.acquireManifestLocks(ctx, localManifest)
-	if err != nil {
+	if err := m.acquireManifestLocks(ctx, localManifest); err != nil {
 		return err
 	}
 
-	err = m.executeServer(ctx, server)
-	if err != nil {
+	if err := m.executeServer(ctx, server); err != nil {
 		return err
 	}
 
@@ -641,8 +499,7 @@ func (m *MolfarService) Exit() error {
 		return err
 	}
 
-	err = m.uploadWorldBackup(ctx, archivePath, remoteKey)
-	if err != nil {
+	if err := m.uploadWorldBackup(ctx, archivePath, remoteKey); err != nil {
 		return err
 	}
 
@@ -651,13 +508,11 @@ func (m *MolfarService) Exit() error {
 		return err
 	}
 
-	err = m.cleanupTempFiles(ctx, timestamp, archivePath)
-	if err != nil {
+	if err := m.cleanupTempFiles(ctx, timestamp, archivePath); err != nil {
 		return err
 	}
 
-	err = m.unlockAndSaveManifests(ctx, localManifest)
-	if err != nil {
+	if err := m.unlockAndSaveManifests(ctx, localManifest); err != nil {
 		return err
 	}
 
@@ -684,7 +539,7 @@ func (m *MolfarService) copyWorldsToTemp(ctx context.Context, instancePath, temp
 	worldDirs := []string{"world", "world_nether", "world_the_end"}
 
 	for _, worldDir := range worldDirs {
-		sourceKey := filepath.Join("instance", worldDir)
+		sourceKey := filepath.Join(InstanceDir, worldDir)
 		destKey := filepath.Join(tempDir, worldDir)
 
 		m.logger.Debug("Copying world directory", "world", worldDir, "source", sourceKey, "dest", destKey)
@@ -896,5 +751,172 @@ func (m *MolfarService) manageWorldRetention(ctx context.Context, manifest *doma
 	}
 
 	m.logger.Info("World retention management completed", "remaining_count", len(manifest.StoredWorlds))
+	return nil
+}
+
+// Helper functions for Prepare method
+func (m *MolfarService) getRemoteManifest(ctx context.Context) (*domain.Manifest, error) {
+	remoteManifest, err := m.librarian.GetRemoteManifest(ctx)
+	if err != nil {
+		m.logger.Error("Failed to get remote manifest", "error", err)
+		return nil, err
+	}
+	if remoteManifest == nil {
+		return nil, errors.New("remote manifest cannot be nil")
+	}
+	m.logger.Info("Retrieved remote manifest", "ritual_version", remoteManifest.RitualVersion, "instance_version", remoteManifest.InstanceVersion)
+	return remoteManifest, nil
+}
+
+func (m *MolfarService) getOrInitializeLocalManifest(ctx context.Context, remoteManifest *domain.Manifest) (*domain.Manifest, error) {
+	localManifest, err := m.librarian.GetLocalManifest(ctx)
+	if err != nil {
+		if strings.Contains(err.Error(), "key not found") {
+			m.logger.Info("Local manifest not found, initializing new instance")
+			if initErr := m.initializeLocalInstance(ctx, remoteManifest); initErr != nil {
+				m.logger.Error("Failed to initialize local instance", "error", initErr)
+				return nil, initErr
+			}
+			localManifest, err = m.librarian.GetLocalManifest(ctx)
+			if err != nil {
+				m.logger.Error("Failed to get local manifest after initialization", "error", err)
+				return nil, err
+			}
+			m.logger.Info("Successfully initialized local instance")
+		} else {
+			m.logger.Error("Failed to get local manifest", "error", err)
+			return nil, err
+		}
+	} else {
+		m.logger.Info("Retrieved local manifest", "ritual_version", localManifest.RitualVersion, "instance_version", localManifest.InstanceVersion)
+	}
+	if localManifest == nil {
+		return nil, errors.New("local manifest cannot be nil")
+	}
+	return localManifest, nil
+}
+
+func (m *MolfarService) validateManifests(localManifest, remoteManifest *domain.Manifest) error {
+	if err := m.validator.CheckLock(localManifest, remoteManifest); err != nil {
+		m.logger.Error("Lock validation failed", "error", err)
+		return err
+	}
+	m.logger.Info("Lock validation passed")
+
+	if err := m.validator.CheckInstance(localManifest, remoteManifest); err != nil {
+		if errors.Is(err, ErrOutdatedInstance) {
+			m.logger.Info("Instance is outdated, updating local instance")
+			if updateErr := m.updateLocalInstance(context.Background(), remoteManifest); updateErr != nil {
+				m.logger.Error("Failed to update local instance", "error", updateErr)
+				return updateErr
+			}
+			m.logger.Info("Successfully updated local instance")
+		} else {
+			m.logger.Error("Instance validation failed", "error", err)
+			return err
+		}
+	} else {
+		m.logger.Info("Instance validation passed")
+	}
+
+	if err := m.validator.CheckWorld(localManifest, remoteManifest); err != nil {
+		if errors.Is(err, ErrOutdatedWorld) {
+			m.logger.Info("World is outdated, updating local worlds")
+			if updateErr := m.updateLocalWorlds(context.Background(), remoteManifest); updateErr != nil {
+				m.logger.Error("Failed to update local worlds", "error", updateErr)
+				return updateErr
+			}
+			m.logger.Info("Successfully updated local worlds")
+		} else {
+			m.logger.Error("World validation failed", "error", err)
+			return err
+		}
+	} else {
+		m.logger.Info("World validation passed")
+	}
+
+	return nil
+}
+
+// Helper functions for instance operations
+func (m *MolfarService) downloadAndExtractInstance(ctx context.Context, instancePath string) error {
+	m.logger.Info("Downloading instance from remote storage", "key", InstanceZipKey)
+	instanceZipData, err := m.remoteStorage.Get(ctx, InstanceZipKey)
+	if err != nil {
+		m.logger.Error("Failed to get instance from remote storage", "key", InstanceZipKey, "error", err)
+		return fmt.Errorf("failed to get %s from remote storage: %w", InstanceZipKey, err)
+	}
+
+	tempKey := filepath.Join(TempPrefix, InstanceZipKey)
+	m.logger.Info("Storing instance in temporary storage", "temp_key", tempKey)
+	err = m.localStorage.Put(ctx, tempKey, instanceZipData)
+	if err != nil {
+		m.logger.Error("Failed to store instance in temp storage", "temp_key", tempKey, "error", err)
+		return fmt.Errorf("failed to store %s in temp storage: %w", InstanceZipKey, err)
+	}
+
+	tempFilePath := filepath.Join(m.workdir, tempKey)
+	m.logger.Info("Extracting instance archive", "source", tempFilePath, "destination", instancePath)
+	err = m.archive.Unarchive(ctx, tempFilePath, instancePath)
+	if err != nil {
+		m.logger.Error("Failed to extract instance archive", "source", tempFilePath, "destination", instancePath, "error", err)
+		return err
+	}
+
+	m.logger.Info("Cleaning up temporary files", "temp_key", tempKey)
+	err = m.localStorage.Delete(ctx, tempKey)
+	if err != nil {
+		m.logger.Error("Failed to cleanup temp files", "temp_key", tempKey, "error", err)
+		return fmt.Errorf("failed to cleanup temp %s: %w", InstanceZipKey, err)
+	}
+
+	return nil
+}
+
+// Helper functions for world operations
+func (m *MolfarService) sanitizeWorldURI(uri string) (string, error) {
+	sanitizedURI := filepath.ToSlash(filepath.Clean(uri))
+	if !strings.HasPrefix(sanitizedURI, "worlds/") {
+		return "", fmt.Errorf("invalid world URI: %s", sanitizedURI)
+	}
+	return sanitizedURI, nil
+}
+
+func (m *MolfarService) downloadWorldArchive(ctx context.Context, sanitizedURI string, createdAt time.Time) error {
+	m.logger.Info("Downloading worlds from remote storage", "world_uri", sanitizedURI, "created_at", createdAt)
+	worldZipData, err := m.remoteStorage.Get(ctx, sanitizedURI)
+	if err != nil {
+		m.logger.Error("Failed to get worlds from remote storage", "world_uri", sanitizedURI, "error", err)
+		return fmt.Errorf("failed to get %s from remote storage: %w", sanitizedURI, err)
+	}
+
+	tempKey := filepath.Join(TempPrefix, sanitizedURI)
+	m.logger.Info("Storing worlds in temporary storage", "temp_key", tempKey)
+	err = m.localStorage.Put(ctx, tempKey, worldZipData)
+	if err != nil {
+		m.logger.Error("Failed to store worlds in temp storage", "temp_key", tempKey, "error", err)
+		return fmt.Errorf("failed to store %s in temp storage: %w", sanitizedURI, err)
+	}
+
+	return nil
+}
+
+func (m *MolfarService) extractWorldArchive(ctx context.Context, sanitizedURI, instancePath string) error {
+	tempKey := filepath.Join(TempPrefix, sanitizedURI)
+	tempFilePath := filepath.Join(m.workdir, tempKey)
+	m.logger.Info("Extracting worlds archive", "source", tempFilePath, "destination", instancePath)
+	err := m.archive.Unarchive(ctx, tempFilePath, instancePath)
+	if err != nil {
+		m.logger.Error("Failed to extract worlds archive", "source", tempFilePath, "destination", instancePath, "error", err)
+		return fmt.Errorf("failed to extract worlds: %w", err)
+	}
+
+	m.logger.Info("Cleaning up temporary world files", "temp_key", tempKey)
+	err = m.localStorage.Delete(ctx, tempKey)
+	if err != nil {
+		m.logger.Error("Failed to cleanup temp world files", "temp_key", tempKey, "error", err)
+		return fmt.Errorf("failed to cleanup %s: %w", sanitizedURI, err)
+	}
+
 	return nil
 }

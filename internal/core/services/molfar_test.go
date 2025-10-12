@@ -26,14 +26,13 @@ func createTestZipData() []byte {
 	var buf bytes.Buffer
 	zipWriter := zip.NewWriter(&buf)
 
-	// Add a simple file to make it a valid ZIP
 	file, err := zipWriter.Create("test.txt")
-	if err != nil {
-		panic(err)
-	}
-	file.Write([]byte("test content"))
+	assert.NoError(nil, err)
+	_, err = file.Write([]byte("test content"))
+	assert.NoError(nil, err)
 
-	zipWriter.Close()
+	err = zipWriter.Close()
+	assert.NoError(nil, err)
 	return buf.Bytes()
 }
 
@@ -121,11 +120,7 @@ func TestMolfarService_Prepare(t *testing.T) {
 		err = remoteStorage.Put(ctx, "worlds/test-world.zip", worldZipData)
 		assert.NoError(t, err)
 
-		// Execute Prepare - should initialize local instance
 		err = molfar.Prepare()
-		if err != nil {
-			t.Logf("Prepare failed: %v", err)
-		}
 		assert.NoError(t, err)
 
 		// Verify local manifest was created
@@ -381,10 +376,10 @@ func TestMolfarService_Exit(t *testing.T) {
 		})
 
 		t.Run("nil librarian", func(t *testing.T) {
-			molfar, _, _, _, _, cleanup := setupIntegrationTest(t)
+			_, _, _, _, _, cleanup := setupIntegrationTest(t)
 			defer cleanup()
 
-			molfar = &services.MolfarService{}
+			molfar := &services.MolfarService{}
 			err := molfar.Exit()
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "librarian service cannot be nil")
