@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"ritual/internal/adapters"
@@ -52,7 +53,7 @@ func setupIntegrationTest(t *testing.T) (*services.MolfarService, ports.Libraria
 	archive := services.NewArchiveService()
 
 	mockServerRunner := &mocks.MockServerRunner{}
-	mockLogger := adapters.NewLogger()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	molfar, err := services.NewMolfarService(
 		librarian,
 		validator,
@@ -60,7 +61,7 @@ func setupIntegrationTest(t *testing.T) (*services.MolfarService, ports.Libraria
 		localStorage,
 		remoteStorage,
 		mockServerRunner,
-		mockLogger,
+		logger,
 		local,
 	)
 	assert.NoError(t, err)

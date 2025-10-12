@@ -176,7 +176,11 @@ func TestValidatorService_CheckWorld(t *testing.T) {
 			local: &domain.Manifest{
 				StoredWorlds: []domain.World{},
 			},
-			remote:      &domain.Manifest{},
+			remote: &domain.Manifest{
+				StoredWorlds: []domain.World{
+					{URI: "world1", CreatedAt: validTime},
+				},
+			},
 			expectedErr: ErrNoLocalWorlds,
 		},
 		{

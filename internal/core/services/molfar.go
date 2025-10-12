@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"ritual/internal/core/domain"
@@ -41,7 +42,7 @@ type MolfarService struct {
 	localStorage  ports.StorageRepository
 	remoteStorage ports.StorageRepository
 	serverRunner  ports.ServerRunner
-	logger        ports.Logger
+	logger        *slog.Logger
 	workdir       string
 }
 
@@ -54,7 +55,7 @@ func NewMolfarService(
 	localStorage ports.StorageRepository,
 	remoteStorage ports.StorageRepository,
 	serverRunner ports.ServerRunner,
-	logger ports.Logger,
+	logger *slog.Logger,
 	workdir string,
 ) (*MolfarService, error) {
 	if librarian == nil {
@@ -260,6 +261,15 @@ func (m *MolfarService) initializeLocalInstance(ctx context.Context, remoteManif
 		m.logger.Error("Failed to cleanup temp files", "temp_key", tempKey, "error", err)
 		return fmt.Errorf("failed to cleanup temp %s: %w", InstanceZipKey, err)
 	}
+
+	// Always download latest world during initialization
+	m.logger.Info("Downloading latest world during initialization")
+	err = m.downloadAndExtractWorlds(ctx, remoteManifest, instancePath)
+	if err != nil {
+		m.logger.Error("Failed to download worlds during initialization", "error", err)
+		return err
+	}
+	m.logger.Info("Successfully downloaded worlds during initialization")
 
 	m.logger.Info("Saving local manifest", "instance_version", remoteManifest.InstanceVersion)
 	err = m.librarian.SaveLocalManifest(ctx, remoteManifest)

@@ -89,22 +89,3 @@ type ServerRunner interface {
 	// Run executes the server process with the given server configuration
 	Run(server *domain.Server) error
 }
-
-// Logger defines the logging interface
-// Logger provides structured logging capabilities using slog
-type Logger interface {
-	// Debug logs a debug message with optional attributes
-	Debug(msg string, attrs ...any)
-
-	// Info logs an info message with optional attributes
-	Info(msg string, attrs ...any)
-
-	// Warn logs a warning message with optional attributes
-	Warn(msg string, attrs ...any)
-
-	// Error logs an error message with optional attributes
-	Error(msg string, attrs ...any)
-
-	// With returns a new logger with the given attributes
-	With(attrs ...any) Logger
-}

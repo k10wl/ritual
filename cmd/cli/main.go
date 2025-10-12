@@ -1,18 +1,23 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"ritual/internal/adapters"
+	"ritual/internal/core/domain"
 	"ritual/internal/core/services"
+	"time"
 
 	"github.com/joho/godotenv"
 )
 
 func main() {
 	// Initialize structured logger
-	logger := adapters.NewLogger()
+	logger := slog.Default()
 	logger.Info("Starting R.I.T.U.A.L. application")
 
 	err := godotenv.Load()
@@ -91,6 +96,31 @@ func main() {
 	if err != nil {
 		logger.Error("Failed to create Molfar service", "error", err)
 		log.Fatalf("Failed to create Molfar service: %v", err)
+	}
+
+	logger.Info("Creating new manifest for QA testing")
+
+	// Create QA world
+	world, err := domain.NewWorld("worlds.zip")
+	if err != nil {
+		logger.Error("Failed to create world", "error", err)
+		log.Fatalf("Failed to create world: %v", err)
+	}
+
+	newManifest := &domain.Manifest{
+		RitualVersion:   "1.0.0-qa",
+		LockedBy:        "",
+		InstanceVersion: fmt.Sprintf("qa-%d", time.Now().Unix()),
+		StoredWorlds:    []domain.World{*world},
+		UpdatedAt:       time.Now(),
+	}
+
+	logger.Info("Uploading new manifest to R2", "instance_version", newManifest.InstanceVersion)
+	ctx := context.Background()
+	err = librarian.SaveRemoteManifest(ctx, newManifest)
+	if err != nil {
+		logger.Error("Failed to upload manifest to R2", "error", err)
+		log.Fatalf("Failed to upload manifest to R2: %v", err)
 	}
 
 	logger.Info("Running Molfar preparation")
