@@ -500,19 +500,62 @@ func (m *MolfarService) Run(server *domain.Server) error {
 	m.logger.Info("Starting execution phase", "server_address", server.Address, "server_memory", server.Memory, "server_ip", server.IP, "server_port", server.Port)
 	ctx := context.Background()
 
+	localManifest, err := m.validateAndRetrieveManifest(ctx)
+	if err != nil {
+		return err
+	}
+
+	err = m.acquireManifestLocks(ctx, localManifest)
+	if err != nil {
+		return err
+	}
+
+	err = m.executeServer(ctx, server)
+	if err != nil {
+		return err
+	}
+
+	m.logger.Info("Execution phase completed")
+	return nil
+}
+
+// validateAndRetrieveManifest retrieves and validates the local manifest
+func (m *MolfarService) validateAndRetrieveManifest(ctx context.Context) (*domain.Manifest, error) {
+	if ctx == nil {
+		return nil, errors.New("context cannot be nil")
+	}
+	if m.librarian == nil {
+		return nil, ErrLibrarianNil
+	}
+
 	m.logger.Info("Retrieving local manifest for lock validation")
 	localManifest, err := m.librarian.GetLocalManifest(ctx)
 	if err != nil {
 		m.logger.Error("Failed to get local manifest", "error", err)
-		return err
+		return nil, err
 	}
 	m.logger.Info("Retrieved local manifest", "instance_version", localManifest.InstanceVersion, "ritual_version", localManifest.RitualVersion)
 
 	if localManifest.LockedBy != "" {
 		m.logger.Error("Local manifest already locked", "locked_by", localManifest.LockedBy)
-		return errors.New("local manifest already locked")
+		return nil, errors.New("local manifest already locked")
 	}
 	m.logger.Info("Local manifest is unlocked, proceeding with lock acquisition")
+
+	return localManifest, nil
+}
+
+// acquireManifestLocks generates lock ID and acquires locks on both manifests
+func (m *MolfarService) acquireManifestLocks(ctx context.Context, localManifest *domain.Manifest) error {
+	if ctx == nil {
+		return errors.New("context cannot be nil")
+	}
+	if localManifest == nil {
+		return errors.New("local manifest cannot be nil")
+	}
+	if m.librarian == nil {
+		return ErrLibrarianNil
+	}
 
 	m.logger.Info("Generating unique lock identifier")
 	hostname, err := os.Hostname()
@@ -542,15 +585,29 @@ func (m *MolfarService) Run(server *domain.Server) error {
 	}
 	m.logger.Info("Successfully locked remote storage", "lock_id", lockID)
 
+	return nil
+}
+
+// executeServer runs the server using the server runner
+func (m *MolfarService) executeServer(ctx context.Context, server *domain.Server) error {
+	if ctx == nil {
+		return errors.New("context cannot be nil")
+	}
+	if server == nil {
+		return errors.New("server cannot be nil")
+	}
+	if m.serverRunner == nil {
+		return ErrServerRunnerNil
+	}
+
 	m.logger.Info("Starting server execution", "server_address", server.Address, "bat_path", server.BatPath)
-	err = m.serverRunner.Run(server)
+	err := m.serverRunner.Run(server)
 	if err != nil {
 		m.logger.Error("Server execution failed", "error", err)
 		return err
 	}
 	m.logger.Info("Server execution completed successfully")
 
-	m.logger.Info("Execution phase completed")
 	return nil
 }
 
