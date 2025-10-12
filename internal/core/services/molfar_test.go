@@ -129,7 +129,7 @@ func TestMolfarService_Prepare(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, remoteManifest.InstanceVersion, localManifest.InstanceVersion)
 		assert.Equal(t, remoteManifest.RitualVersion, localManifest.RitualVersion)
-		assert.NotEmpty(t, localManifest.LockedBy)
+		assert.Empty(t, localManifest.LockedBy)
 
 		// Verify instance directory was created
 		instancePath := filepath.Join(workdir, "instance")
@@ -167,7 +167,7 @@ func TestMolfarService_Prepare(t *testing.T) {
 		updatedLocalManifest, err := librarian.GetLocalManifest(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, "v1.0.0", updatedLocalManifest.InstanceVersion)
-		assert.NotEmpty(t, updatedLocalManifest.LockedBy)
+		assert.Empty(t, updatedLocalManifest.LockedBy)
 	})
 
 	t.Run("existing local manifest, outdated worlds", func(t *testing.T) {
@@ -222,7 +222,7 @@ func TestMolfarService_Prepare(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Len(t, updatedLocalManifest.StoredWorlds, 1)
 		assert.Equal(t, "worlds/new-world.zip", updatedLocalManifest.StoredWorlds[0].URI)
-		assert.NotEmpty(t, updatedLocalManifest.LockedBy)
+		assert.Empty(t, updatedLocalManifest.LockedBy)
 	})
 
 	t.Run("lock conflict scenario", func(t *testing.T) {

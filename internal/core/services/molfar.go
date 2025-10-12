@@ -5,12 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"strings"
-	"time"
 )
 
 // Molfar constants
@@ -110,7 +108,7 @@ func (m *MolfarService) Prepare() error {
 		return ErrValidatorNil
 	}
 
-	m.logger.Info("Starting Molfar preparation phase", "workdir", m.workdir)
+	m.logger.Info("Starting preparation phase", "workdir", m.workdir)
 	ctx := context.Background()
 
 	remoteManifest, err := m.librarian.GetRemoteManifest(ctx)
@@ -181,29 +179,7 @@ func (m *MolfarService) Prepare() error {
 		m.logger.Info("World validation passed")
 	}
 
-	hostname, err := os.Hostname()
-	if err != nil {
-		m.logger.Error("Failed to get hostname", "error", err)
-		return err
-	}
-
-	lockKey := fmt.Sprintf("%s__%d", hostname, time.Now().Unix())
-	remoteManifest.LockedBy = lockKey
-	m.logger.Info("Acquiring lock", "hostname", hostname, "lock_key", lockKey)
-
-	err = m.librarian.SaveRemoteManifest(ctx, remoteManifest)
-	if err != nil {
-		m.logger.Error("Failed to save remote manifest with lock", "error", err)
-		return err
-	}
-
-	err = m.librarian.SaveLocalManifest(ctx, remoteManifest)
-	if err != nil {
-		m.logger.Error("Failed to save local manifest", "error", err)
-		return err
-	}
-
-	m.logger.Info("Molfar preparation phase completed successfully")
+	m.logger.Info("Preparation phase completed successfully")
 	return nil
 }
 
@@ -386,6 +362,14 @@ func (m *MolfarService) updateLocalWorlds(ctx context.Context, remoteManifest *d
 		return fmt.Errorf("failed to download and extract new worlds: %w", err)
 	}
 
+	// Update local manifest with new world information
+	m.logger.Info("Updating local manifest with new world information")
+	err = m.librarian.SaveLocalManifest(ctx, remoteManifest)
+	if err != nil {
+		m.logger.Error("Failed to save updated local manifest", "error", err)
+		return fmt.Errorf("failed to save updated local manifest: %w", err)
+	}
+
 	m.logger.Info("Local worlds update completed successfully")
 	return nil
 }
@@ -505,9 +489,9 @@ func (m *MolfarService) Run() error {
 		return ErrServerRunnerNil
 	}
 
-	m.logger.Info("Starting Molfar execution phase")
+	m.logger.Info("Starting execution phase")
 	// TODO: Implement server execution logic
-	m.logger.Info("Molfar execution phase completed")
+	m.logger.Info("Execution phase completed")
 	return nil
 }
 
@@ -521,8 +505,8 @@ func (m *MolfarService) Exit() error {
 		return ErrLibrarianNil
 	}
 
-	m.logger.Info("Starting Molfar exit phase")
+	m.logger.Info("Starting exit phase")
 	// TODO: Implement cleanup and lock release logic
-	m.logger.Info("Molfar exit phase completed")
+	m.logger.Info("Exit phase completed")
 	return nil
 }
