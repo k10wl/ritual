@@ -48,8 +48,6 @@
 - [x] Complete storage adapter methods
 - [x] Create adapter tests
 
-# >>> We are here
-
 ### Sprint 4: Orchestration Engine (2 weeks)
 - [x] Implement `MolfarService`
 - [x] Add lifecycle management
@@ -57,6 +55,8 @@
 - [x] Create orchestration tests
 - [x] Implement outdated instance handling
 - [x] Add instance update mechanism
+
+# >>> We are here
 
 ### Sprint 5: CLI Interface (1 week)
 - [ ] Implement main application
