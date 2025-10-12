@@ -576,91 +576,31 @@ func (m *MolfarService) Exit() error {
 	m.logger.Info("Starting exit phase")
 	ctx := context.Background()
 
-	// Generate unique timestamp for this world backup
 	timestamp := time.Now().Unix()
-	tempDir := filepath.Join(TempPrefix, fmt.Sprintf("%d", timestamp))
-	instancePath := filepath.Join(m.workdir, InstanceDir)
-
-	// Step 1: Copy world directories to temp/{unixtimestamp}/
-	m.logger.Info("Copying world directories to temp", "temp_dir", tempDir)
-	err := m.copyWorldsToTemp(ctx, instancePath, tempDir)
-	if err != nil {
-		m.logger.Error("Failed to copy worlds to temp", "error", err)
-		return err
-	}
-
-	// Step 2: Archive {unixtimestamp} directory
-	archivePath := filepath.Join(m.workdir, tempDir+".zip")
-	m.logger.Info("Archiving world backup", "source", tempDir, "destination", archivePath)
-	err = m.archive.Archive(ctx, filepath.Join(m.workdir, tempDir), archivePath)
-	if err != nil {
-		m.logger.Error("Failed to archive world backup", "error", err)
-		return err
-	}
-
-	// Step 3: Upload to remote storage with name "worlds/{unixtimestamp}.zip"
 	remoteKey := fmt.Sprintf("worlds/%d.zip", timestamp)
-	m.logger.Info("Uploading world backup to remote storage", "remote_key", remoteKey)
-	archiveData, err := os.ReadFile(archivePath)
+
+	archivePath, err := m.createWorldBackup(ctx, timestamp)
 	if err != nil {
-		m.logger.Error("Failed to read archive file", "error", err)
-		return err
-	}
-	err = m.remoteStorage.Put(ctx, remoteKey, archiveData)
-	if err != nil {
-		m.logger.Error("Failed to upload world backup", "error", err)
 		return err
 	}
 
-	// Step 4: Append new world to local manifest
-	m.logger.Info("Adding world to local manifest", "world_uri", remoteKey)
-	localManifest, err := m.librarian.GetLocalManifest(ctx)
+	err = m.uploadWorldBackup(ctx, archivePath, remoteKey)
 	if err != nil {
-		m.logger.Error("Failed to get local manifest", "error", err)
-		return err
-	}
-	newWorld, err := domain.NewWorld(remoteKey)
-	if err != nil {
-		m.logger.Error("Failed to create new world", "error", err)
-		return err
-	}
-	localManifest.AddWorld(*newWorld)
-
-	// Step 6: Cleanup temp directory
-	m.logger.Info("Cleaning up temp directory", "temp_dir", tempDir)
-	err = m.localStorage.Delete(ctx, tempDir)
-	if err != nil {
-		m.logger.Error("Failed to cleanup temp directory", "error", err)
-		return err
-	}
-	err = os.Remove(archivePath)
-	if err != nil {
-		m.logger.Error("Failed to cleanup archive file", "error", err)
 		return err
 	}
 
-	// Step 7: Unlock remote storage
-	m.logger.Info("Unlocking remote storage")
-	localManifest.Unlock()
-
-	// Step 8: Remove excess worlds from manifest and remote storage (keep max 5)
-	m.logger.Info("Managing world retention", "current_count", len(localManifest.StoredWorlds))
-	err = m.manageWorldRetention(ctx, localManifest)
+	localManifest, err := m.updateManifestWithWorld(ctx, remoteKey)
 	if err != nil {
-		m.logger.Error("Failed to manage world retention", "error", err)
 		return err
 	}
 
-	// Step 5: Save manifests (local and remote)
-	m.logger.Info("Saving manifests")
-	err = m.librarian.SaveLocalManifest(ctx, localManifest)
+	err = m.cleanupTempFiles(ctx, timestamp, archivePath)
 	if err != nil {
-		m.logger.Error("Failed to save local manifest", "error", err)
 		return err
 	}
-	err = m.librarian.SaveRemoteManifest(ctx, localManifest)
+
+	err = m.unlockAndSaveManifests(ctx, localManifest)
 	if err != nil {
-		m.logger.Error("Failed to save remote manifest", "error", err)
 		return err
 	}
 
@@ -704,6 +644,165 @@ func (m *MolfarService) copyWorldsToTemp(ctx context.Context, instancePath, temp
 	}
 
 	m.logger.Info("World copy to temp completed successfully")
+	return nil
+}
+
+// createWorldBackup creates a backup of world directories and archives them
+func (m *MolfarService) createWorldBackup(ctx context.Context, timestamp int64) (string, error) {
+	if ctx == nil {
+		return "", errors.New("context cannot be nil")
+	}
+	if m.localStorage == nil {
+		return "", ErrStorageNil
+	}
+	if m.archive == nil {
+		return "", ErrArchiveNil
+	}
+
+	tempDir := filepath.Join(TempPrefix, fmt.Sprintf("%d", timestamp))
+	instancePath := filepath.Join(m.workdir, InstanceDir)
+
+	m.logger.Info("Copying world directories to temp", "temp_dir", tempDir)
+	err := m.copyWorldsToTemp(ctx, instancePath, tempDir)
+	if err != nil {
+		m.logger.Error("Failed to copy worlds to temp", "error", err)
+		return "", err
+	}
+
+	archivePath := filepath.Join(m.workdir, tempDir+".zip")
+	m.logger.Info("Archiving world backup", "source", tempDir, "destination", archivePath)
+	err = m.archive.Archive(ctx, filepath.Join(m.workdir, tempDir), archivePath)
+	if err != nil {
+		m.logger.Error("Failed to archive world backup", "error", err)
+		return "", err
+	}
+
+	return archivePath, nil
+}
+
+// uploadWorldBackup uploads the archived world backup to remote storage
+func (m *MolfarService) uploadWorldBackup(ctx context.Context, archivePath, remoteKey string) error {
+	if ctx == nil {
+		return errors.New("context cannot be nil")
+	}
+	if archivePath == "" {
+		return errors.New("archive path cannot be empty")
+	}
+	if remoteKey == "" {
+		return errors.New("remote key cannot be empty")
+	}
+	if m.remoteStorage == nil {
+		return ErrStorageNil
+	}
+
+	m.logger.Info("Uploading world backup to remote storage", "remote_key", remoteKey)
+	archiveData, err := os.ReadFile(archivePath)
+	if err != nil {
+		m.logger.Error("Failed to read archive file", "error", err)
+		return err
+	}
+	err = m.remoteStorage.Put(ctx, remoteKey, archiveData)
+	if err != nil {
+		m.logger.Error("Failed to upload world backup", "error", err)
+		return err
+	}
+
+	return nil
+}
+
+// updateManifestWithWorld adds the new world to the local manifest
+func (m *MolfarService) updateManifestWithWorld(ctx context.Context, remoteKey string) (*domain.Manifest, error) {
+	if ctx == nil {
+		return nil, errors.New("context cannot be nil")
+	}
+	if remoteKey == "" {
+		return nil, errors.New("remote key cannot be empty")
+	}
+	if m.librarian == nil {
+		return nil, ErrLibrarianNil
+	}
+
+	m.logger.Info("Adding world to local manifest", "world_uri", remoteKey)
+	localManifest, err := m.librarian.GetLocalManifest(ctx)
+	if err != nil {
+		m.logger.Error("Failed to get local manifest", "error", err)
+		return nil, err
+	}
+	newWorld, err := domain.NewWorld(remoteKey)
+	if err != nil {
+		m.logger.Error("Failed to create new world", "error", err)
+		return nil, err
+	}
+	localManifest.AddWorld(*newWorld)
+
+	return localManifest, nil
+}
+
+// cleanupTempFiles removes temporary files and directories
+func (m *MolfarService) cleanupTempFiles(ctx context.Context, timestamp int64, archivePath string) error {
+	if ctx == nil {
+		return errors.New("context cannot be nil")
+	}
+	if archivePath == "" {
+		return errors.New("archive path cannot be empty")
+	}
+	if m.localStorage == nil {
+		return ErrStorageNil
+	}
+
+	tempDir := filepath.Join(TempPrefix, fmt.Sprintf("%d", timestamp))
+	m.logger.Info("Cleaning up temp directory", "temp_dir", tempDir)
+	err := m.localStorage.Delete(ctx, tempDir)
+	if err != nil {
+		m.logger.Error("Failed to cleanup temp directory", "error", err)
+		return err
+	}
+	err = os.Remove(archivePath)
+	if err != nil {
+		m.logger.Error("Failed to cleanup archive file", "error", err)
+		return err
+	}
+
+	return nil
+}
+
+// unlockAndSaveManifests unlocks the manifest and saves both local and remote manifests
+func (m *MolfarService) unlockAndSaveManifests(ctx context.Context, localManifest *domain.Manifest) error {
+	if ctx == nil {
+		return errors.New("context cannot be nil")
+	}
+	if localManifest == nil {
+		return errors.New("local manifest cannot be nil")
+	}
+	if m.librarian == nil {
+		return ErrLibrarianNil
+	}
+	if m.remoteStorage == nil {
+		return ErrStorageNil
+	}
+
+	m.logger.Info("Unlocking remote storage")
+	localManifest.Unlock()
+
+	m.logger.Info("Managing world retention", "current_count", len(localManifest.StoredWorlds))
+	err := m.manageWorldRetention(ctx, localManifest)
+	if err != nil {
+		m.logger.Error("Failed to manage world retention", "error", err)
+		return err
+	}
+
+	m.logger.Info("Saving manifests")
+	err = m.librarian.SaveLocalManifest(ctx, localManifest)
+	if err != nil {
+		m.logger.Error("Failed to save local manifest", "error", err)
+		return err
+	}
+	err = m.librarian.SaveRemoteManifest(ctx, localManifest)
+	if err != nil {
+		m.logger.Error("Failed to save remote manifest", "error", err)
+		return err
+	}
+
 	return nil
 }
 
