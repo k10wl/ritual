@@ -48,3 +48,21 @@ func (m *Manifest) GetLatestWorld() *World {
 	}
 	return latest
 }
+
+// Clone creates a deep copy of the manifest
+func (m *Manifest) Clone() *Manifest {
+	if m == nil {
+		return nil
+	}
+
+	clone := &Manifest{
+		RitualVersion:   m.RitualVersion,
+		LockedBy:        m.LockedBy,
+		InstanceVersion: m.InstanceVersion,
+		StoredWorlds:    make([]World, len(m.StoredWorlds)),
+		UpdatedAt:       time.Now(),
+	}
+
+	copy(clone.StoredWorlds, m.StoredWorlds)
+	return clone
+}

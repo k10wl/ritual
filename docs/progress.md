@@ -34,8 +34,6 @@
 - [x] Implement comprehensive test coverage for ArchiveService
 - [x] Create MockArchiveService with advanced verification methods
 
-# >>> We are here
-
 ### Sprint 3: Adapters Layer (2 weeks)
 - [x] Implement `ServerRunner`
 - [x] Create `Server` domain entity
@@ -46,15 +44,19 @@
 - [x] Implement `CommandExecutor` adapter
 - [x] Add `CommandExecutor` mock implementation
 - [x] Complete ServerRunner integration with CommandExecutor
-- [ ] Enhance CLI adapter
-- [ ] Complete storage adapter methods
-- [ ] Create adapter tests
+- [x] Enhance CLI adapter
+- [x] Complete storage adapter methods
+- [x] Create adapter tests
+
+# >>> We are here
 
 ### Sprint 4: Orchestration Engine (2 weeks)
-- [ ] Implement `MolfarService`
-- [ ] Add lifecycle management
-- [ ] Integrate all services
-- [ ] Create orchestration tests
+- [x] Implement `MolfarService`
+- [x] Add lifecycle management
+- [x] Integrate all services
+- [x] Create orchestration tests
+- [x] Implement outdated instance handling
+- [x] Add instance update mechanism
 
 ### Sprint 5: CLI Interface (1 week)
 - [ ] Implement main application
