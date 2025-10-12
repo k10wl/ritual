@@ -52,6 +52,7 @@ func setupIntegrationTest(t *testing.T) (*services.MolfarService, ports.Libraria
 	archive := services.NewArchiveService()
 
 	mockServerRunner := &mocks.MockServerRunner{}
+	mockLogger := adapters.NewLogger()
 	molfar, err := services.NewMolfarService(
 		librarian,
 		validator,
@@ -59,6 +60,7 @@ func setupIntegrationTest(t *testing.T) (*services.MolfarService, ports.Libraria
 		localStorage,
 		remoteStorage,
 		mockServerRunner,
+		mockLogger,
 		local,
 	)
 	assert.NoError(t, err)
@@ -248,9 +250,17 @@ func TestMolfarService_Prepare(t *testing.T) {
 }
 
 func TestMolfarService_Run(t *testing.T) {
-	// this function should run the server with the correct configuration
+	molfar, _, _, _, _, cleanup := setupIntegrationTest(t)
+	defer cleanup()
+
+	err := molfar.Run()
+	assert.NoError(t, err)
 }
 
 func TestMolfarService_Exit(t *testing.T) {
-	// leave tests for now, we will implement them later
+	molfar, _, _, _, _, cleanup := setupIntegrationTest(t)
+	defer cleanup()
+
+	err := molfar.Exit()
+	assert.NoError(t, err)
 }

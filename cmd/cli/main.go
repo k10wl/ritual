@@ -1,18 +1,104 @@
 package main
 
 import (
-	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"ritual/internal/adapters"
+	"ritual/internal/core/services"
 
 	"github.com/joho/godotenv"
 )
 
 func main() {
-	// Load .env file from project root
+	// Initialize structured logger
+	logger := adapters.NewLogger()
+	logger.Info("Starting R.I.T.U.A.L. application")
+
 	err := godotenv.Load()
 	if err != nil {
-		log.Printf("Warning: .env file not found: %v", err)
+		logger.Warn("Environment file not found", "error", err)
 	}
 
-	fmt.Println("Hello, World!")
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		logger.Error("Failed to get home directory", "error", err)
+		log.Fatalf("Failed to get home directory: %v", err)
+	}
+
+	workdir := filepath.Join(homedir, "k10wl", "ritual")
+	logger.Info("Setting up working directory", "workdir", workdir)
+	err = os.MkdirAll(workdir, 0755)
+	if err != nil {
+		logger.Error("Failed to create workdir", "workdir", workdir, "error", err)
+		log.Fatalf("Failed to create workdir: %v", err)
+	}
+
+	logger.Info("Initializing R2 repository")
+	r2, err := adapters.NewR2Repository(
+		os.Getenv("R2_BUCKET_NAME"),
+		os.Getenv("R2_ACCOUNT_ID"),
+		os.Getenv("R2_ACCESS_KEY_ID"),
+		os.Getenv("R2_SECRET_ACCESS_KEY"),
+	)
+	if err != nil {
+		logger.Error("Failed to create R2 repository", "error", err)
+		log.Fatalf("Failed to create R2 repository: %v", err)
+	}
+
+	logger.Info("Initializing filesystem repository", "workdir", workdir)
+	fs, err := adapters.NewFSRepository(workdir)
+	if err != nil {
+		logger.Error("Failed to create filesystem repository", "workdir", workdir, "error", err)
+		log.Fatalf("Failed to create filesystem repository: %v", err)
+	}
+
+	logger.Info("Initializing services")
+	librarian, err := services.NewLibrarianService(fs, r2)
+	if err != nil {
+		logger.Error("Failed to create librarian service", "error", err)
+		log.Fatalf("Failed to create librarian service: %v", err)
+	}
+
+	validator, err := services.NewValidatorService()
+	if err != nil {
+		logger.Error("Failed to create validator service", "error", err)
+		log.Fatalf("Failed to create validator service: %v", err)
+	}
+	archive := services.NewArchiveService()
+
+	logger.Info("Initializing command executor")
+	commandExecutor := adapters.NewCommandExecutorAdapter()
+
+	logger.Info("Initializing server runner")
+	serverRunner, err := adapters.NewServerRunner(homedir, commandExecutor)
+	if err != nil {
+		logger.Error("Failed to create server runner", "error", err)
+		log.Fatalf("Failed to create server runner: %v", err)
+	}
+
+	logger.Info("Initializing Molfar service")
+	molfar, err := services.NewMolfarService(
+		librarian,
+		validator,
+		archive,
+		fs,
+		r2,
+		serverRunner,
+		logger,
+		workdir,
+	)
+	if err != nil {
+		logger.Error("Failed to create Molfar service", "error", err)
+		log.Fatalf("Failed to create Molfar service: %v", err)
+	}
+
+	logger.Info("Running Molfar preparation")
+	err = molfar.Prepare()
+	if err != nil {
+		logger.Error("Failed to prepare Molfar", "error", err)
+		log.Fatalf("Failed to prepare Molfar: %v", err)
+	}
+
+	logger.Info("Molfar preparation completed successfully")
 }
