@@ -1,33 +1,35 @@
 package mocks
 
 import (
-	"errors"
-	"ritual/internal/core/ports"
 	"testing"
+
+	"ritual/internal/core/domain"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMockServerRunner_ImplementsInterface(t *testing.T) {
-	var _ ports.ServerRunner = NewMockServerRunner()
-}
-
 func TestMockServerRunner_Run(t *testing.T) {
-	mock := NewMockServerRunner()
+	mockRunner := NewMockServerRunner()
+	server := &domain.Server{Address: "127.0.0.1:25565", IP: "127.0.0.1", Port: 25565, Memory: 1024}
 
-	err := mock.Run()
+	mockRunner.On("Run", server).Return(nil)
+
+	err := mockRunner.Run(server)
 	assert.NoError(t, err)
+
+	mockRunner.AssertExpectations(t)
 }
 
-func TestMockServerRunner_RunWithError(t *testing.T) {
-	mockRunner, ok := NewMockServerRunner().(*MockServerRunner)
-	assert.True(t, ok, "Failed to cast NewMockServerRunner() to *MockServerRunner")
+func TestMockServerRunner_Run_Error(t *testing.T) {
+	mockRunner := NewMockServerRunner()
+	server := &domain.Server{Address: "127.0.0.1:25565", IP: "127.0.0.1", Port: 25565, Memory: 1024}
 
-	expectedErr := errors.New("test error")
-	mockRunner.RunFunc = func() error {
-		return expectedErr
-	}
+	expectedError := assert.AnError
+	mockRunner.On("Run", server).Return(expectedError)
 
-	err := mockRunner.Run()
-	assert.Equal(t, expectedErr, err)
+	err := mockRunner.Run(server)
+	assert.Error(t, err)
+	assert.Equal(t, expectedError, err)
+
+	mockRunner.AssertExpectations(t)
 }

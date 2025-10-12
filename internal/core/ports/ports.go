@@ -76,9 +76,16 @@ type ArchiveService interface {
 	Unarchive(ctx context.Context, archive string, destination string) error
 }
 
+// CommandExecutor defines the command execution interface
+// CommandExecutor abstracts command execution for testability
+type CommandExecutor interface {
+	// Execute runs a command with the given arguments and working directory
+	Execute(command string, args []string, workingDir string) error
+}
+
 // ServerRunner defines the server execution interface
 // ServerRunner handles the execution of Minecraft server processes
 type ServerRunner interface {
-	// Run executes the server process
-	Run() error
+	// Run executes the server process with the given server configuration
+	Run(server *domain.Server) error
 }
