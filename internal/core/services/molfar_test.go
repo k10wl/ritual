@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"ritual/internal/adapters"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
 func createTestZipData() []byte {
@@ -53,6 +56,7 @@ func setupIntegrationTest(t *testing.T) (*services.MolfarService, ports.Libraria
 	archive := services.NewArchiveService()
 
 	mockServerRunner := &mocks.MockServerRunner{}
+	mockServerRunner.On("Run", mock.AnythingOfType("*domain.Server")).Return(nil)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	molfar, err := services.NewMolfarService(
 		librarian,
@@ -251,17 +255,242 @@ func TestMolfarService_Prepare(t *testing.T) {
 }
 
 func TestMolfarService_Run(t *testing.T) {
-	molfar, _, _, _, _, cleanup := setupIntegrationTest(t)
-	defer cleanup()
+	t.Run("successful lock acquisition and server execution", func(t *testing.T) {
+		molfar, librarian, _, _, _, cleanup := setupIntegrationTest(t)
+		defer cleanup()
 
-	err := molfar.Run()
-	assert.NoError(t, err)
+		ctx := context.Background()
+		testWorld := createTestWorld("worlds/test-world.zip")
+		localManifest := createTestManifest("v1.0.0", []domain.World{testWorld})
+		err := librarian.SaveLocalManifest(ctx, localManifest)
+		assert.NoError(t, err)
+
+		server, err := domain.NewServer("127.0.0.1:25565", 1024)
+		assert.NoError(t, err)
+
+		err = molfar.Run(server)
+		assert.NoError(t, err)
+
+		// Verify manifest is locked after Run
+		lockedManifest, err := librarian.GetLocalManifest(ctx)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, lockedManifest.LockedBy)
+		assert.Contains(t, lockedManifest.LockedBy, "__")
+	})
+
+	t.Run("nil server argument", func(t *testing.T) {
+		molfar, _, _, _, _, cleanup := setupIntegrationTest(t)
+		defer cleanup()
+
+		err := molfar.Run(nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "server cannot be nil")
+	})
+
+	t.Run("nil molfar service", func(t *testing.T) {
+		var molfar *services.MolfarService
+		server, err := domain.NewServer("127.0.0.1:25565", 1024)
+		assert.NoError(t, err)
+
+		err = molfar.Run(server)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "molfar service cannot be nil")
+	})
+
+	t.Run("local manifest already locked", func(t *testing.T) {
+		molfar, librarian, _, _, _, cleanup := setupIntegrationTest(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		testWorld := createTestWorld("worlds/test-world.zip")
+		localManifest := createTestManifest("v1.0.0", []domain.World{testWorld})
+		localManifest.LockedBy = "other-host__1234567890"
+		err := librarian.SaveLocalManifest(ctx, localManifest)
+		assert.NoError(t, err)
+
+		server, err := domain.NewServer("127.0.0.1:25565", 1024)
+		assert.NoError(t, err)
+
+		err = molfar.Run(server)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "local manifest already locked")
+	})
 }
 
 func TestMolfarService_Exit(t *testing.T) {
-	molfar, _, _, _, _, cleanup := setupIntegrationTest(t)
-	defer cleanup()
+	t.Run("successful exit sequence", func(t *testing.T) {
+		molfar, librarian, _, remoteStorage, workdir, cleanup := setupIntegrationTest(t)
+		defer cleanup()
 
-	err := molfar.Exit()
-	assert.NoError(t, err)
+		ctx := context.Background()
+
+		// Setup test world directories
+		instancePath := filepath.Join(workdir, "instance")
+		err := os.MkdirAll(filepath.Join(instancePath, "world"), 0755)
+		assert.NoError(t, err)
+		err = os.MkdirAll(filepath.Join(instancePath, "world_nether"), 0755)
+		assert.NoError(t, err)
+		err = os.MkdirAll(filepath.Join(instancePath, "world_the_end"), 0755)
+		assert.NoError(t, err)
+
+		// Create test files in world directories
+		err = os.WriteFile(filepath.Join(instancePath, "world", "level.dat"), []byte("test data"), 0644)
+		assert.NoError(t, err)
+
+		// Setup manifest with lock
+		localManifest := createTestManifest("v1.0.0", []domain.World{})
+		localManifest.LockedBy = "test-host__1234567890"
+		err = librarian.SaveLocalManifest(ctx, localManifest)
+		assert.NoError(t, err)
+
+		err = molfar.Exit()
+		assert.NoError(t, err)
+
+		// Verify manifest is unlocked
+		updatedManifest, err := librarian.GetLocalManifest(ctx)
+		assert.NoError(t, err)
+		assert.Empty(t, updatedManifest.LockedBy)
+		assert.Len(t, updatedManifest.StoredWorlds, 1)
+
+		// Verify local and remote manifests are synchronized
+		remoteManifest, err := librarian.GetRemoteManifest(ctx)
+		assert.NoError(t, err)
+		assert.Equal(t, updatedManifest.RitualVersion, remoteManifest.RitualVersion)
+		assert.Equal(t, updatedManifest.InstanceVersion, remoteManifest.InstanceVersion)
+		assert.Equal(t, updatedManifest.StoredWorlds, remoteManifest.StoredWorlds)
+		assert.Equal(t, updatedManifest.LockedBy, remoteManifest.LockedBy)
+
+		// Verify world is stored in remote storage
+		assert.Len(t, updatedManifest.StoredWorlds, 1)
+		worldURI := updatedManifest.StoredWorlds[0].URI
+		assert.Contains(t, worldURI, "worlds/")
+		assert.Contains(t, worldURI, ".zip")
+
+		// Verify world data exists in remote storage
+		worldData, err := remoteStorage.Get(ctx, worldURI)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, worldData)
+	})
+
+	t.Run("nil service error handling", func(t *testing.T) {
+		t.Run("nil molfar", func(t *testing.T) {
+			var molfar *services.MolfarService
+			err := molfar.Exit()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "molfar service cannot be nil")
+		})
+
+		t.Run("nil librarian", func(t *testing.T) {
+			molfar, _, _, _, _, cleanup := setupIntegrationTest(t)
+			defer cleanup()
+
+			molfar = &services.MolfarService{}
+			err := molfar.Exit()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "librarian service cannot be nil")
+		})
+	})
+}
+
+func TestMolfarService_copyWorldsToTemp(t *testing.T) {
+	t.Run("world directory operations", func(t *testing.T) {
+		molfar, librarian, _, _, workdir, cleanup := setupIntegrationTest(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		instancePath := filepath.Join(workdir, "instance")
+
+		// Setup test world directories
+		err := os.MkdirAll(filepath.Join(instancePath, "world"), 0755)
+		assert.NoError(t, err)
+		err = os.MkdirAll(filepath.Join(instancePath, "world_nether"), 0755)
+		assert.NoError(t, err)
+		err = os.MkdirAll(filepath.Join(instancePath, "world_the_end"), 0755)
+		assert.NoError(t, err)
+
+		// Create test files
+		err = os.WriteFile(filepath.Join(instancePath, "world", "level.dat"), []byte("world data"), 0644)
+		assert.NoError(t, err)
+		err = os.WriteFile(filepath.Join(instancePath, "world_nether", "level.dat"), []byte("nether data"), 0644)
+		assert.NoError(t, err)
+
+		// Setup manifest with lock
+		localManifest := createTestManifest("v1.0.0", []domain.World{})
+		localManifest.LockedBy = "test-host__1234567890"
+		err = librarian.SaveLocalManifest(ctx, localManifest)
+		assert.NoError(t, err)
+
+		// Test the Exit method which calls copyWorldsToTemp
+		err = molfar.Exit()
+		assert.NoError(t, err)
+	})
+}
+
+func TestMolfarService_manageWorldRetention(t *testing.T) {
+	t.Run("world retention through exit", func(t *testing.T) {
+		molfar, librarian, _, remoteStorage, workdir, cleanup := setupIntegrationTest(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		// Create 7 worlds (exceeds limit of 5)
+		worlds := make([]domain.World, 7)
+		for i := 0; i < 7; i++ {
+			worlds[i] = createTestWorld(fmt.Sprintf("worlds/world%d.zip", i))
+		}
+		manifest := createTestManifest("v1.0.0", worlds)
+		manifest.LockedBy = "test-host__1234567890"
+		err := librarian.SaveLocalManifest(ctx, manifest)
+		assert.NoError(t, err)
+
+		// Mock remote storage to simulate world deletion
+		for i := 0; i < 7; i++ {
+			err := remoteStorage.Put(ctx, fmt.Sprintf("worlds/world%d.zip", i), []byte("test data"))
+			assert.NoError(t, err)
+		}
+
+		// Setup test world directories
+		instancePath := filepath.Join(workdir, "instance")
+		err = os.MkdirAll(filepath.Join(instancePath, "world"), 0755)
+		assert.NoError(t, err)
+
+		err = molfar.Exit()
+		assert.NoError(t, err)
+
+		// Verify world retention worked
+		updatedManifest, err := librarian.GetLocalManifest(ctx)
+		assert.NoError(t, err)
+		assert.Len(t, updatedManifest.StoredWorlds, 5) // 7 original + 1 new from Exit - 3 removed = 5
+
+		// Check that oldest worlds (world0, world1, world2) were removed
+		worldURIs := make([]string, len(updatedManifest.StoredWorlds))
+		for i, world := range updatedManifest.StoredWorlds {
+			worldURIs[i] = world.URI
+		}
+
+		// Verify world0, world1, and world2 are not present
+		assert.NotContains(t, worldURIs, "worlds/world0.zip")
+		assert.NotContains(t, worldURIs, "worlds/world1.zip")
+		assert.NotContains(t, worldURIs, "worlds/world2.zip")
+
+		// Verify worlds 3-6 are present
+		assert.Contains(t, worldURIs, "worlds/world3.zip")
+		assert.Contains(t, worldURIs, "worlds/world4.zip")
+		assert.Contains(t, worldURIs, "worlds/world5.zip")
+		assert.Contains(t, worldURIs, "worlds/world6.zip")
+
+		// Verify new world from Exit is present (timestamp-based naming pattern)
+		newWorldFound := false
+		timestampPattern := regexp.MustCompile(`^worlds/\d+\.zip$`)
+		for _, uri := range worldURIs {
+			if timestampPattern.MatchString(uri) {
+				newWorldFound = true
+				break
+			}
+		}
+		assert.True(t, newWorldFound, "New world from Exit should be present. Found URIs: %v", worldURIs)
+
+		// Verify exactly 5 worlds remain (worlds 3-6 + 1 new)
+		assert.Len(t, updatedManifest.StoredWorlds, 5)
+	})
 }

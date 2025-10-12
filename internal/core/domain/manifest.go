@@ -66,3 +66,22 @@ func (m *Manifest) Clone() *Manifest {
 	copy(clone.StoredWorlds, m.StoredWorlds)
 	return clone
 }
+
+// RemoveOldestWorlds removes the oldest worlds from the manifest, keeping only the specified count
+func (m *Manifest) RemoveOldestWorlds(maxCount int) []World {
+	if maxCount <= 0 {
+		return nil
+	}
+	if len(m.StoredWorlds) <= maxCount {
+		return nil
+	}
+
+	removedCount := len(m.StoredWorlds) - maxCount
+	removed := make([]World, removedCount)
+	copy(removed, m.StoredWorlds[:removedCount])
+
+	m.StoredWorlds = m.StoredWorlds[removedCount:]
+	m.UpdatedAt = time.Now()
+
+	return removed
+}

@@ -31,7 +31,7 @@ type MolfarService interface {
 	Prepare() error
 
 	// Run executes the main server orchestration process
-	Run() error
+	Run(server *domain.Server) error
 
 	// Exit gracefully shuts down the server and cleans up resources
 	Exit() error

@@ -1,11 +1,14 @@
 package mocks
 
-import "ritual/internal/core/ports"
+import (
+	"ritual/internal/core/domain"
+	"ritual/internal/core/ports"
+)
 
 // MockMolfarService is a mock implementation of MolfarService for testing
 type MockMolfarService struct {
 	PrepareFunc func() error
-	RunFunc     func() error
+	RunFunc     func(server *domain.Server) error
 	ExitFunc    func() error
 }
 
@@ -23,9 +26,9 @@ func (m *MockMolfarService) Prepare() error {
 }
 
 // Run executes the main server orchestration process
-func (m *MockMolfarService) Run() error {
+func (m *MockMolfarService) Run(server *domain.Server) error {
 	if m.RunFunc != nil {
-		return m.RunFunc()
+		return m.RunFunc(server)
 	}
 	return nil
 }

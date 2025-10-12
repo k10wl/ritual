@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"strings"
+	"time"
 )
 
 // Molfar constants
@@ -481,16 +483,73 @@ func (m *MolfarService) downloadAndExtractWorlds(ctx context.Context, remoteMani
 
 // Run executes the main server orchestration process
 // Already in Running state, coordinates server execution
-func (m *MolfarService) Run() error {
+func (m *MolfarService) Run(server *domain.Server) error {
 	if m == nil {
 		return ErrMolfarNil
+	}
+	if server == nil {
+		return errors.New("server cannot be nil")
 	}
 	if m.serverRunner == nil {
 		return ErrServerRunnerNil
 	}
+	if m.librarian == nil {
+		return ErrLibrarianNil
+	}
 
-	m.logger.Info("Starting execution phase")
-	// TODO: Implement server execution logic
+	m.logger.Info("Starting execution phase", "server_address", server.Address, "server_memory", server.Memory, "server_ip", server.IP, "server_port", server.Port)
+	ctx := context.Background()
+
+	m.logger.Info("Retrieving local manifest for lock validation")
+	localManifest, err := m.librarian.GetLocalManifest(ctx)
+	if err != nil {
+		m.logger.Error("Failed to get local manifest", "error", err)
+		return err
+	}
+	m.logger.Info("Retrieved local manifest", "instance_version", localManifest.InstanceVersion, "ritual_version", localManifest.RitualVersion)
+
+	if localManifest.LockedBy != "" {
+		m.logger.Error("Local manifest already locked", "locked_by", localManifest.LockedBy)
+		return errors.New("local manifest already locked")
+	}
+	m.logger.Info("Local manifest is unlocked, proceeding with lock acquisition")
+
+	m.logger.Info("Generating unique lock identifier")
+	hostname, err := os.Hostname()
+	if err != nil {
+		m.logger.Error("Failed to get hostname", "error", err)
+		return err
+	}
+	m.logger.Info("Retrieved hostname", "hostname", hostname)
+
+	lockID := fmt.Sprintf("%s__%d", hostname, time.Now().Unix())
+	m.logger.Info("Generated lock ID", "lock_id", lockID)
+	localManifest.LockedBy = lockID
+
+	m.logger.Info("Acquiring local manifest lock")
+	err = m.librarian.SaveLocalManifest(ctx, localManifest)
+	if err != nil {
+		m.logger.Error("Failed to lock local manifest", "error", err)
+		return err
+	}
+	m.logger.Info("Successfully locked local manifest")
+
+	m.logger.Info("Acquiring remote manifest lock")
+	err = m.librarian.SaveRemoteManifest(ctx, localManifest)
+	if err != nil {
+		m.logger.Error("Failed to lock remote manifest", "error", err)
+		return err
+	}
+	m.logger.Info("Successfully locked remote storage", "lock_id", lockID)
+
+	m.logger.Info("Starting server execution", "server_address", server.Address, "bat_path", server.BatPath)
+	err = m.serverRunner.Run(server)
+	if err != nil {
+		m.logger.Error("Server execution failed", "error", err)
+		return err
+	}
+	m.logger.Info("Server execution completed successfully")
+
 	m.logger.Info("Execution phase completed")
 	return nil
 }
@@ -504,9 +563,182 @@ func (m *MolfarService) Exit() error {
 	if m.librarian == nil {
 		return ErrLibrarianNil
 	}
+	if m.archive == nil {
+		return ErrArchiveNil
+	}
+	if m.localStorage == nil {
+		return ErrStorageNil
+	}
+	if m.remoteStorage == nil {
+		return ErrStorageNil
+	}
 
 	m.logger.Info("Starting exit phase")
-	// TODO: Implement cleanup and lock release logic
+	ctx := context.Background()
+
+	// Generate unique timestamp for this world backup
+	timestamp := time.Now().Unix()
+	tempDir := filepath.Join(TempPrefix, fmt.Sprintf("%d", timestamp))
+	instancePath := filepath.Join(m.workdir, InstanceDir)
+
+	// Step 1: Copy world directories to temp/{unixtimestamp}/
+	m.logger.Info("Copying world directories to temp", "temp_dir", tempDir)
+	err := m.copyWorldsToTemp(ctx, instancePath, tempDir)
+	if err != nil {
+		m.logger.Error("Failed to copy worlds to temp", "error", err)
+		return err
+	}
+
+	// Step 2: Archive {unixtimestamp} directory
+	archivePath := filepath.Join(m.workdir, tempDir+".zip")
+	m.logger.Info("Archiving world backup", "source", tempDir, "destination", archivePath)
+	err = m.archive.Archive(ctx, filepath.Join(m.workdir, tempDir), archivePath)
+	if err != nil {
+		m.logger.Error("Failed to archive world backup", "error", err)
+		return err
+	}
+
+	// Step 3: Upload to remote storage with name "worlds/{unixtimestamp}.zip"
+	remoteKey := fmt.Sprintf("worlds/%d.zip", timestamp)
+	m.logger.Info("Uploading world backup to remote storage", "remote_key", remoteKey)
+	archiveData, err := os.ReadFile(archivePath)
+	if err != nil {
+		m.logger.Error("Failed to read archive file", "error", err)
+		return err
+	}
+	err = m.remoteStorage.Put(ctx, remoteKey, archiveData)
+	if err != nil {
+		m.logger.Error("Failed to upload world backup", "error", err)
+		return err
+	}
+
+	// Step 4: Append new world to local manifest
+	m.logger.Info("Adding world to local manifest", "world_uri", remoteKey)
+	localManifest, err := m.librarian.GetLocalManifest(ctx)
+	if err != nil {
+		m.logger.Error("Failed to get local manifest", "error", err)
+		return err
+	}
+	newWorld, err := domain.NewWorld(remoteKey)
+	if err != nil {
+		m.logger.Error("Failed to create new world", "error", err)
+		return err
+	}
+	localManifest.AddWorld(*newWorld)
+
+	// Step 6: Cleanup temp directory
+	m.logger.Info("Cleaning up temp directory", "temp_dir", tempDir)
+	err = m.localStorage.Delete(ctx, tempDir)
+	if err != nil {
+		m.logger.Error("Failed to cleanup temp directory", "error", err)
+		return err
+	}
+	err = os.Remove(archivePath)
+	if err != nil {
+		m.logger.Error("Failed to cleanup archive file", "error", err)
+		return err
+	}
+
+	// Step 7: Unlock remote storage
+	m.logger.Info("Unlocking remote storage")
+	localManifest.Unlock()
+
+	// Step 8: Remove excess worlds from manifest and remote storage (keep max 5)
+	m.logger.Info("Managing world retention", "current_count", len(localManifest.StoredWorlds))
+	err = m.manageWorldRetention(ctx, localManifest)
+	if err != nil {
+		m.logger.Error("Failed to manage world retention", "error", err)
+		return err
+	}
+
+	// Step 5: Save manifests (local and remote)
+	m.logger.Info("Saving manifests")
+	err = m.librarian.SaveLocalManifest(ctx, localManifest)
+	if err != nil {
+		m.logger.Error("Failed to save local manifest", "error", err)
+		return err
+	}
+	err = m.librarian.SaveRemoteManifest(ctx, localManifest)
+	if err != nil {
+		m.logger.Error("Failed to save remote manifest", "error", err)
+		return err
+	}
+
 	m.logger.Info("Exit phase completed")
+	return nil
+}
+
+// copyWorldsToTemp copies world directories from instance to temp directory
+func (m *MolfarService) copyWorldsToTemp(ctx context.Context, instancePath, tempDir string) error {
+	if ctx == nil {
+		return errors.New("context cannot be nil")
+	}
+	if instancePath == "" {
+		return errors.New("instance path cannot be empty")
+	}
+	if tempDir == "" {
+		return errors.New("temp directory cannot be empty")
+	}
+	if m.localStorage == nil {
+		return ErrStorageNil
+	}
+
+	m.logger.Info("Starting world copy to temp", "source", instancePath, "dest", tempDir)
+	worldDirs := []string{"world", "world_nether", "world_the_end"}
+
+	for _, worldDir := range worldDirs {
+		sourceKey := filepath.Join("instance", worldDir)
+		destKey := filepath.Join(tempDir, worldDir)
+
+		m.logger.Debug("Copying world directory", "world", worldDir, "source", sourceKey, "dest", destKey)
+		err := m.localStorage.Copy(ctx, sourceKey, destKey)
+		if err != nil {
+			if strings.Contains(err.Error(), "source key not found") {
+				m.logger.Debug("World directory not found, skipping", "world", worldDir)
+				continue
+			}
+			m.logger.Error("Failed to copy world directory", "world", worldDir, "error", err)
+			return fmt.Errorf("failed to copy %s to temp: %w", worldDir, err)
+		}
+		m.logger.Debug("Successfully copied world directory", "world", worldDir)
+	}
+
+	m.logger.Info("World copy to temp completed successfully")
+	return nil
+}
+
+// manageWorldRetention removes excess worlds from manifest and remote storage
+func (m *MolfarService) manageWorldRetention(ctx context.Context, manifest *domain.Manifest) error {
+	if ctx == nil {
+		return errors.New("context cannot be nil")
+	}
+	if manifest == nil {
+		return errors.New("manifest cannot be nil")
+	}
+	if m.remoteStorage == nil {
+		return ErrStorageNil
+	}
+
+	const maxWorlds = 5
+	removedWorlds := manifest.RemoveOldestWorlds(maxWorlds)
+	if len(removedWorlds) == 0 {
+		m.logger.Info("World count within limits", "count", len(manifest.StoredWorlds))
+		return nil
+	}
+
+	m.logger.Info("Removing excess worlds", "excess_count", len(removedWorlds))
+
+	for _, worldToRemove := range removedWorlds {
+		m.logger.Info("Removing world from remote storage", "world_uri", worldToRemove.URI)
+
+		err := m.remoteStorage.Delete(ctx, worldToRemove.URI)
+		if err != nil {
+			m.logger.Error("Failed to delete world from remote storage", "world_uri", worldToRemove.URI, "error", err)
+			return fmt.Errorf("failed to delete %s from remote storage: %w", worldToRemove.URI, err)
+		}
+		m.logger.Debug("Removed world from remote storage", "world_uri", worldToRemove.URI)
+	}
+
+	m.logger.Info("World retention management completed", "remaining_count", len(manifest.StoredWorlds))
 	return nil
 }
