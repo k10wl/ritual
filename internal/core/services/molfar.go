@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -701,15 +700,8 @@ func (m *MolfarService) unlockAndSaveManifests(ctx context.Context, localManifes
 	m.logger.Info("Unlocking remote storage")
 	localManifest.Unlock()
 
-	m.logger.Info("Managing world retention", "current_count", len(localManifest.StoredWorlds))
-	err := m.manageWorldRetention(ctx, localManifest)
-	if err != nil {
-		m.logger.Error("Failed to manage world retention", "error", err)
-		return err
-	}
-
 	m.logger.Info("Saving manifests")
-	err = m.librarian.SaveLocalManifest(ctx, localManifest)
+	err := m.librarian.SaveLocalManifest(ctx, localManifest)
 	if err != nil {
 		m.logger.Error("Failed to save local manifest", "error", err)
 		return err
@@ -720,42 +712,6 @@ func (m *MolfarService) unlockAndSaveManifests(ctx context.Context, localManifes
 		return err
 	}
 
-	return nil
-}
-
-// manageWorldRetention removes excess worlds from manifest and remote storage
-func (m *MolfarService) manageWorldRetention(ctx context.Context, manifest *domain.Manifest) error {
-	if ctx == nil {
-		return errors.New("context cannot be nil")
-	}
-	if manifest == nil {
-		return errors.New("manifest cannot be nil")
-	}
-	if m.remoteStorage == nil {
-		return ErrStorageNil
-	}
-
-	const maxWorlds = 5
-	removedWorlds := manifest.RemoveOldestWorlds(maxWorlds)
-	if len(removedWorlds) == 0 {
-		m.logger.Info("World count within limits", "count", len(manifest.StoredWorlds))
-		return nil
-	}
-
-	m.logger.Info("Removing excess worlds", "excess_count", len(removedWorlds))
-
-	for _, worldToRemove := range removedWorlds {
-		m.logger.Info("Removing world from remote storage", "world_uri", worldToRemove.URI)
-
-		err := m.remoteStorage.Delete(ctx, worldToRemove.URI)
-		if err != nil {
-			m.logger.Error("Failed to delete world from remote storage", "world_uri", worldToRemove.URI, "error", err)
-			return fmt.Errorf("failed to delete %s from remote storage: %w", worldToRemove.URI, err)
-		}
-		m.logger.Debug("Removed world from remote storage", "world_uri", worldToRemove.URI)
-	}
-
-	m.logger.Info("World retention management completed", "remaining_count", len(manifest.StoredWorlds))
 	return nil
 }
 
@@ -953,130 +909,6 @@ func (m *MolfarService) CreateLocalBackup(ctx context.Context, archivePath strin
 		return err
 	}
 
-	if err := m.ManageLocalBackupRetention(ctx); err != nil {
-		m.logger.Error("Failed to manage local backup retention", "error", err)
-		return err
-	}
-
 	m.logger.Info("Local backup created successfully", "backup_key", localBackupKey)
 	return nil
-}
-
-// ManageLocalBackupRetention removes excess local backups beyond retention limit
-func (m *MolfarService) ManageLocalBackupRetention(ctx context.Context) error {
-	if ctx == nil {
-		return errors.New("context cannot be nil")
-	}
-	if m.localStorage == nil {
-		return ErrStorageNil
-	}
-
-	const maxLocalBackups = 5
-	const retentionPeriod = 60 * 24 * 60 * 60 // 60 days in seconds
-
-	m.logger.Info("Managing local backup retention", "max_backups", maxLocalBackups, "retention_days", retentionPeriod/86400)
-
-	backupKeys, err := m.localStorage.List(ctx, "local-backups/")
-	if err != nil {
-		m.logger.Error("Failed to list local backups", "error", err)
-		return err
-	}
-
-	if len(backupKeys) <= maxLocalBackups {
-		m.logger.Info("Local backup count within limits", "count", len(backupKeys))
-		return nil
-	}
-
-	currentTime := time.Now().Unix()
-	backupsToRemove := []string{}
-
-	for _, backupKey := range backupKeys {
-		if !strings.HasSuffix(backupKey, ".zip") {
-			continue
-		}
-
-		backupTimestamp, err := m.ExtractTimestampFromBackupKey(backupKey)
-		if err != nil {
-			m.logger.Warn("Failed to extract timestamp from backup key", "backup_key", backupKey, "error", err)
-			continue
-		}
-
-		if currentTime-backupTimestamp > retentionPeriod {
-			backupsToRemove = append(backupsToRemove, backupKey)
-		}
-	}
-
-	if len(backupsToRemove) == 0 && len(backupKeys) > maxLocalBackups {
-		sortedBackups := m.SortBackupsByTimestamp(backupKeys)
-		excessCount := len(sortedBackups) - maxLocalBackups
-		backupsToRemove = sortedBackups[:excessCount]
-	}
-
-	for _, backupToRemove := range backupsToRemove {
-		m.logger.Info("Removing old local backup", "backup_key", backupToRemove)
-		err := m.localStorage.Delete(ctx, backupToRemove)
-		if err != nil {
-			m.logger.Error("Failed to delete old local backup", "backup_key", backupToRemove, "error", err)
-			return err
-		}
-	}
-
-	m.logger.Info("Local backup retention management completed", "removed_count", len(backupsToRemove))
-	return nil
-}
-
-// ExtractTimestampFromBackupKey extracts timestamp from backup key format
-func (m *MolfarService) ExtractTimestampFromBackupKey(backupKey string) (int64, error) {
-	if backupKey == "" {
-		return 0, errors.New("backup key cannot be empty")
-	}
-
-	baseName := filepath.Base(backupKey)
-	if !strings.HasSuffix(baseName, ".zip") {
-		return 0, fmt.Errorf("invalid backup key format: %s", backupKey)
-	}
-
-	timestampStr := strings.TrimSuffix(baseName, ".zip")
-	timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse timestamp from backup key: %w", err)
-	}
-
-	return timestamp, nil
-}
-
-// SortBackupsByTimestamp sorts backup keys by timestamp (oldest first)
-func (m *MolfarService) SortBackupsByTimestamp(backupKeys []string) []string {
-	type backupInfo struct {
-		key       string
-		timestamp int64
-	}
-
-	backups := make([]backupInfo, 0, len(backupKeys))
-	for _, key := range backupKeys {
-		if !strings.HasSuffix(key, ".zip") {
-			continue
-		}
-		timestamp, err := m.ExtractTimestampFromBackupKey(key)
-		if err != nil {
-			continue
-		}
-		backups = append(backups, backupInfo{key: key, timestamp: timestamp})
-	}
-
-	// Sort backups by timestamp (oldest first) using efficient sorting
-	for i := 0; i < len(backups)-1; i++ {
-		for j := i + 1; j < len(backups); j++ {
-			if backups[i].timestamp > backups[j].timestamp {
-				backups[i], backups[j] = backups[j], backups[i]
-			}
-		}
-	}
-
-	result := make([]string, len(backups))
-	for i, backup := range backups {
-		result[i] = backup.key
-	}
-
-	return result
 }
