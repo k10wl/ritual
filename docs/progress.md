@@ -65,21 +65,31 @@
 
 # >>> We are here
 
-### Sprint 5: Retention Policy Implementation (1 week)
+### Sprint 5: Backupper Component Implementation (1 week)
+- [ ] Implement `Backupper` domain entity with configuration parameters
+- [ ] Add `BackupperService` interface to ports layer
+- [ ] Create `BackupperService` implementation with template method pattern
+- [ ] Implement `validateArchive()` method with checksum validation
+- [ ] Implement `store()` method for archive persistence
+- [ ] Implement `applyRetention()` method with strategy pattern
+- [ ] Add `buildArchive` and `markForCleanup` strategy injection
+- [ ] Create comprehensive `BackupperService` tests
+- [ ] Add `BackupperService` mock implementation
+- [ ] Integrate `BackupperService` with existing storage adapters
+- [ ] Update `MolfarService` to orchestrate backup operations
+- [ ] Document Backupper architecture and design patterns
+
+### Sprint 6: Retention Policy Integration (1 week)
 - [ ] **ROLLBACK**: Remove current O(n²) bubble sort from `RemoveOldestWorlds`
 - [ ] **ROLLBACK**: Remove scattered retention logic from `manageWorldRetention`
 - [ ] **ROLLBACK**: Remove dual-criteria conflict from `ManageLocalBackupRetention`
 - [ ] **ROLLBACK**: Remove hardcoded retention limits and constants
-- [ ] Implement centralized `RetentionPolicy` interface
-- [ ] Create `RetentionEngine` with strategy pattern
-- [ ] Implement efficient O(n log n) sorting algorithms
-- [ ] Add data integrity validation before deletion
-- [ ] Create retention configuration management
-- [ ] Replace current retention implementation with centralized policy
-- [ ] Add comprehensive retention policy tests
-- [ ] Update `MolfarService` to use centralized retention
+- [ ] Integrate retention policies with Backupper component
+- [ ] Replace current retention implementation with Backupper orchestration
+- [ ] Add comprehensive retention policy tests through Backupper
+- [ ] Update `MolfarService` to use Backupper for retention operations
 
-### Sprint 6: Integration Testing (1 week)
+### Sprint 7: Integration Testing (1 week)
 - [ ] Create end-to-end tests
 - [ ] Validate system flow
 - [ ] Update documentation

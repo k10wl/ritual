@@ -123,6 +123,7 @@ Defines interfaces for external dependencies and provides comprehensive mock imp
   - `LibrarianService` - Manifest management interface
   - `ValidatorService` - Validation interface
   - `ArchiveService` - Archive management interface
+  - `BackupperService` - Backup orchestration interface
   - `ServerRunner` - Server execution interface
 
 - **Mock Implementations** (`mocks/` folder) - Complete mock implementations with test coverage
@@ -173,6 +174,10 @@ type ArchiveService interface {
     Archive(ctx context.Context, source string, destination string) error
     Unarchive(ctx context.Context, archive string, destination string) error
 }
+
+type BackupperService interface {
+    Run() error
+}
 ```
 
 ### Services Layer (`internal/core/services/`)
@@ -183,6 +188,7 @@ Implements core business logic:
 - **`librarian.go`** - Manifest synchronization and management
 - **`validator.go`** - Instance integrity and conflict validation
 - **`archive.go`** - Archive compression and extraction operations
+- **`backupper.go`** - Backup orchestration engine with template method pattern
 
 #### Service Implementation Examples
 
@@ -248,6 +254,48 @@ func (v *ValidatorService) CheckInstance(local *domain.Manifest, remote *domain.
         return ErrRemoteManifestNil
     }
     // Additional validation logic...
+}
+
+// internal/core/services/backupper.go
+type BackupperService struct {
+    storage       StorageRepository
+    archivePath   string
+    buildArchive  func(string) (func(), error)
+    markForCleanup func(StorageRepository) ([]domain.World, error)
+}
+
+func NewBackupperService(storage StorageRepository, archivePath string, buildArchive func(string) (func(), error), markForCleanup func(StorageRepository) ([]domain.World, error)) *BackupperService {
+    return &BackupperService{
+        storage:       storage,
+        archivePath:   archivePath,
+        buildArchive:  buildArchive,
+        markForCleanup: markForCleanup,
+    }
+}
+
+func (b *BackupperService) Run() error {
+    // Check if archivePath exists
+    // If missing → call buildArchive(targetPath) and defer cleanup()
+    // validateArchive()
+    // store()
+    // applyRetention()
+    // Return error if any step fails, else success
+    ...
+}
+
+func (b *BackupperService) validateArchive() error {
+    // Confirm archive exists, readable, and checksum valid
+    ...
+}
+
+func (b *BackupperService) store() error {
+    // Persist archive to storage backend
+    ...
+}
+
+func (b *BackupperService) applyRetention() error {
+    // Execute retention policy using markForCleanup and delete expired backups
+    ...
 }
 ```
 
@@ -352,13 +400,25 @@ func (s *ServerRunner) Run(server *domain.Server) error {
 - Manages archive lifecycle operations
 - Integrates with storage abstraction for remote archive operations
 
+### Backupper (Backup Orchestration Engine)
+- **Template Method Pattern**: `Run()` defines fixed backup cycle skeleton with pluggable steps
+- **Strategy Pattern**: `buildArchive` and `markForCleanup` are injected strategies for archive creation and cleanup
+- **Facade Pattern**: Single `Run()` method hides internal orchestration complexity
+- **Configuration-Driven**: Supports `storage` (local/cloud), `archivePath`, and strategy injection
+- **Extensibility**: Archive creation, storage backend, and cleanup strategy can be swapped independently
+- **Flow Orchestration**: Check archive existence → validate → store → apply retention → cleanup
+- **Internal Methods**: `validateArchive()` confirms archive exists, readable, and checksum valid
+- **Internal Methods**: `store()` persists archive to storage backend
+- **Internal Methods**: `applyRetention()` executes retention policy using `markForCleanup` and deletes expired backups
+
 ### Retention (Data Lifecycle Management)
-- **Centralized Retention Engine**: Single `RetentionPolicy` interface for all retention decisions
-- **Strategy Pattern**: Configurable retention strategies per data type (World, Local Backup, Manifest)
+- **Backupper Integration**: Retention policies managed through Backupper component orchestration
+- **Strategy Pattern**: Configurable retention strategies injected via `markForCleanup` function
 - **Performance Compliance**: O(n log n) sorting algorithms, bounded operations
 - **Data Integrity**: Backup verification before deletion
 - **Configuration Management**: Structured configuration objects with weighted scoring
 - **NASA JPL Compliance**: Defensive programming standards for mission-critical reliability
+
 
 ### Storage Abstraction
 - Unified interface for local (filesystem) and remote (R2) storage
@@ -421,15 +481,15 @@ R.I.T.U.A.L. enforces NASA JPL Power of Ten defensive programming standards for 
 ### Retention Policy Compliance
 
 **CRITICAL PATH REQUIREMENTS:**
-- **Centralized Retention**: All retention decisions flow through `RetentionPolicy` interface
+- **Backupper Integration**: All retention decisions flow through Backupper component orchestration
 - **Performance Compliance**: O(n log n) sorting algorithms, bounded operations
 - **Data Integrity**: Backup verification before deletion
-- **Strategy Pattern**: Configurable retention strategies per data type
+- **Strategy Pattern**: Configurable retention strategies injected via `markForCleanup` function
 - **Configuration Management**: Structured configuration objects with weighted scoring
 
 **Retention Categories:**
-- **World Retention**: Time-based with usage weighting (5 max)
-- **Local Backup Retention**: Dual-criteria time+count (5 max, 60 days)
+- **World Retention**: Time-based with usage weighting (configurable max)
+- **Local Backup Retention**: Dual-criteria time+count (configurable limits)
 
 **Compliance Validation:**
 - All retention operations must pass integrity validation

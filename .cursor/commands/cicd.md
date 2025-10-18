@@ -111,4 +111,7 @@ The pipeline gracefully degrades if external tools are unavailable, relying on b
 
 This AI command will execute the complete CI/CD pipeline when invoked. The AI will guide you through each step and ask for confirmation before proceeding with critical actions.
 
+# IMPORTANT
+DO NOT OUTPUT TEXT ON GOOD PASSING OF STEPS, PROMPT USER ONLY IF SOMETHING IS OUT OF PLACE
+
 The pipeline is designed to be interactive, with user prompts at key decision points to ensure you maintain control over the process.
