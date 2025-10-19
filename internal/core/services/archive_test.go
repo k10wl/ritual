@@ -11,6 +11,7 @@ import (
 )
 
 func TestNewArchiveService(t *testing.T) {
+	basePath := t.TempDir()
 	tests := []struct {
 		name    string
 		wantErr bool
@@ -23,7 +24,8 @@ func TestNewArchiveService(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewArchiveService()
+			got, err := NewArchiveService(basePath)
+			assert.NoError(t, err)
 			if tt.wantErr {
 				assert.Nil(t, got)
 			} else {
@@ -34,17 +36,14 @@ func TestNewArchiveService(t *testing.T) {
 }
 
 func TestArchiveService_Archive(t *testing.T) {
-	// Create temporary test directory
-	tempDir, err := os.MkdirTemp("", "archive_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	basePath := t.TempDir()
 
 	// Create test files
-	testFile := filepath.Join(tempDir, "test.txt")
-	err = os.WriteFile(testFile, []byte("test content"), 0644)
+	testFile := filepath.Join(basePath, "test.txt")
+	err := os.WriteFile(testFile, []byte("test content"), 0644)
 	require.NoError(t, err)
 
-	testSubDir := filepath.Join(tempDir, "subdir")
+	testSubDir := filepath.Join(basePath, "subdir")
 	err = os.MkdirAll(testSubDir, 0755)
 	require.NoError(t, err)
 
@@ -52,7 +51,8 @@ func TestArchiveService_Archive(t *testing.T) {
 	err = os.WriteFile(testSubFile, []byte("sub content"), 0644)
 	require.NoError(t, err)
 
-	archiver := NewArchiveService()
+	archiver, err := NewArchiveService(basePath)
+	require.NoError(t, err)
 
 	tests := []struct {
 		name        string
@@ -61,33 +61,39 @@ func TestArchiveService_Archive(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name:        "successful archive",
-			source:      tempDir,
-			destination: filepath.Join(tempDir, "test.zip"),
+			name:        "successful archive with relative paths",
+			source:      ".",
+			destination: "test.zip",
+			wantErr:     false,
+		},
+		{
+			name:        "successful archive subdirectory",
+			source:      "subdir",
+			destination: "subdir.zip",
 			wantErr:     false,
 		},
 		{
 			name:        "nil service",
-			source:      tempDir,
-			destination: filepath.Join(tempDir, "test.zip"),
+			source:      ".",
+			destination: "test.zip",
 			wantErr:     true,
 		},
 		{
 			name:        "empty source",
 			source:      "",
-			destination: filepath.Join(tempDir, "test.zip"),
+			destination: "test.zip",
 			wantErr:     true,
 		},
 		{
 			name:        "empty destination",
-			source:      tempDir,
+			source:      ".",
 			destination: "",
 			wantErr:     true,
 		},
 		{
 			name:        "non-existent source",
-			source:      "/non/existent/path",
-			destination: filepath.Join(tempDir, "test.zip"),
+			source:      "non/existent/path",
+			destination: "test.zip",
 			wantErr:     true,
 		},
 	}
@@ -107,7 +113,8 @@ func TestArchiveService_Archive(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				// Verify archive was created
-				_, err := os.Stat(tt.destination)
+				expectedPath := filepath.Join(basePath, tt.destination)
+				_, err := os.Stat(expectedPath)
 				assert.NoError(t, err)
 			}
 		})
@@ -116,16 +123,15 @@ func TestArchiveService_Archive(t *testing.T) {
 
 func TestArchiveService_Unarchive(t *testing.T) {
 	// Create temporary test directory
-	tempDir, err := os.MkdirTemp("", "unarchive_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	// Create test archive
-	archivePath := filepath.Join(tempDir, "test.zip")
-	extractDir := filepath.Join(tempDir, "extracted")
+	archivePath := "test.zip"
+	extractDir := "extracted"
 
 	// Create a valid zip file for testing using the archiver service
-	testArchiver := NewArchiveService()
+	testArchiver, err := NewArchiveService(tempDir)
+	require.NoError(t, err)
 
 	// Create test content to archive
 	testContentDir := filepath.Join(tempDir, "test_content")
@@ -136,11 +142,12 @@ func TestArchiveService_Unarchive(t *testing.T) {
 	err = os.WriteFile(testFile, []byte("test content"), 0644)
 	require.NoError(t, err)
 
-	// Create the zip file using our archiver
-	err = testArchiver.Archive(context.Background(), testContentDir, archivePath)
+	// Create the zip file using our archiver with relative paths
+	err = testArchiver.Archive(context.Background(), "test_content", archivePath)
 	require.NoError(t, err)
 
-	archiver := NewArchiveService()
+	archiver, err := NewArchiveService(tempDir)
+	require.NoError(t, err)
 
 	tests := []struct {
 		name        string
@@ -149,7 +156,7 @@ func TestArchiveService_Unarchive(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name:        "successful unarchive",
+			name:        "successful unarchive with relative paths",
 			archive:     archivePath,
 			destination: extractDir,
 			wantErr:     false,
@@ -174,7 +181,7 @@ func TestArchiveService_Unarchive(t *testing.T) {
 		},
 		{
 			name:        "non-existent archive",
-			archive:     "/non/existent/archive.zip",
+			archive:     "non/existent/archive.zip",
 			destination: extractDir,
 			wantErr:     true,
 		},
@@ -195,7 +202,8 @@ func TestArchiveService_Unarchive(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				// Verify extraction directory was created
-				_, err := os.Stat(tt.destination)
+				expectedPath := filepath.Join(tempDir, tt.destination)
+				_, err := os.Stat(expectedPath)
 				assert.NoError(t, err)
 			}
 		})
@@ -204,13 +212,11 @@ func TestArchiveService_Unarchive(t *testing.T) {
 
 func TestArchiveService_Archive_Integration(t *testing.T) {
 	// Create temporary test directory
-	tempDir, err := os.MkdirTemp("", "archive_integration_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	// Create test files and directories
 	testFile := filepath.Join(tempDir, "file1.txt")
-	err = os.WriteFile(testFile, []byte("content1"), 0644)
+	err := os.WriteFile(testFile, []byte("content1"), 0644)
 	require.NoError(t, err)
 
 	testDir := filepath.Join(tempDir, "dir1")
@@ -221,28 +227,30 @@ func TestArchiveService_Archive_Integration(t *testing.T) {
 	err = os.WriteFile(testFile2, []byte("content2"), 0644)
 	require.NoError(t, err)
 
-	archiver := NewArchiveService()
+	archiver, err := NewArchiveService(tempDir)
+	require.NoError(t, err)
 
-	// Archive the directory
-	archivePath := filepath.Join(tempDir, "test.zip")
-	err = archiver.Archive(context.Background(), tempDir, archivePath)
+	// Archive the directory using relative paths
+	archivePath := "test.zip"
+	err = archiver.Archive(context.Background(), ".", archivePath)
 	require.NoError(t, err)
 
 	// Verify archive exists
-	_, err = os.Stat(archivePath)
+	expectedArchivePath := filepath.Join(tempDir, archivePath)
+	_, err = os.Stat(expectedArchivePath)
 	assert.NoError(t, err)
 
-	// Extract to new location
-	extractDir := filepath.Join(tempDir, "extracted")
+	// Extract to new location using relative paths
+	extractDir := "extracted"
 	err = archiver.Unarchive(context.Background(), archivePath, extractDir)
 	require.NoError(t, err)
 
 	// Verify extracted files exist
-	extractedFile1 := filepath.Join(extractDir, "file1.txt")
+	extractedFile1 := filepath.Join(tempDir, extractDir, "file1.txt")
 	_, err = os.Stat(extractedFile1)
 	assert.NoError(t, err)
 
-	extractedFile2 := filepath.Join(extractDir, "dir1", "file2.txt")
+	extractedFile2 := filepath.Join(tempDir, extractDir, "dir1", "file2.txt")
 	_, err = os.Stat(extractedFile2)
 	assert.NoError(t, err)
 

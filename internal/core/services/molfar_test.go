@@ -50,7 +50,8 @@ func setupIntegrationTest(t *testing.T) (*services.MolfarService, ports.Libraria
 	validator, err := services.NewValidatorService()
 	assert.NoError(t, err)
 
-	archive := services.NewArchiveService()
+	archive, err := services.NewArchiveService("/test/base")
+	assert.NoError(t, err)
 
 	mockServerRunner := &mocks.MockServerRunner{}
 	mockServerRunner.On("Run", mock.AnythingOfType("*domain.Server")).Return(nil)

@@ -176,7 +176,7 @@ type ArchiveService interface {
 }
 
 type BackupperService interface {
-    Run() error
+    Run() (func(), error)
 }
 ```
 
@@ -259,37 +259,35 @@ func (v *ValidatorService) CheckInstance(local *domain.Manifest, remote *domain.
 // internal/core/services/backupper.go
 type BackupperService struct {
     storage       StorageRepository
-    archivePath   string
-    buildArchive  func(string) (func(), error)
+    buildArchive  func() (string, func(), error)  // Returns generated path and cleanup
     markForCleanup func(StorageRepository) ([]domain.World, error)
 }
 
-func NewBackupperService(storage StorageRepository, archivePath string, buildArchive func(string) (func(), error), markForCleanup func(StorageRepository) ([]domain.World, error)) *BackupperService {
+func NewBackupperService(storage StorageRepository, buildArchive func() (string, func(), error), markForCleanup func(StorageRepository) ([]domain.World, error)) *BackupperService {
     return &BackupperService{
         storage:       storage,
-        archivePath:   archivePath,
         buildArchive:  buildArchive,
         markForCleanup: markForCleanup,
     }
 }
 
-func (b *BackupperService) Run() error {
-    // Check if archivePath exists
-    // If missing → call buildArchive(targetPath) and defer cleanup()
-    // validateArchive()
-    // store()
+func (b *BackupperService) Run() (func() error, error) {
+    // Call buildArchive() to generate archive path and get cleanup function
+    // validateArchive(archivePath)
+    // store(archivePath)
     // applyRetention()
-    // Return error if any step fails, else success
+    // Return cleanup function and error if any step fails, else success
+    // Cleanup function applies retention and removes created archives
     ...
 }
 
-func (b *BackupperService) validateArchive() error {
+func (b *BackupperService) validateArchive(archivePath string) error {
     // Confirm archive exists, readable, and checksum valid
     ...
 }
 
-func (b *BackupperService) store() error {
-    // Persist archive to storage backend
+func (b *BackupperService) store(archivePath string) error {
+    // Persist archive to storage backend with timestamp format
     ...
 }
 
@@ -404,11 +402,13 @@ func (s *ServerRunner) Run(server *domain.Server) error {
 - **Template Method Pattern**: `Run()` defines fixed backup cycle skeleton with pluggable steps
 - **Strategy Pattern**: `buildArchive` and `markForCleanup` are injected strategies for archive creation and cleanup
 - **Facade Pattern**: Single `Run()` method hides internal orchestration complexity
-- **Configuration-Driven**: Supports `storage` (local/cloud), `archivePath`, and strategy injection
+- **Configuration-Driven**: Supports `storage` (local/cloud) and strategy injection
 - **Extensibility**: Archive creation, storage backend, and cleanup strategy can be swapped independently
-- **Flow Orchestration**: Check archive existence → validate → store → apply retention → cleanup
-- **Internal Methods**: `validateArchive()` confirms archive exists, readable, and checksum valid
-- **Internal Methods**: `store()` persists archive to storage backend
+- **Flow Orchestration**: Generate archive path → validate → store → apply retention → cleanup
+- **Return Pattern**: `Run()` returns cleanup function that applies retention and removes created archives
+- **Path Generation**: `buildArchive()` strategy handles archive path generation internally
+- **Internal Methods**: `validateArchive(archivePath)` confirms archive exists, readable, and checksum valid
+- **Internal Methods**: `store(archivePath)` persists archive to storage backend with timestamp format `{unixtimestamp}.zip`
 - **Internal Methods**: `applyRetention()` executes retention policy using `markForCleanup` and deletes expired backups
 
 ### Retention (Data Lifecycle Management)

@@ -89,3 +89,10 @@ type ServerRunner interface {
 	// Run executes the server process with the given server configuration
 	Run(server *domain.Server) error
 }
+
+// BackupperService defines the backup orchestration interface
+// BackupperService handles backup creation and restoration using template method pattern
+type BackupperService interface {
+	// Run executes the backup orchestration process and returns cleanup function
+	Run() (func() error, error)
+}
