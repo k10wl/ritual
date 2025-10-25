@@ -334,6 +334,7 @@ Implements external system integrations:
 - **`fs.go`** - Local filesystem storage implementation
 - **`r2.go`** - Cloudflare R2 cloud storage implementation
 - **`serverrunner.go`** - Server execution implementation
+- **`localbackuptarget.go`** - Local backup destination implementation
 
 #### Adapter Implementation Examples
 
@@ -383,6 +384,31 @@ func (s *ServerRunner) Run(server *domain.Server) error {
     // Execute Minecraft server process using command executor
     // Validates server configuration and executes server.bat
     // Returns error if server.bat not found or execution fails
+}
+
+// internal/adapters/localbackuptarget.go
+type LocalBackupTarget struct {
+    storage ports.StorageRepository
+}
+
+func NewLocalBackupTarget(storage ports.StorageRepository) (*LocalBackupTarget, error) {
+    if storage == nil {
+        return nil, errors.New("storage repository cannot be nil")
+    }
+
+    return &LocalBackupTarget{
+        storage: storage,
+    }, nil
+}
+
+func (l *LocalBackupTarget) Backup(data []byte) error {
+    // Generate timestamp-based filename and store backup data using storage repository
+    // Validates input data and delegates to storage.Put()
+}
+
+func (l *LocalBackupTarget) DataRetention() error {
+    // Applies count-based (max 10) and time-based (30 days) retention policies
+    // Uses storage.List() to enumerate backups and storage.Delete() to remove expired ones
 }
 ```
 
