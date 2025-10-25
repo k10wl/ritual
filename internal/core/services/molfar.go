@@ -493,17 +493,10 @@ func (m *MolfarService) Exit() error {
 	ctx := context.Background()
 
 	// Run backup process
-	cleanup, err := m.backupper.Run()
+	err := m.backupper.Run()
 	if err != nil {
 		m.logger.Error("Backup execution failed", "error", err)
 		return err
-	}
-
-	if cleanup != nil {
-		if cleanupErr := cleanup(); cleanupErr != nil {
-			m.logger.Error("Cleanup failed", "error", cleanupErr)
-			return cleanupErr
-		}
 	}
 
 	// Unlock manifests after successful backup

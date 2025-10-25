@@ -10,16 +10,16 @@ import (
 
 // BackupperService implements the backup orchestration interface
 type BackupperService struct {
-	buildArchive func() (string, func() error, error) // Returns generated path and cleanup
-	targets      []ports.BackupTarget                 // List of backup destinations
-	workDir      string                               // Working directory for safe operations
+	buildArchive func() (string, string, func() error, error) // Returns generated path, name, and cleanup
+	targets      []ports.BackupTarget                         // List of backup destinations
+	workDir      string                                       // Working directory for safe operations
 }
 
 // Compile-time check to ensure BackupperService implements ports.BackupperService
 var _ ports.BackupperService = (*BackupperService)(nil)
 
 // NewBackupperService creates a new backupper service instance
-func NewBackupperService(buildArchive func() (string, func() error, error), targets []ports.BackupTarget, workDir string) (*BackupperService, error) {
+func NewBackupperService(buildArchive func() (string, string, func() error, error), targets []ports.BackupTarget, workDir string) (*BackupperService, error) {
 	if buildArchive == nil {
 		return nil, errors.New("buildArchive cannot be nil")
 	}
@@ -38,43 +38,43 @@ func NewBackupperService(buildArchive func() (string, func() error, error), targ
 }
 
 // Run executes the backup orchestration process
-func (b *BackupperService) Run() (func() error, error) {
-	// Call buildArchive() to generate archive path and get cleanup function
-	archivePath, cleanup, err := b.buildArchive()
+func (b *BackupperService) Run() error {
+	// Call buildArchive() to generate archive path, name, and get cleanup function
+	archivePath, backupName, cleanup, err := b.buildArchive()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer cleanup()
 
 	// Open workdir as root for safe operations
 	workRoot, err := os.OpenRoot(b.workDir)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer workRoot.Close()
 
 	// Validate archive using root
 	if err := b.validateArchiveWithRoot(workRoot, archivePath); err != nil {
-		return nil, err
+		return err
 	}
 
 	// Read archive data using root
 	data, err := workRoot.ReadFile(archivePath)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Store to all targets and apply retention
 	for _, target := range b.targets {
-		if err := target.Backup(data); err != nil {
-			return nil, err
+		if err := target.Backup(data, backupName); err != nil {
+			return err
 		}
 		if err := target.DataRetention(); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	return cleanup, nil
+	return nil
 }
 
 // validateArchiveWithRoot validates the archive file using os.Root

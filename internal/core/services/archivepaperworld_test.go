@@ -2,6 +2,7 @@ package services_test
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -37,7 +38,7 @@ func TestArchivePaperWorld(t *testing.T) {
 
 	// Execute ArchivePaperWorld
 	ctx := context.Background()
-	archivePath, cleanup, err := services.ArchivePaperWorld(
+	archivePath, backupName, cleanup, err := services.ArchivePaperWorld(
 		ctx,
 		fs,
 		archiveService,
@@ -49,6 +50,7 @@ func TestArchivePaperWorld(t *testing.T) {
 	// Verify results
 	require.NoError(t, err)
 	require.NotNil(t, archivePath)
+	require.Equal(t, "test_backup", backupName)
 	require.NotNil(t, cleanup)
 
 	// Verify archive path format
@@ -66,6 +68,18 @@ func TestArchivePaperWorld(t *testing.T) {
 	extractedDir := "extracted"
 	err = archiveService.Unarchive(context.Background(), archivePath, extractedDir)
 	require.NoError(t, err)
+
+	// Test cleanup function
+	err = cleanup()
+	require.NoError(t, err)
+
+	// Verify temp directory is deleted
+	_, err = os.Stat(filepath.Join(tempDir, "temp", fmt.Sprintf("%s_%s", config.TmpDir, "test_backup.zip")))
+	assert.Error(t, err, "Temp directory should be deleted")
+
+	// Verify archive file is deleted
+	_, err = os.Stat(filepath.Join(tempDir, archivePath))
+	assert.Error(t, err, "Archive file should be deleted")
 
 	files, err := fs.List(context.Background(), extractedDir)
 	require.NoError(t, err)

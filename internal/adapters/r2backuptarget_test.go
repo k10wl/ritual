@@ -109,7 +109,7 @@ func TestR2BackupTarget_Backup(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setupMocks()
-			err := target.Backup(tt.data)
+			err := target.Backup(tt.data, "test-backup")
 
 			if tt.wantError {
 				assert.Error(t, err)
@@ -273,7 +273,7 @@ func TestR2BackupTarget_AlwaysBackup(t *testing.T) {
 			return nil
 		}
 
-		err := target.Backup([]byte("test data"))
+		err := target.Backup([]byte("test data"), "test-backup")
 		assert.NoError(t, err)
 		assert.True(t, putCalled, "R2 backup should always create backup regardless of existing files")
 	})
@@ -290,7 +290,7 @@ func TestR2BackupTarget_AlwaysBackup(t *testing.T) {
 			return nil
 		}
 
-		err := target.Backup([]byte("test data"))
+		err := target.Backup([]byte("test data"), "test-backup")
 		assert.NoError(t, err)
 		assert.True(t, putCalled, "Backup should be created when no existing backups")
 	})
@@ -309,7 +309,7 @@ func TestR2BackupTarget_NilReceiver(t *testing.T) {
 	var target *R2BackupTarget
 
 	t.Run("Backup with nil receiver", func(t *testing.T) {
-		err := target.Backup([]byte("test"))
+		err := target.Backup([]byte("test"), "test-backup")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "R2 backup target cannot be nil")
 	})

@@ -43,7 +43,7 @@ func NewLocalBackupTarget(storage ports.StorageRepository, ctx context.Context) 
 }
 
 // Backup stores the provided data to the local backup destination
-func (l *LocalBackupTarget) Backup(data []byte) error {
+func (l *LocalBackupTarget) Backup(data []byte, name string) error {
 	if l == nil {
 		return errors.New("local backup target cannot be nil")
 	}
@@ -52,6 +52,9 @@ func (l *LocalBackupTarget) Backup(data []byte) error {
 	}
 	if len(data) == 0 {
 		return errors.New("backup data cannot be empty")
+	}
+	if name == "" {
+		return errors.New("backup name cannot be empty")
 	}
 
 	// Check if backup should be skipped based on monthly frequency
@@ -65,7 +68,7 @@ func (l *LocalBackupTarget) Backup(data []byte) error {
 
 	// Generate timestamp-based filename
 	timestamp := time.Now().Unix()
-	filename := fmt.Sprintf("%s%d%s", backupDirectory, timestamp, backupFileExtension)
+	filename := fmt.Sprintf("%s%d_%s%s", backupDirectory, timestamp, name, backupFileExtension)
 
 	// Store backup data using storage repository
 	if err := l.storage.Put(l.ctx, filename, data); err != nil {

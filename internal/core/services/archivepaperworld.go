@@ -7,14 +7,13 @@ import (
 	"log"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"ritual/internal/config"
 	"ritual/internal/core/ports"
 )
 
 // ArchivePaperWorld creates a backup archive from multiple data sources
-// Returns the archive path and a cleanup function
+// Returns the archive path, backup name, and a cleanup function
 func ArchivePaperWorld(
 	ctx context.Context,
 	storage ports.StorageRepository,
@@ -22,21 +21,21 @@ func ArchivePaperWorld(
 	instancePath string,
 	destinationPath string,
 	name string,
-) (string, func() error, error) {
+) (string, string, func() error, error) {
 	if storage == nil {
-		return "", func() error { return nil }, errors.New("storage cannot be nil")
+		return "", "", func() error { return nil }, errors.New("storage cannot be nil")
 	}
 	if archiveService == nil {
-		return "", func() error { return nil }, errors.New("archiveService cannot be nil")
+		return "", "", func() error { return nil }, errors.New("archiveService cannot be nil")
 	}
 	if instancePath == "" {
-		return "", func() error { return nil }, errors.New("instancePath cannot be empty")
+		return "", "", func() error { return nil }, errors.New("instancePath cannot be empty")
 	}
 	if destinationPath == "" {
-		return "", func() error { return nil }, errors.New("destinationPath cannot be empty")
+		return "", "", func() error { return nil }, errors.New("destinationPath cannot be empty")
 	}
 	if name == "" {
-		return "", func() error { return nil }, errors.New("name cannot be empty")
+		return "", "", func() error { return nil }, errors.New("name cannot be empty")
 	}
 
 	archivePath := filepath.Join(destinationPath, fmt.Sprintf("%s.zip", name))
@@ -48,7 +47,9 @@ func ArchivePaperWorld(
 		filepath.Join(instancePath, "world_the_end"),
 	}
 
-	tempDir := filepath.Join(destinationPath, fmt.Sprintf("%s_%d", config.TmpDir, time.Now().Unix()))
+	archiveName := fmt.Sprintf("%s.zip", name)
+
+	tempDir := filepath.Join(destinationPath, fmt.Sprintf("%s_%s", config.TmpDir, archiveName))
 	log.Println("Temp dir:", tempDir)
 
 	for _, targetPath := range targetPaths {
@@ -57,7 +58,7 @@ func ArchivePaperWorld(
 		log.Println("Copying", targetPath, "to", fullDestinationPath)
 		err := storage.Copy(ctx, targetPath, fullDestinationPath)
 		if err != nil {
-			return "", func() error { return nil }, err
+			return "", "", func() error { return nil }, err
 		}
 	}
 
@@ -65,12 +66,18 @@ func ArchivePaperWorld(
 	log.Println("Archiving", tempDir, "to", archivePath)
 	err := archiveService.Archive(ctx, tempDir, archivePath)
 	if err != nil {
-		return "", func() error { return nil }, err
+		return "", "", func() error { return nil }, err
 	}
 
-	return archivePath, func() error {
+	return archivePath, name, func() error {
 		if err := storage.Delete(ctx, tempDir); err != nil {
 			// Ignore "key not found" errors during cleanup as temp dir may already be deleted
+			if !strings.Contains(err.Error(), "key not found") {
+				return err
+			}
+		}
+		if err := storage.Delete(ctx, archivePath); err != nil {
+			// Ignore "key not found" errors during cleanup as archive may already be deleted
 			if !strings.Contains(err.Error(), "key not found") {
 				return err
 			}

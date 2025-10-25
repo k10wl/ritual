@@ -23,8 +23,8 @@ import (
 // - NO filesystem operations, NO external dependencies - test the orchestration logic
 
 func TestNewBackupperService(t *testing.T) {
-	buildArchive := func() (string, func() error, error) {
-		return "test-archive.zip", func() error { return nil }, nil
+	buildArchive := func() (string, string, func() error, error) {
+		return "test-archive.zip", "test-backup", func() error { return nil }, nil
 	}
 
 	targets := []ports.BackupTarget{
@@ -49,8 +49,8 @@ func TestNewBackupperService_NilBuildArchive(t *testing.T) {
 }
 
 func TestNewBackupperService_EmptyTargets(t *testing.T) {
-	buildArchive := func() (string, func() error, error) {
-		return "test-archive.zip", func() error { return nil }, nil
+	buildArchive := func() (string, string, func() error, error) {
+		return "test-archive.zip", "test-backup", func() error { return nil }, nil
 	}
 
 	_, err := NewBackupperService(buildArchive, []ports.BackupTarget{}, t.TempDir())
@@ -71,8 +71,8 @@ func TestBackupperService_Run_HappyScenario(t *testing.T) {
 	err := os.WriteFile(tempDir+"/"+archivePath, []byte("PK\x03\x04test data"), 0644)
 	require.NoError(t, err)
 
-	buildArchive := func() (string, func() error, error) {
-		return archivePath, func() error { return nil }, nil
+	buildArchive := func() (string, string, func() error, error) {
+		return archivePath, "test-backup", func() error { return nil }, nil
 	}
 
 	backupper, err := NewBackupperService(buildArchive, targets, tempDir)
@@ -80,9 +80,8 @@ func TestBackupperService_Run_HappyScenario(t *testing.T) {
 	require.NotNil(t, backupper)
 
 	// Execute backup orchestration
-	cleanupFunc, err := backupper.Run()
+	err = backupper.Run()
 	require.NoError(t, err)
-	require.NotNil(t, cleanupFunc)
 
 	// Verify backup was called on target
 	require.True(t, mockTarget.backupCalled)
@@ -93,7 +92,9 @@ func TestBackupperService_Run_HappyScenario(t *testing.T) {
 // Test validateArchiveWithRoot method
 func TestBackupperService_validateArchiveWithRoot(t *testing.T) {
 	backupper, err := NewBackupperService(
-		func() (string, func() error, error) { return "", func() error { return nil }, nil },
+		func() (string, string, func() error, error) {
+			return "", "test-backup", func() error { return nil }, nil
+		},
 		[]ports.BackupTarget{&mockBackupTarget{}},
 		t.TempDir(),
 	)
@@ -124,15 +125,15 @@ func TestBackupperService_Run_BackupTargetError(t *testing.T) {
 	err := os.WriteFile(tempDir+"/"+archivePath, []byte("PK\x03\x04test data"), 0644)
 	require.NoError(t, err)
 
-	buildArchive := func() (string, func() error, error) {
-		return archivePath, func() error { return nil }, nil
+	buildArchive := func() (string, string, func() error, error) {
+		return archivePath, "test-backup", func() error { return nil }, nil
 	}
 
 	backupper, err := NewBackupperService(buildArchive, targets, tempDir)
 	require.NoError(t, err)
 
 	// Execute backup orchestration should fail
-	_, err = backupper.Run()
+	err = backupper.Run()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "backup failed")
 }
@@ -150,15 +151,15 @@ func TestBackupperService_Run_RetentionError(t *testing.T) {
 	err := os.WriteFile(tempDir+"/"+archivePath, []byte("PK\x03\x04test data"), 0644)
 	require.NoError(t, err)
 
-	buildArchive := func() (string, func() error, error) {
-		return archivePath, func() error { return nil }, nil
+	buildArchive := func() (string, string, func() error, error) {
+		return archivePath, "test-backup", func() error { return nil }, nil
 	}
 
 	backupper, err := NewBackupperService(buildArchive, targets, tempDir)
 	require.NoError(t, err)
 
 	// Execute backup orchestration should fail
-	_, err = backupper.Run()
+	err = backupper.Run()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "retention failed")
 }
@@ -172,7 +173,7 @@ type mockBackupTarget struct {
 	retentionError  error
 }
 
-func (m *mockBackupTarget) Backup(data []byte) error {
+func (m *mockBackupTarget) Backup(data []byte, name string) error {
 	m.backupCalled = true
 	m.backupData = data
 	return m.backupError

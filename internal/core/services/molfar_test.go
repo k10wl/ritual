@@ -89,9 +89,9 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 
 	// Create real backupper service using ArchivePaperWorld
 	backupperService, err := services.NewBackupperService(
-		func() (string, func() error, error) {
+		func() (string, string, func() error, error) {
 			ctx := context.Background()
-			return services.ArchivePaperWorld(
+			archivePath, backupName, cleanup, err := services.ArchivePaperWorld(
 				ctx,
 				localStorage,
 				archiveService,
@@ -99,6 +99,7 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 				config.LocalBackups,
 				fmt.Sprintf("%d", time.Now().Unix()),
 			)
+			return archivePath, backupName, cleanup, err
 		},
 		[]ports.BackupTarget{localBackupTarget},
 		tempDir,

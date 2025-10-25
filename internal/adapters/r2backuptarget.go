@@ -50,7 +50,7 @@ func NewR2BackupTarget(storage ports.StorageRepository, ctx context.Context) (*R
 }
 
 // Backup stores the provided data to the R2 backup destination
-func (r *R2BackupTarget) Backup(data []byte) error {
+func (r *R2BackupTarget) Backup(data []byte, name string) error {
 	if r == nil {
 		return errors.New("R2 backup target cannot be nil")
 	}
@@ -66,6 +66,9 @@ func (r *R2BackupTarget) Backup(data []byte) error {
 	if len(data) == 0 {
 		return errors.New("backup data cannot be empty")
 	}
+	if name == "" {
+		return errors.New("backup name cannot be empty")
+	}
 
 	// Generate timestamp-based filename
 	timestamp := time.Now().Format(r2TimestampFormat)
@@ -73,7 +76,7 @@ func (r *R2BackupTarget) Backup(data []byte) error {
 	if len(timestamp) != r2TimestampLength {
 		return errors.New("timestamp format validation failed")
 	}
-	filename := fmt.Sprintf("%s%s%s", r2BackupDirectory, timestamp, r2BackupFileExtension)
+	filename := fmt.Sprintf("%s%s/%s%s", r2BackupDirectory, name, timestamp, r2BackupFileExtension)
 
 	// Store backup data using storage repository
 	if err := r.storage.Put(r.ctx, filename, data); err != nil {
