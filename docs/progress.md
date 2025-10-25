@@ -69,18 +69,18 @@
 # >>> We are here
 
 ### Sprint 5: Backupper Component Implementation (1 week)
-- [ ] Implement `Backupper` domain entity with configuration parameters
-- [ ] Add `BackupperService` interface to ports layer
-- [ ] Create `BackupperService` implementation with template method pattern
-- [ ] Implement `validateArchive()` method with checksum validation
-- [ ] Implement `store()` method for archive persistence
-- [ ] Implement `applyRetention()` method with strategy pattern
-- [ ] Add `buildArchive` and `markForCleanup` strategy injection
-- [ ] Create comprehensive `BackupperService` tests
-- [ ] Add `BackupperService` mock implementation
-- [ ] Integrate `BackupperService` with existing storage adapters
-- [ ] Update `MolfarService` to orchestrate backup operations
-- [ ] Document Backupper architecture and design patterns
+- [x] Implement `Backupper` domain entity with configuration parameters
+- [x] Add `BackupTarget` interface to ports layer
+- [x] Add `BackupperService` interface to ports layer
+- [x] Create `BackupperService` implementation with template method pattern
+- [x] Implement `validateArchive()` method with checksum validation
+- [x] Refactor to use `BackupTarget` abstraction instead of direct storage
+- [x] Implement backup orchestration with multiple targets
+- [x] Add `buildArchive` strategy injection
+- [x] Create comprehensive `BackupperService` unit tests with mocks
+- [x] Refactor tests to use pure unit testing without filesystem operations
+- [x] Update `MolfarService` to orchestrate backup operations
+- [x] Document Backupper architecture and design patterns
 - [ ] Create centralized logging mechanism with structured logging
 - [ ] Implement log level configuration and filtering
 - [ ] Add log rotation and retention policies

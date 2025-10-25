@@ -130,6 +130,7 @@ Defines interfaces for external dependencies and provides comprehensive mock imp
   - `LibrarianService` - Manifest management interface
   - `ValidatorService` - Validation interface
   - `ArchiveService` - Archive management interface
+  - `BackupTarget` - Backup destination interface
   - `BackupperService` - Backup orchestration interface
   - `ServerRunner` - Server execution interface
 
@@ -182,8 +183,13 @@ type ArchiveService interface {
     Unarchive(ctx context.Context, archive string, destination string) error
 }
 
+type BackupTarget interface {
+    Backup(data []byte) error
+    DataRetention() error
+}
+
 type BackupperService interface {
-    Run() (func(), error)
+    Run() (func() error, error)
 }
 ```
 
@@ -265,41 +271,57 @@ func (v *ValidatorService) CheckInstance(local *domain.Manifest, remote *domain.
 
 // internal/core/services/backupper.go
 type BackupperService struct {
-    storage       StorageRepository
-    buildArchive  func() (string, func(), error)  // Returns generated path and cleanup
-    markForCleanup func(StorageRepository) ([]domain.World, error)
+    buildArchive func() (string, func() error, error) // Returns generated path and cleanup
+    targets      []BackupTarget                       // List of backup destinations
 }
 
-func NewBackupperService(storage StorageRepository, buildArchive func() (string, func(), error), markForCleanup func(StorageRepository) ([]domain.World, error)) *BackupperService {
-    return &BackupperService{
-        storage:       storage,
-        buildArchive:  buildArchive,
-        markForCleanup: markForCleanup,
+func NewBackupperService(buildArchive func() (string, func() error, error), targets []BackupTarget) (*BackupperService, error) {
+    if buildArchive == nil {
+        return nil, errors.New("buildArchive cannot be nil")
     }
+    if len(targets) == 0 {
+        return nil, errors.New("at least one backup target is required")
+    }
+    return &BackupperService{
+        buildArchive: buildArchive,
+        targets:      targets,
+    }, nil
 }
 
 func (b *BackupperService) Run() (func() error, error) {
     // Call buildArchive() to generate archive path and get cleanup function
-    // validateArchive(archivePath)
-    // store(archivePath)
-    // applyRetention()
-    // Return cleanup function and error if any step fails, else success
-    // Cleanup function applies retention and removes created archives
-    ...
+    archivePath, cleanup, err := b.buildArchive()
+    if err != nil {
+        return nil, err
+    }
+    defer cleanup()
+
+    // Validate archive
+    if err := b.validateArchive(archivePath); err != nil {
+        return nil, err
+    }
+
+    // Read archive data
+    data, err := os.ReadFile(archivePath)
+    if err != nil {
+        return nil, err
+    }
+
+    // Store to all targets and apply retention
+    for _, target := range b.targets {
+        if err := target.Backup(data); err != nil {
+            return nil, err
+        }
+        if err := target.DataRetention(); err != nil {
+            return nil, err
+        }
+    }
+
+    return cleanup, nil
 }
 
 func (b *BackupperService) validateArchive(archivePath string) error {
     // Confirm archive exists, readable, and checksum valid
-    ...
-}
-
-func (b *BackupperService) store(archivePath string) error {
-    // Persist archive to storage backend with timestamp format
-    ...
-}
-
-func (b *BackupperService) applyRetention() error {
-    // Execute retention policy using markForCleanup and delete expired backups
     ...
 }
 ```

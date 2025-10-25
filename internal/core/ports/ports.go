@@ -90,6 +90,16 @@ type ServerRunner interface {
 	Run(server *domain.Server) error
 }
 
+// BackupTarget defines the interface for backup destinations
+// BackupTarget abstracts backup storage implementations for testability
+type BackupTarget interface {
+	// Backup stores the provided data to the backup destination
+	Backup(data []byte) error
+
+	// DataRetention applies retention policies to manage stored backups
+	DataRetention() error
+}
+
 // BackupperService defines the backup orchestration interface
 // BackupperService handles backup creation and restoration using template method pattern
 type BackupperService interface {
