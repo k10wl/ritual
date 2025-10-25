@@ -19,7 +19,10 @@ R.I.T.U.A.L. ensures:
   - Ensures concurrency safety across multiple orchestrators
 
 • **Backups & Legacy Archiving**
-  - Maintains up to 5 historical world/plugin backups
+  - Modular backup orchestration with template method pattern
+  - Pluggable archive creation and cleanup strategies
+  - Configurable storage backends (local/cloud)
+  - Centralized retention policy management through Backupper
   - Prunes dangling or outdated backups automatically
   - Preserves server history like sacred artifacts
 
@@ -42,6 +45,7 @@ R.I.T.U.A.L. implements a distributed orchestration system with mystical naming:
 | **Molfar** | Orchestration | Central coordinator managing all system operations |
 | **Librarian** | Manifest Management | Retrieves/stores local/remote manifest data |
 | **Validator** | Validation | Performs instance integrity and consistency checks |
+| **Backupper** | Backup Orchestration | Modular backup/archive management with pluggable strategies |
 | **Storage** | Data Persistence | Unified interface for local/remote data operations |
 
 ## Operational Process Flow

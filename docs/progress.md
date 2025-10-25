@@ -62,28 +62,79 @@
 - [x] **CRITICAL**: Identify retention policy violations
 - [x] **CRITICAL**: Define centralized retention policy architecture
 - [x] **CRITICAL**: Document retention compliance requirements
+- [x] Implement `PaperInstanceSetup` test helper
+- [x] Add comprehensive test suite for PaperInstanceSetup
+- [x] Create version parameter support for paper.yml configuration
 
 # >>> We are here
 
-### Sprint 5: Retention Policy Implementation (1 week)
+### Sprint 5: Backupper Component Implementation (1 week)
+- [x] Implement `Backupper` domain entity with configuration parameters
+- [x] Add `BackupTarget` interface to ports layer
+- [x] Add `BackupperService` interface to ports layer
+- [x] Create `BackupperService` implementation with template method pattern
+- [x] Implement `validateArchive()` method with checksum validation
+- [x] Refactor to use `BackupTarget` abstraction instead of direct storage
+- [x] Implement backup orchestration with multiple targets
+- [x] Add `buildArchive` strategy injection
+- [x] Create comprehensive `BackupperService` unit tests with mocks
+- [x] Refactor tests to use pure unit testing without filesystem operations
+- [x] Update `MolfarService` to orchestrate backup operations
+- [x] Document Backupper architecture and design patterns
+- [ ] Create centralized logging mechanism with structured logging
+- [ ] Implement log level configuration and filtering
+- [ ] Add log rotation and retention policies
+- [ ] Integrate logging across all services and adapters
+- [ ] Create comprehensive logging tests and validation
+
+### Sprint 6: Retention Policy Integration (1 week)
 - [ ] **ROLLBACK**: Remove current O(n²) bubble sort from `RemoveOldestWorlds`
 - [ ] **ROLLBACK**: Remove scattered retention logic from `manageWorldRetention`
 - [ ] **ROLLBACK**: Remove dual-criteria conflict from `ManageLocalBackupRetention`
 - [ ] **ROLLBACK**: Remove hardcoded retention limits and constants
-- [ ] Implement centralized `RetentionPolicy` interface
-- [ ] Create `RetentionEngine` with strategy pattern
-- [ ] Implement efficient O(n log n) sorting algorithms
-- [ ] Add data integrity validation before deletion
-- [ ] Create retention configuration management
-- [ ] Replace current retention implementation with centralized policy
-- [ ] Add comprehensive retention policy tests
-- [ ] Update `MolfarService` to use centralized retention
+- [ ] Integrate retention policies with Backupper component
+- [ ] Replace current retention implementation with Backupper orchestration
+- [ ] Add comprehensive retention policy tests through Backupper
+- [ ] Update `MolfarService` to use Backupper for retention operations
 
-### Sprint 6: Integration Testing (1 week)
+### Sprint 7: Integration Testing (1 week)
 - [ ] Create end-to-end tests
 - [ ] Validate system flow
 - [ ] Update documentation
 - [ ] Create deployment guide
+
+## Test Helpers
+
+### PaperInstanceSetup
+**Location**: `internal/testhelpers/paperinstancesetup.go`
+
+Creates complete Paper Minecraft server instances for testing purposes.
+
+**Features**:
+- Creates server files: `server.properties`, `server.jar`, `eula.txt`, `bukkit.yml`, `spigot.yml`, `paper.yml`
+- Creates plugin files: `worldedit`, `essentials`, `luckperms`, `vault` (jars and configs)
+- Creates logs directory with `latest.log` and `debug.log`
+- Accepts version parameter for `paper.yml` configuration
+- Returns temp directory path, created files list, and comparison function
+- Uses `os.Root` for secure file operations
+
+**Usage**:
+```go
+tempDir, createdFiles, compareFunc, err := testhelpers.PaperInstanceSetup(dir, "1.20.1")
+```
+
+**Test Coverage**: Comprehensive test suite in `paperinstancesetup_test.go` with version validation, file structure verification, and comparison function testing.
+
+### PaperWorldSetup
+**Location**: `internal/testhelpers/paperworldsetup.go`
+
+Creates Paper Minecraft world directories with region files for testing.
+
+**Features**:
+- Creates world directory structure
+- Generates mock region files (.mca)
+- Creates level.dat and other world metadata files
+- Supports multiple world types (overworld, nether, end)
 
 ## References
 - Architecture: [structure.md](structure.md)

@@ -29,12 +29,19 @@ ritual/
 │   ├── structure.md             # This file - project structure documentation
 │   └── ritual.drawio            # Architecture diagrams
 └── internal/
+    ├── logger/
+    │   └── logger.go           # Centralized logging implementation
     ├── adapters/
     │   ├── cli.go               # CLI command handler
     │   ├── fs.go                # Local filesystem storage adapter
     │   ├── r2.go                # Cloudflare R2 storage adapter
     │   ├── serverrunner.go      # Server execution adapter
     │   └── commandexecutor.go   # Command execution adapter
+    ├── testhelpers/
+    │   ├── paperinstancesetup.go    # Paper Minecraft server instance test helper
+    │   ├── paperinstancesetup_test.go # PaperInstanceSetup test suite
+    │   ├── paperworldsetup.go        # Paper Minecraft world test helper
+    │   └── paperworldsetup_test.go   # PaperWorldSetup test suite
     └── core/
         ├── domain/
         │   ├── manifest.go      # Manifest entity
@@ -123,6 +130,8 @@ Defines interfaces for external dependencies and provides comprehensive mock imp
   - `LibrarianService` - Manifest management interface
   - `ValidatorService` - Validation interface
   - `ArchiveService` - Archive management interface
+  - `BackupTarget` - Backup destination interface
+  - `BackupperService` - Backup orchestration interface
   - `ServerRunner` - Server execution interface
 
 - **Mock Implementations** (`mocks/` folder) - Complete mock implementations with test coverage
@@ -173,6 +182,15 @@ type ArchiveService interface {
     Archive(ctx context.Context, source string, destination string) error
     Unarchive(ctx context.Context, archive string, destination string) error
 }
+
+type BackupTarget interface {
+    Backup(data []byte) error
+    DataRetention() error
+}
+
+type BackupperService interface {
+    Run() (func() error, error)
+}
 ```
 
 ### Services Layer (`internal/core/services/`)
@@ -183,6 +201,7 @@ Implements core business logic:
 - **`librarian.go`** - Manifest synchronization and management
 - **`validator.go`** - Instance integrity and conflict validation
 - **`archive.go`** - Archive compression and extraction operations
+- **`backupper.go`** - Backup orchestration engine with template method pattern
 
 #### Service Implementation Examples
 
@@ -248,6 +267,62 @@ func (v *ValidatorService) CheckInstance(local *domain.Manifest, remote *domain.
         return ErrRemoteManifestNil
     }
     // Additional validation logic...
+}
+
+// internal/core/services/backupper.go
+type BackupperService struct {
+    buildArchive func() (string, func() error, error) // Returns generated path and cleanup
+    targets      []BackupTarget                       // List of backup destinations
+}
+
+func NewBackupperService(buildArchive func() (string, func() error, error), targets []BackupTarget) (*BackupperService, error) {
+    if buildArchive == nil {
+        return nil, errors.New("buildArchive cannot be nil")
+    }
+    if len(targets) == 0 {
+        return nil, errors.New("at least one backup target is required")
+    }
+    return &BackupperService{
+        buildArchive: buildArchive,
+        targets:      targets,
+    }, nil
+}
+
+func (b *BackupperService) Run() (func() error, error) {
+    // Call buildArchive() to generate archive path and get cleanup function
+    archivePath, cleanup, err := b.buildArchive()
+    if err != nil {
+        return nil, err
+    }
+    defer cleanup()
+
+    // Validate archive
+    if err := b.validateArchive(archivePath); err != nil {
+        return nil, err
+    }
+
+    // Read archive data
+    data, err := os.ReadFile(archivePath)
+    if err != nil {
+        return nil, err
+    }
+
+    // Store to all targets and apply retention
+    for _, target := range b.targets {
+        if err := target.Backup(data); err != nil {
+            return nil, err
+        }
+        if err := target.DataRetention(); err != nil {
+            return nil, err
+        }
+    }
+
+    return cleanup, nil
+}
+
+func (b *BackupperService) validateArchive(archivePath string) error {
+    // Confirm archive exists, readable, and checksum valid
+    ...
 }
 ```
 
@@ -352,19 +427,62 @@ func (s *ServerRunner) Run(server *domain.Server) error {
 - Manages archive lifecycle operations
 - Integrates with storage abstraction for remote archive operations
 
+### Backupper (Backup Orchestration Engine)
+- **Template Method Pattern**: `Run()` defines fixed backup cycle skeleton with pluggable steps
+- **Strategy Pattern**: `buildArchive` and `markForCleanup` are injected strategies for archive creation and cleanup
+- **Facade Pattern**: Single `Run()` method hides internal orchestration complexity
+- **Configuration-Driven**: Supports `storage` (local/cloud) and strategy injection
+- **Extensibility**: Archive creation, storage backend, and cleanup strategy can be swapped independently
+- **Flow Orchestration**: Generate archive path → validate → store → apply retention → cleanup
+- **Return Pattern**: `Run()` returns cleanup function that applies retention and removes created archives
+- **Path Generation**: `buildArchive()` strategy handles archive path generation internally
+- **Internal Methods**: `validateArchive(archivePath)` confirms archive exists, readable, and checksum valid
+- **Internal Methods**: `store(archivePath)` persists archive to storage backend with timestamp format `{unixtimestamp}.zip`
+- **Internal Methods**: `applyRetention()` executes retention policy using `markForCleanup` and deletes expired backups
+
 ### Retention (Data Lifecycle Management)
-- **Centralized Retention Engine**: Single `RetentionPolicy` interface for all retention decisions
-- **Strategy Pattern**: Configurable retention strategies per data type (World, Local Backup, Manifest)
+- **Backupper Integration**: Retention policies managed through Backupper component orchestration
+- **Strategy Pattern**: Configurable retention strategies injected via `markForCleanup` function
 - **Performance Compliance**: O(n log n) sorting algorithms, bounded operations
 - **Data Integrity**: Backup verification before deletion
 - **Configuration Management**: Structured configuration objects with weighted scoring
 - **NASA JPL Compliance**: Defensive programming standards for mission-critical reliability
+
+
+### Test Helpers (`internal/testhelpers/`)
+
+Provides comprehensive test utilities for Minecraft server testing:
+
+- **`paperinstancesetup.go`** - Creates complete Paper Minecraft server instances for testing
+  - Generates server files: `server.properties`, `server.jar`, `eula.txt`, `bukkit.yml`, `spigot.yml`, `paper.yml`
+  - Creates plugin files: `worldedit`, `essentials`, `luckperms`, `vault` (jars and configs)
+  - Creates logs directory with `latest.log` and `debug.log`
+  - Accepts version parameter for `paper.yml` configuration
+  - Returns temp directory path, created files list, and comparison function
+  - Uses `os.Root` for secure file operations
+
+- **`paperworldsetup.go`** - Creates Paper Minecraft world directories with region files
+  - Generates world directory structure
+  - Creates mock region files (.mca)
+  - Creates level.dat and other world metadata files
+  - Supports multiple world types (overworld, nether, end)
+
+**Test Coverage**: Both helpers include comprehensive test suites with version validation, file structure verification, and comparison function testing.
 
 ### Storage Abstraction
 - Unified interface for local (filesystem) and remote (R2) storage
 - Supports manifest, world data, and backup operations
 - Provides Copy operation for efficient data movement
 - Enables easy switching between storage backends
+
+### Logging Infrastructure (`internal/logger/logger.go`)
+- **Singleton Pattern**: Package-level logger configured once in `main.init()`
+- **Structured Logging**: JSON format with contextual fields
+- **Log Levels**: Debug, Info, Warn, Error, Fatal with runtime configuration
+- **Configurable Output**: File, stdout, or both with automatic rotation
+- **Context Fields**: Support for adding contextual information to log entries
+- **Direct Usage**: Used directly throughout codebase without dependency injection
+- **Global Access**: Services call logger package functions directly
 
 ## Development Guidelines
 
@@ -421,15 +539,15 @@ R.I.T.U.A.L. enforces NASA JPL Power of Ten defensive programming standards for 
 ### Retention Policy Compliance
 
 **CRITICAL PATH REQUIREMENTS:**
-- **Centralized Retention**: All retention decisions flow through `RetentionPolicy` interface
+- **Backupper Integration**: All retention decisions flow through Backupper component orchestration
 - **Performance Compliance**: O(n log n) sorting algorithms, bounded operations
 - **Data Integrity**: Backup verification before deletion
-- **Strategy Pattern**: Configurable retention strategies per data type
+- **Strategy Pattern**: Configurable retention strategies injected via `markForCleanup` function
 - **Configuration Management**: Structured configuration objects with weighted scoring
 
 **Retention Categories:**
-- **World Retention**: Time-based with usage weighting (5 max)
-- **Local Backup Retention**: Dual-criteria time+count (5 max, 60 days)
+- **World Retention**: Time-based with usage weighting (configurable max)
+- **Local Backup Retention**: Dual-criteria time+count (configurable limits)
 
 **Compliance Validation:**
 - All retention operations must pass integrity validation
@@ -447,6 +565,62 @@ R.I.T.U.A.L. enforces NASA JPL Power of Ten defensive programming standards for 
 - **AI must update progress tracking in docs/progress.md when implementing components**
 - **MANDATORY**: Follow defensive programming standards per NASA JPL Power of Ten
 
+## Main Initialization Pattern
+
+### Logger Configuration in main.init()
+
+```go
+// cmd/cli/main.go
+import "ritual/internal/logger"
+
+func init() {
+    // Configure singleton logger (file, stdout, or both)
+    err := logger.Init(logger.InfoLevel, "ritual.log", logger.FileOutput|logger.StdoutOutput)
+    if err != nil {
+        log.Fatal("Failed to initialize logger:", err)
+    }
+    
+    logger.Info("R.I.T.U.A.L. logger initialized", map[string]interface{}{
+        "version": "1.0.0",
+        "component": "main",
+        "output": "file+stdout",
+    })
+}
+
+func main() {
+    // ... rest of initialization
+}
+```
+
+### Service Integration Pattern
+
+```go
+// internal/core/services/molfar.go
+import "ritual/internal/logger"
+
+type MolfarService struct {
+    librarian LibrarianService
+    validator ValidatorService
+    storage   StorageRepository
+}
+
+func NewMolfarService(librarian LibrarianService, validator ValidatorService, storage StorageRepository) *MolfarService {
+    return &MolfarService{
+        librarian: librarian,
+        validator: validator,
+        storage:   storage,
+    }
+}
+
+func (m *MolfarService) Prepare() error {
+    logger.Info("Starting Molfar preparation", map[string]interface{}{
+        "component": "molfar",
+        "operation": "prepare",
+    })
+    // ... implementation
+}
+```
+
 ## Structure.md Authority
 - **@structure.md is the authoritative source for project structure**
 - All architectural decisions must align with structure.md definitions
@@ -454,4 +628,4 @@ R.I.T.U.A.L. enforces NASA JPL Power of Ten defensive programming standards for 
 - Structure.md contains detailed examples and implementation patterns
 - Any structural changes require updating both code and structure.md documentation
 
-This structure ensures R.I.T.U.A.L. maintains clean architecture while supporting the complex requirements of Minecraft server orchestration, manifest management, and distributed storage synchronization.
+This structure ensures R.I.T.U.A.L. maintains clean architecture while supporting the complex requirements of Minecraft server orchestration, manifest management, distributed storage synchronization, and centralized logging infrastructure.

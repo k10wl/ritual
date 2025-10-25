@@ -1,3 +1,12 @@
+// Package services provides archive functionality for compressing and extracting files.
+//
+// ArchiveService handles compression and extraction of data archives using relative paths
+// based on a configured base path. All operations work within the base path directory.
+//
+// All paths are relative to the basePath. The service automatically:
+// - Joins relative paths with basePath for actual file operations
+// - Creates relative paths in archives based on basePath
+// - Validates paths to prevent directory traversal attacks
 package services
 
 import (
@@ -11,24 +20,32 @@ import (
 )
 
 // ArchiveService handles compression and extraction of data archives
-type ArchiveService struct{}
+type ArchiveService struct {
+	basePath string
+}
 
 // NewArchiveService creates a new ArchiveService instance
-func NewArchiveService() *ArchiveService {
-	return &ArchiveService{}
+func NewArchiveService(basePath string) (*ArchiveService, error) {
+	if basePath == "" {
+		return nil, fmt.Errorf("basePath cannot be empty")
+	}
+	return &ArchiveService{basePath: basePath}, nil
 }
 
 // Archive compresses source to destination
-func (a *ArchiveService) Archive(ctx context.Context, source string, destination string) error {
+func (a *ArchiveService) Archive(ctx context.Context, relSrc string, relDest string) error {
 	if a == nil {
 		return fmt.Errorf("archive service cannot be nil")
 	}
-	if source == "" {
+	if relSrc == "" {
 		return fmt.Errorf("source path cannot be empty")
 	}
-	if destination == "" {
+	if relDest == "" {
 		return fmt.Errorf("destination path cannot be empty")
 	}
+
+	source := filepath.Join(a.basePath, relSrc)
+	destination := filepath.Join(a.basePath, relDest)
 
 	// Check if source exists
 	if _, err := os.Stat(source); os.IsNotExist(err) {
@@ -53,6 +70,13 @@ func (a *ArchiveService) Archive(ctx context.Context, source string, destination
 
 	// Walk through source directory
 	err = filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		// Skip the zip file we're creating to prevent archiving the archive itself
+		if path == destination {
+			return nil
+		}
 		return a.archivePath(path, info, zipWriter, source)
 	})
 
@@ -110,17 +134,19 @@ func (a *ArchiveService) archivePath(path string, info os.FileInfo, zipWriter *z
 }
 
 // Unarchive extracts archive to destination
-func (a *ArchiveService) Unarchive(ctx context.Context, archive string, destination string) error {
+func (a *ArchiveService) Unarchive(ctx context.Context, relArchive string, relDestination string) error {
 	if a == nil {
 		return fmt.Errorf("archive service cannot be nil")
 	}
-	if archive == "" {
+	if relArchive == "" {
 		return fmt.Errorf("archive path cannot be empty")
 	}
-	if destination == "" {
+	if relDestination == "" {
 		return fmt.Errorf("destination path cannot be empty")
 	}
 
+	destination := filepath.Join(a.basePath, relDestination)
+	archive := filepath.Join(a.basePath, relArchive)
 	// Check if archive exists
 	if _, err := os.Stat(archive); os.IsNotExist(err) {
 		return fmt.Errorf("archive file does not exist: %s", archive)
