@@ -817,8 +817,16 @@ func (m *MolfarService) downloadAndExtractInstance(ctx context.Context, instance
 	}
 
 	tempFilePath := filepath.Join(m.workdir, tempKey)
-	m.logger.Info("Extracting instance archive", "source", tempFilePath, "destination", instancePath)
-	err = m.archive.Unarchive(ctx, tempFilePath, instancePath)
+	relTempFilePath, err := filepath.Rel(m.workdir, tempFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to get relative temp path: %w", err)
+	}
+	relInstancePath, err := filepath.Rel(m.workdir, instancePath)
+	if err != nil {
+		return fmt.Errorf("failed to get relative instance path: %w", err)
+	}
+	m.logger.Info("Extracting instance archive", "source", relTempFilePath, "destination", relInstancePath)
+	err = m.archive.Unarchive(ctx, relTempFilePath, relInstancePath)
 	if err != nil {
 		m.logger.Error("Failed to extract instance archive", "source", tempFilePath, "destination", instancePath, "error", err)
 		return err
@@ -865,8 +873,16 @@ func (m *MolfarService) downloadWorldArchive(ctx context.Context, sanitizedURI s
 func (m *MolfarService) extractWorldArchive(ctx context.Context, sanitizedURI, instancePath string) error {
 	tempKey := filepath.Join(TempPrefix, sanitizedURI)
 	tempFilePath := filepath.Join(m.workdir, tempKey)
-	m.logger.Info("Extracting worlds archive", "source", tempFilePath, "destination", instancePath)
-	err := m.archive.Unarchive(ctx, tempFilePath, instancePath)
+	relTempFilePath, err := filepath.Rel(m.workdir, tempFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to get relative temp path: %w", err)
+	}
+	relInstancePath, err := filepath.Rel(m.workdir, instancePath)
+	if err != nil {
+		return fmt.Errorf("failed to get relative instance path: %w", err)
+	}
+	m.logger.Info("Extracting worlds archive", "source", relTempFilePath, "destination", relInstancePath)
+	err = m.archive.Unarchive(ctx, relTempFilePath, relInstancePath)
 	if err != nil {
 		m.logger.Error("Failed to extract worlds archive", "source", tempFilePath, "destination", instancePath, "error", err)
 		return fmt.Errorf("failed to extract worlds: %w", err)

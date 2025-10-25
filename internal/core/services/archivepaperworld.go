@@ -47,6 +47,7 @@ func ArchivePaperWorld(
 	}
 
 	tempDir := filepath.Join(destinationPath, fmt.Sprintf("tmp_%d", time.Now().Unix()))
+	log.Println("Temp dir:", tempDir)
 
 	for _, targetPath := range targetPaths {
 		leaf := filepath.Base(targetPath)

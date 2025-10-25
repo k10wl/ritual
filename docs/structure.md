@@ -35,6 +35,11 @@ ritual/
     │   ├── r2.go                # Cloudflare R2 storage adapter
     │   ├── serverrunner.go      # Server execution adapter
     │   └── commandexecutor.go   # Command execution adapter
+    ├── testhelpers/
+    │   ├── paperinstancesetup.go    # Paper Minecraft server instance test helper
+    │   ├── paperinstancesetup_test.go # PaperInstanceSetup test suite
+    │   ├── paperworldsetup.go        # Paper Minecraft world test helper
+    │   └── paperworldsetup_test.go   # PaperWorldSetup test suite
     └── core/
         ├── domain/
         │   ├── manifest.go      # Manifest entity
@@ -419,6 +424,26 @@ func (s *ServerRunner) Run(server *domain.Server) error {
 - **Configuration Management**: Structured configuration objects with weighted scoring
 - **NASA JPL Compliance**: Defensive programming standards for mission-critical reliability
 
+
+### Test Helpers (`internal/testhelpers/`)
+
+Provides comprehensive test utilities for Minecraft server testing:
+
+- **`paperinstancesetup.go`** - Creates complete Paper Minecraft server instances for testing
+  - Generates server files: `server.properties`, `server.jar`, `eula.txt`, `bukkit.yml`, `spigot.yml`, `paper.yml`
+  - Creates plugin files: `worldedit`, `essentials`, `luckperms`, `vault` (jars and configs)
+  - Creates logs directory with `latest.log` and `debug.log`
+  - Accepts version parameter for `paper.yml` configuration
+  - Returns temp directory path, created files list, and comparison function
+  - Uses `os.Root` for secure file operations
+
+- **`paperworldsetup.go`** - Creates Paper Minecraft world directories with region files
+  - Generates world directory structure
+  - Creates mock region files (.mca)
+  - Creates level.dat and other world metadata files
+  - Supports multiple world types (overworld, nether, end)
+
+**Test Coverage**: Both helpers include comprehensive test suites with version validation, file structure verification, and comparison function testing.
 
 ### Storage Abstraction
 - Unified interface for local (filesystem) and remote (R2) storage

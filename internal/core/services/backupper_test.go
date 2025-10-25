@@ -1,6 +1,7 @@
 package services
 
 import (
+	"archive/zip"
 	"context"
 	"os"
 	"path/filepath"
@@ -92,30 +93,47 @@ func setupRitualDirectory(t *testing.T) (string, func(string) error) {
 	return ritualDir, compareFunc
 }
 
+func logDirectoryTree(t *testing.T, dirPath string, prefix string) {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		t.Logf("%s[ERROR: %v]", prefix, err)
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			t.Logf("%s%s/", prefix, entry.Name())
+			logDirectoryTree(t, filepath.Join(dirPath, entry.Name()), prefix+"  ")
+		} else {
+			t.Logf("%s%s", prefix, entry.Name())
+		}
+	}
+}
+
 func TestBackupperService_Run_HappyScenario(t *testing.T) {
-	// Use real filesystem operations to verify backup orchestration completion
-	tempDir, _ := setupRitualDirectory(t)
+	tempDir := t.TempDir()
 	fs, err := adapters.NewFSRepository(tempDir)
 	require.NoError(t, err)
 	defer fs.Close()
 
-	archivePath := filepath.Join(tempDir, "test-archive.zip")
-	file, err := os.Create(archivePath)
-	if err != nil {
-		t.Fatalf("Failed to create archive file: %v", err)
-	}
-	file.WriteString("test archive content")
-	file.Close()
+	instanceDir := filepath.Join(tempDir, "instance")
+	err = os.MkdirAll(instanceDir, 0755)
+	require.NoError(t, err)
+
+	// Setup Paper Minecraft world structure using testhelper
+	_, _, _, err = testhelpers.PaperMinecraftWorldSetup(instanceDir)
+	require.NoError(t, err)
 
 	archiveService, err := NewArchiveService(tempDir)
 	require.NoError(t, err)
 
+	// Create archive using ArchivePaperWorld function
 	archivePath, cleanup, err := ArchivePaperWorld(
 		context.Background(),
 		fs,
 		archiveService,
-		"",
-		tempDir,
+		"instance",
+		"tmp",
 		"test_backup",
 	)
 	require.NoError(t, err)
@@ -124,7 +142,9 @@ func TestBackupperService_Run_HappyScenario(t *testing.T) {
 
 	backupper, err := NewBackupperService(
 		fs,
-		func() (string, func() error, error) { return archivePath, cleanup, nil },
+		func() (string, func() error, error) {
+			return filepath.Join(tempDir, archivePath), cleanup, nil
+		},
 		func(ports.StorageRepository) ([]domain.World, error) { return []domain.World{}, nil },
 	)
 	require.NoError(t, err)
@@ -132,47 +152,78 @@ func TestBackupperService_Run_HappyScenario(t *testing.T) {
 
 	// Execute backup orchestration
 	cleanupFunc, err := backupper.Run()
-	if err != nil {
-		t.Errorf("Run() returned error: %v", err)
-	}
-	if cleanupFunc == nil {
-		t.Error("Run() returned nil cleanup function")
-	}
+	require.NoError(t, err)
+	require.NotNil(t, cleanupFunc)
 
-	// Verify filesystem state after successful run
-	// Archive should be processed and stored in backup location with timestamp format
-	// Look for files matching pattern {unixtimestamp}.zip
+	// Verify archive file exists and extract for verification
 	files, err := fs.List(context.Background(), "")
-	if err != nil {
-		t.Errorf("Failed to list files after successful run: %v", err)
-	}
+	require.NoError(t, err)
 
-	var foundBackup bool
-	for _, file := range files {
-		if len(file) > 4 && file[len(file)-4:] == ".zip" {
-			// Check if filename is numeric timestamp + .zip
-			timestamp := file[:len(file)-4]
-			if len(timestamp) == 10 { // Unix timestamp length
-				foundBackup = true
-				break
-			}
-		}
-	}
-
-	if !foundBackup {
-		t.Error("No backup file found with timestamp format")
-	}
-
-	// Find the backup file for verification
 	var backupFile string
 	for _, file := range files {
 		if len(file) > 4 && file[len(file)-4:] == ".zip" {
 			timestamp := file[:len(file)-4]
-			if len(timestamp) == 10 {
+			if len(timestamp) == 10 { // Unix timestamp length
 				backupFile = file
 				break
 			}
 		}
 	}
 	require.NotEmpty(t, backupFile, "Backup file should exist")
+
+	// Extract archive using standard zip package for verification
+	extractedDir := filepath.Join(tempDir, "extracted")
+	err = os.MkdirAll(extractedDir, 0755)
+	require.NoError(t, err)
+
+	// Open zip file
+	zipReader, err := zip.OpenReader(filepath.Join(tempDir, backupFile))
+	require.NoError(t, err)
+	defer zipReader.Close()
+
+	// Extract all files
+	for _, file := range zipReader.File {
+		filePath := filepath.Join(extractedDir, file.Name)
+
+		if file.FileInfo().IsDir() {
+			err = os.MkdirAll(filePath, file.FileInfo().Mode())
+			require.NoError(t, err)
+			continue
+		}
+
+		err = os.MkdirAll(filepath.Dir(filePath), 0755)
+		require.NoError(t, err)
+
+		rc, err := file.Open()
+		require.NoError(t, err)
+
+		outFile, err := os.Create(filePath)
+		require.NoError(t, err)
+
+		_, err = outFile.ReadFrom(rc)
+		require.NoError(t, err)
+
+		outFile.Close()
+		rc.Close()
+	}
+
+	// Log directory structures for debugging
+	t.Log("=== ORIGINAL INSTANCE STRUCTURE ===")
+	logDirectoryTree(t, filepath.Join(tempDir, "instance"), "")
+
+	t.Log("=== EXTRACTED ARCHIVE STRUCTURE ===")
+	logDirectoryTree(t, extractedDir, "")
+
+	// Calculate checksums for original and extracted directories
+	originalChecksum, err := testhelpers.DirectoryChecksum(filepath.Join(tempDir, "instance"))
+	require.NoError(t, err)
+
+	extractedChecksum, err := testhelpers.DirectoryChecksum(extractedDir)
+	require.NoError(t, err)
+
+	t.Logf("Original checksum: %s", originalChecksum)
+	t.Logf("Extracted checksum: %s", extractedChecksum)
+
+	// Verify checksums match
+	require.Equal(t, originalChecksum, extractedChecksum, "Extracted archive content should match original world structure")
 }

@@ -62,6 +62,9 @@
 - [x] **CRITICAL**: Identify retention policy violations
 - [x] **CRITICAL**: Define centralized retention policy architecture
 - [x] **CRITICAL**: Document retention compliance requirements
+- [x] Implement `PaperInstanceSetup` test helper
+- [x] Add comprehensive test suite for PaperInstanceSetup
+- [x] Create version parameter support for paper.yml configuration
 
 # >>> We are here
 
@@ -94,6 +97,39 @@
 - [ ] Validate system flow
 - [ ] Update documentation
 - [ ] Create deployment guide
+
+## Test Helpers
+
+### PaperInstanceSetup
+**Location**: `internal/testhelpers/paperinstancesetup.go`
+
+Creates complete Paper Minecraft server instances for testing purposes.
+
+**Features**:
+- Creates server files: `server.properties`, `server.jar`, `eula.txt`, `bukkit.yml`, `spigot.yml`, `paper.yml`
+- Creates plugin files: `worldedit`, `essentials`, `luckperms`, `vault` (jars and configs)
+- Creates logs directory with `latest.log` and `debug.log`
+- Accepts version parameter for `paper.yml` configuration
+- Returns temp directory path, created files list, and comparison function
+- Uses `os.Root` for secure file operations
+
+**Usage**:
+```go
+tempDir, createdFiles, compareFunc, err := testhelpers.PaperInstanceSetup(dir, "1.20.1")
+```
+
+**Test Coverage**: Comprehensive test suite in `paperinstancesetup_test.go` with version validation, file structure verification, and comparison function testing.
+
+### PaperWorldSetup
+**Location**: `internal/testhelpers/paperworldsetup.go`
+
+Creates Paper Minecraft world directories with region files for testing.
+
+**Features**:
+- Creates world directory structure
+- Generates mock region files (.mca)
+- Creates level.dat and other world metadata files
+- Supports multiple world types (overworld, nether, end)
 
 ## References
 - Architecture: [structure.md](structure.md)
