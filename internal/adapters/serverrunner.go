@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"strconv"
@@ -45,7 +46,7 @@ func (s *ServerRunner) Run(server *domain.Server) error {
 		return fmt.Errorf("server bat path cannot be empty")
 	}
 
-	instancePath := filepath.Join(s.homedir, "instance")
+	instancePath := filepath.Join(s.homedir, config.InstanceDir)
 	batPath := filepath.Join(instancePath, server.BatPath)
 
 	if _, err := os.Stat(batPath); err != nil {

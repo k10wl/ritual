@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"ritual/internal/config"
 	"ritual/internal/core/domain"
 
 	"github.com/stretchr/testify/assert"
@@ -46,7 +47,7 @@ func TestNewServerRunner_NilExecutor(t *testing.T) {
 
 func TestServerRunner_Run(t *testing.T) {
 	tempDir := t.TempDir()
-	instanceDir := filepath.Join(tempDir, "instance")
+	instanceDir := filepath.Join(tempDir, config.InstanceDir)
 	err := os.MkdirAll(instanceDir, 0755)
 	assert.NoError(t, err)
 
@@ -108,7 +109,7 @@ func TestServerRunner_Run_BatFileNotFound(t *testing.T) {
 
 func TestServerRunner_Run_CommandExecutionError(t *testing.T) {
 	tempDir := t.TempDir()
-	instanceDir := filepath.Join(tempDir, "instance")
+	instanceDir := filepath.Join(tempDir, config.InstanceDir)
 	err := os.MkdirAll(instanceDir, 0755)
 	assert.NoError(t, err)
 

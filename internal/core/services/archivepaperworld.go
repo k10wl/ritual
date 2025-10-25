@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"ritual/internal/config"
 	"ritual/internal/core/ports"
 )
 
@@ -46,7 +48,7 @@ func ArchivePaperWorld(
 		filepath.Join(instancePath, "world_the_end"),
 	}
 
-	tempDir := filepath.Join(destinationPath, fmt.Sprintf("tmp_%d", time.Now().Unix()))
+	tempDir := filepath.Join(destinationPath, fmt.Sprintf("%s_%d", config.TmpDir, time.Now().Unix()))
 	log.Println("Temp dir:", tempDir)
 
 	for _, targetPath := range targetPaths {
@@ -65,7 +67,14 @@ func ArchivePaperWorld(
 	if err != nil {
 		return "", func() error { return nil }, err
 	}
-	storage.Delete(ctx, tempDir)
 
-	return archivePath, func() error { return storage.Delete(ctx, tempDir) }, nil
+	return archivePath, func() error {
+		if err := storage.Delete(ctx, tempDir); err != nil {
+			// Ignore "key not found" errors during cleanup as temp dir may already be deleted
+			if !strings.Contains(err.Error(), "key not found") {
+				return err
+			}
+		}
+		return nil
+	}, nil
 }

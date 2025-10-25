@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"ritual/internal/config"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ports/mocks"
 	"testing"
@@ -76,7 +77,7 @@ func TestLocalBackupTarget_Backup(t *testing.T) {
 				}
 				mockStorage.PutFunc = func(ctx context.Context, key string, data []byte) error {
 					assert.Equal(t, []byte("test backup data"), data)
-					assert.Contains(t, key, "world_backups/")
+					assert.Contains(t, key, config.LocalBackups+"/")
 					return nil
 				}
 			},
@@ -148,7 +149,7 @@ func TestLocalBackupTarget_DataRetention(t *testing.T) {
 		mockFiles := []string{}
 		for i := 0; i < 5; i++ {
 			timestamp := time.Now().Add(-time.Duration(i) * time.Hour).Format("20060102150405")
-			mockFiles = append(mockFiles, fmt.Sprintf("world_backups/%s.zip", timestamp))
+			mockFiles = append(mockFiles, fmt.Sprintf(config.LocalBackups+"/%s.zip", timestamp))
 		}
 
 		mockStorage.ListFunc = func(ctx context.Context, prefix string) ([]string, error) {
@@ -171,7 +172,7 @@ func TestLocalBackupTarget_DataRetention(t *testing.T) {
 		mockFiles := []string{}
 		for i := 0; i < 15; i++ {
 			timestamp := time.Now().Add(-time.Duration(i) * time.Hour).Format("20060102150405")
-			mockFiles = append(mockFiles, fmt.Sprintf("world_backups/%s.zip", timestamp))
+			mockFiles = append(mockFiles, fmt.Sprintf(config.LocalBackups+"/%s.zip", timestamp))
 		}
 
 		mockStorage.ListFunc = func(ctx context.Context, prefix string) ([]string, error) {
@@ -192,10 +193,10 @@ func TestLocalBackupTarget_DataRetention(t *testing.T) {
 	t.Run("deletes invalid timestamp files immediately", func(t *testing.T) {
 		// Mix of valid and invalid timestamp files
 		mockFiles := []string{
-			"world_backups/20240101120000.zip", // valid (18 chars)
-			"world_backups/invalid.zip",        // invalid (too short)
-			"world_backups/20240102120000.zip", // valid (18 chars)
-			"world_backups/notimestamp.zip",    // invalid (too short)
+			config.LocalBackups + "/20240101120000.zip", // valid (18 chars)
+			config.LocalBackups + "/invalid.zip",        // invalid (too short)
+			config.LocalBackups + "/20240102120000.zip", // valid (18 chars)
+			config.LocalBackups + "/notimestamp.zip",    // invalid (too short)
 		}
 
 		mockStorage.ListFunc = func(ctx context.Context, prefix string) ([]string, error) {
@@ -211,8 +212,8 @@ func TestLocalBackupTarget_DataRetention(t *testing.T) {
 		err := target.DataRetention()
 		assert.NoError(t, err)
 		assert.Equal(t, 2, len(deletedFiles), "Expected 2 invalid files to be deleted immediately")
-		assert.Contains(t, deletedFiles, "world_backups/invalid.zip")
-		assert.Contains(t, deletedFiles, "world_backups/notimestamp.zip")
+		assert.Contains(t, deletedFiles, config.LocalBackups+"/invalid.zip")
+		assert.Contains(t, deletedFiles, config.LocalBackups+"/notimestamp.zip")
 	})
 
 	t.Run("storage list error", func(t *testing.T) {
@@ -230,7 +231,7 @@ func TestLocalBackupTarget_DataRetention(t *testing.T) {
 		mockFiles := []string{}
 		for i := 0; i < 15; i++ {
 			timestamp := time.Now().Add(-time.Duration(i) * time.Hour).Format("20060102150405")
-			mockFiles = append(mockFiles, fmt.Sprintf("world_backups/%s.zip", timestamp))
+			mockFiles = append(mockFiles, fmt.Sprintf(config.LocalBackups+"/%s.zip", timestamp))
 		}
 
 		mockStorage.ListFunc = func(ctx context.Context, prefix string) ([]string, error) {
@@ -248,7 +249,7 @@ func TestLocalBackupTarget_DataRetention(t *testing.T) {
 
 	t.Run("storage delete error during invalid file cleanup", func(t *testing.T) {
 		mockFiles := []string{
-			"world_backups/invalid.zip", // invalid timestamp (too short)
+			config.LocalBackups + "/invalid.zip", // invalid timestamp (too short)
 		}
 
 		mockStorage.ListFunc = func(ctx context.Context, prefix string) ([]string, error) {
@@ -275,7 +276,7 @@ func TestLocalBackupTarget_BackupSkipping(t *testing.T) {
 		currentTime := time.Now()
 		currentMonthTimestamp := currentTime.Format("20060102150405")
 		mockFiles := []string{
-			fmt.Sprintf("world_backups/%s.zip", currentMonthTimestamp),
+			fmt.Sprintf(config.LocalBackups+"/%s.zip", currentMonthTimestamp),
 		}
 
 		mockStorage.ListFunc = func(ctx context.Context, prefix string) ([]string, error) {
@@ -298,7 +299,7 @@ func TestLocalBackupTarget_BackupSkipping(t *testing.T) {
 		lastMonth := time.Now().AddDate(0, -1, 0)
 		lastMonthTimestamp := lastMonth.Format("20060102150405")
 		mockFiles := []string{
-			fmt.Sprintf("world_backups/%s.zip", lastMonthTimestamp),
+			fmt.Sprintf(config.LocalBackups+"/%s.zip", lastMonthTimestamp),
 		}
 
 		mockStorage.ListFunc = func(ctx context.Context, prefix string) ([]string, error) {
@@ -308,7 +309,7 @@ func TestLocalBackupTarget_BackupSkipping(t *testing.T) {
 		putCalled := false
 		mockStorage.PutFunc = func(ctx context.Context, key string, data []byte) error {
 			putCalled = true
-			assert.Contains(t, key, "world_backups/")
+			assert.Contains(t, key, config.LocalBackups+"/")
 			return nil
 		}
 
@@ -325,7 +326,7 @@ func TestLocalBackupTarget_BackupSkipping(t *testing.T) {
 		putCalled := false
 		mockStorage.PutFunc = func(ctx context.Context, key string, data []byte) error {
 			putCalled = true
-			assert.Contains(t, key, "world_backups/")
+			assert.Contains(t, key, config.LocalBackups+"/")
 			return nil
 		}
 
@@ -342,8 +343,8 @@ func TestLocalBackupTarget_BackupSkipping(t *testing.T) {
 		lastMonthTimestamp := lastMonth.Format("20060102150405")
 
 		mockFiles := []string{
-			fmt.Sprintf("world_backups/%s.zip", currentMonthTimestamp), // newest
-			fmt.Sprintf("world_backups/%s.zip", lastMonthTimestamp),    // older
+			fmt.Sprintf(config.LocalBackups+"/%s.zip", currentMonthTimestamp), // newest
+			fmt.Sprintf(config.LocalBackups+"/%s.zip", lastMonthTimestamp),    // older
 		}
 
 		mockStorage.ListFunc = func(ctx context.Context, prefix string) ([]string, error) {

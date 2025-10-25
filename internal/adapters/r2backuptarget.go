@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"ritual/internal/config"
 	"ritual/internal/core/ports"
 	"sort"
 	"time"
@@ -15,7 +16,7 @@ const (
 	r2MaxFiles            = 1000                                           // Maximum number of files to process in single operation
 	r2TimestampLength     = 14                                             // Expected length of timestamp string (YYYYMMDDHHMMSS)
 	r2MinFilenameLength   = len(r2BackupFileExtension) + r2TimestampLength // Minimum filename length
-	r2BackupDirectory     = "world_backups/"
+	r2BackupDirectory     = config.LocalBackups + "/"
 	r2BackupFileExtension = ".zip"
 	r2TimestampFormat     = "20060102150405"
 )

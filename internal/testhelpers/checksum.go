@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"ritual/internal/config"
 	"sort"
 	"strings"
 )
@@ -110,5 +111,5 @@ func CompareWorldDirectories(localInstancePath, remoteWorldsPath string, worldDi
 
 // CompareInstanceDirectories validates that local and remote instance directories have matching checksums
 func CompareInstanceDirectories(localInstancePath, remoteInstancePath string) error {
-	return CompareDirectories(localInstancePath, remoteInstancePath, "instance")
+	return CompareDirectories(localInstancePath, remoteInstancePath, config.InstanceDir)
 }

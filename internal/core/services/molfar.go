@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"strings"
@@ -16,8 +17,8 @@ import (
 // Molfar constants
 const (
 	InstanceZipKey = "instance.zip"
-	TempPrefix     = "temp"
-	InstanceDir    = "instance"
+	TempPrefix     = config.TmpDir
+	InstanceDir    = config.InstanceDir
 	BackupDir      = "backups"
 	PreUpdateDir   = "pre-update"
 )
@@ -42,6 +43,7 @@ type MolfarService struct {
 	localStorage  ports.StorageRepository
 	remoteStorage ports.StorageRepository
 	serverRunner  ports.ServerRunner
+	backupper     ports.BackupperService
 	logger        *slog.Logger
 	workdir       string
 }
@@ -55,6 +57,7 @@ func NewMolfarService(
 	localStorage ports.StorageRepository,
 	remoteStorage ports.StorageRepository,
 	serverRunner ports.ServerRunner,
+	backupper ports.BackupperService,
 	logger *slog.Logger,
 	workdir string,
 ) (*MolfarService, error) {
@@ -76,6 +79,9 @@ func NewMolfarService(
 	if serverRunner == nil {
 		return nil, ErrServerRunnerNil
 	}
+	if backupper == nil {
+		return nil, errors.New("backupper service cannot be nil")
+	}
 	if logger == nil {
 		return nil, errors.New("logger cannot be nil")
 	}
@@ -90,6 +96,7 @@ func NewMolfarService(
 		localStorage:  localStorage,
 		remoteStorage: remoteStorage,
 		serverRunner:  serverRunner,
+		backupper:     backupper,
 		logger:        logger,
 		workdir:       workdir,
 	}
@@ -475,48 +482,33 @@ func (m *MolfarService) Exit() error {
 	if m == nil {
 		return ErrMolfarNil
 	}
+	if m.backupper == nil {
+		return errors.New("backupper service cannot be nil")
+	}
 	if m.librarian == nil {
 		return ErrLibrarianNil
-	}
-	if m.archive == nil {
-		return ErrArchiveNil
-	}
-	if m.localStorage == nil {
-		return ErrStorageNil
-	}
-	if m.remoteStorage == nil {
-		return ErrStorageNil
 	}
 
 	m.logger.Info("Starting exit phase")
 	ctx := context.Background()
 
-	timestamp := time.Now().Unix()
-	remoteKey := fmt.Sprintf("worlds/%d.zip", timestamp)
-
-	archivePath, err := m.createWorldBackup(ctx, timestamp)
+	// Run backup process
+	cleanup, err := m.backupper.Run()
 	if err != nil {
+		m.logger.Error("Backup execution failed", "error", err)
 		return err
 	}
 
-	if err := m.uploadWorldBackup(ctx, archivePath, remoteKey); err != nil {
-		return err
+	if cleanup != nil {
+		if cleanupErr := cleanup(); cleanupErr != nil {
+			m.logger.Error("Cleanup failed", "error", cleanupErr)
+			return cleanupErr
+		}
 	}
 
-	if err := m.CreateLocalBackup(ctx, archivePath, timestamp); err != nil {
-		return err
-	}
-
-	localManifest, err := m.updateManifestWithWorld(ctx, remoteKey)
-	if err != nil {
-		return err
-	}
-
-	if err := m.cleanupTempFiles(ctx, timestamp, archivePath); err != nil {
-		return err
-	}
-
-	if err := m.unlockAndSaveManifests(ctx, localManifest); err != nil {
+	// Unlock manifests after successful backup
+	if err := m.unlockManifests(ctx); err != nil {
+		m.logger.Error("Failed to unlock manifests", "error", err)
 		return err
 	}
 
@@ -524,193 +516,41 @@ func (m *MolfarService) Exit() error {
 	return nil
 }
 
-// copyWorldsToTemp copies world directories from instance to temp directory
-func (m *MolfarService) copyWorldsToTemp(ctx context.Context, instancePath, tempDir string) error {
+// unlockManifests removes locks from both local and remote manifests
+func (m *MolfarService) unlockManifests(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("context cannot be nil")
-	}
-	if instancePath == "" {
-		return errors.New("instance path cannot be empty")
-	}
-	if tempDir == "" {
-		return errors.New("temp directory cannot be empty")
-	}
-	if m.localStorage == nil {
-		return ErrStorageNil
-	}
-
-	m.logger.Info("Starting world copy to temp", "source", instancePath, "dest", tempDir)
-	worldDirs := []string{"world", "world_nether", "world_the_end"}
-
-	for _, worldDir := range worldDirs {
-		sourceKey := filepath.Join(InstanceDir, worldDir)
-		destKey := filepath.Join(tempDir, worldDir)
-
-		m.logger.Debug("Copying world directory", "world", worldDir, "source", sourceKey, "dest", destKey)
-		err := m.localStorage.Copy(ctx, sourceKey, destKey)
-		if err != nil {
-			if strings.Contains(err.Error(), "source key not found") {
-				m.logger.Debug("World directory not found, skipping", "world", worldDir)
-				continue
-			}
-			m.logger.Error("Failed to copy world directory", "world", worldDir, "error", err)
-			return fmt.Errorf("failed to copy %s to temp: %w", worldDir, err)
-		}
-		m.logger.Debug("Successfully copied world directory", "world", worldDir)
-	}
-
-	m.logger.Info("World copy to temp completed successfully")
-	return nil
-}
-
-// createWorldBackup creates a backup of world directories and archives them
-func (m *MolfarService) createWorldBackup(ctx context.Context, timestamp int64) (string, error) {
-	if ctx == nil {
-		return "", errors.New("context cannot be nil")
-	}
-	if m.localStorage == nil {
-		return "", ErrStorageNil
-	}
-	if m.archive == nil {
-		return "", ErrArchiveNil
-	}
-
-	tempDir := filepath.Join(TempPrefix, fmt.Sprintf("%d", timestamp))
-	instancePath := filepath.Join(m.workdir, InstanceDir)
-
-	m.logger.Info("Copying world directories to temp", "temp_dir", tempDir)
-	err := m.copyWorldsToTemp(ctx, instancePath, tempDir)
-	if err != nil {
-		m.logger.Error("Failed to copy worlds to temp", "error", err)
-		return "", err
-	}
-
-	archivePath := filepath.Join(m.workdir, tempDir+".zip")
-	m.logger.Info("Archiving world backup", "source", tempDir, "destination", archivePath)
-	err = m.archive.Archive(ctx, filepath.Join(m.workdir, tempDir), archivePath)
-	if err != nil {
-		m.logger.Error("Failed to archive world backup", "error", err)
-		return "", err
-	}
-
-	return archivePath, nil
-}
-
-// uploadWorldBackup uploads the archived world backup to remote storage
-func (m *MolfarService) uploadWorldBackup(ctx context.Context, archivePath, remoteKey string) error {
-	if ctx == nil {
-		return errors.New("context cannot be nil")
-	}
-	if archivePath == "" {
-		return errors.New("archive path cannot be empty")
-	}
-	if remoteKey == "" {
-		return errors.New("remote key cannot be empty")
-	}
-	if m.remoteStorage == nil {
-		return ErrStorageNil
-	}
-
-	m.logger.Info("Uploading world backup to remote storage", "remote_key", remoteKey)
-	archiveData, err := os.ReadFile(archivePath)
-	if err != nil {
-		m.logger.Error("Failed to read archive file", "error", err)
-		return err
-	}
-	err = m.remoteStorage.Put(ctx, remoteKey, archiveData)
-	if err != nil {
-		m.logger.Error("Failed to upload world backup", "error", err)
-		return err
-	}
-
-	return nil
-}
-
-// updateManifestWithWorld adds the new world to the local manifest
-func (m *MolfarService) updateManifestWithWorld(ctx context.Context, remoteKey string) (*domain.Manifest, error) {
-	if ctx == nil {
-		return nil, errors.New("context cannot be nil")
-	}
-	if remoteKey == "" {
-		return nil, errors.New("remote key cannot be empty")
-	}
-	if m.librarian == nil {
-		return nil, ErrLibrarianNil
-	}
-
-	m.logger.Info("Adding world to local manifest", "world_uri", remoteKey)
-	localManifest, err := m.librarian.GetLocalManifest(ctx)
-	if err != nil {
-		m.logger.Error("Failed to get local manifest", "error", err)
-		return nil, err
-	}
-	newWorld, err := domain.NewWorld(remoteKey)
-	if err != nil {
-		m.logger.Error("Failed to create new world", "error", err)
-		return nil, err
-	}
-	localManifest.AddWorld(*newWorld)
-
-	return localManifest, nil
-}
-
-// cleanupTempFiles removes temporary files and directories
-func (m *MolfarService) cleanupTempFiles(ctx context.Context, timestamp int64, archivePath string) error {
-	if ctx == nil {
-		return errors.New("context cannot be nil")
-	}
-	if archivePath == "" {
-		return errors.New("archive path cannot be empty")
-	}
-	if m.localStorage == nil {
-		return ErrStorageNil
-	}
-
-	tempDir := filepath.Join(TempPrefix, fmt.Sprintf("%d", timestamp))
-	m.logger.Info("Cleaning up temp directory", "temp_dir", tempDir)
-	err := m.localStorage.Delete(ctx, tempDir)
-	if err != nil {
-		m.logger.Error("Failed to cleanup temp directory", "error", err)
-		return err
-	}
-	err = os.Remove(archivePath)
-	if err != nil {
-		m.logger.Error("Failed to cleanup archive file", "error", err)
-		return err
-	}
-
-	return nil
-}
-
-// unlockAndSaveManifests unlocks the manifest and saves both local and remote manifests
-func (m *MolfarService) unlockAndSaveManifests(ctx context.Context, localManifest *domain.Manifest) error {
-	if ctx == nil {
-		return errors.New("context cannot be nil")
-	}
-	if localManifest == nil {
-		return errors.New("local manifest cannot be nil")
 	}
 	if m.librarian == nil {
 		return ErrLibrarianNil
 	}
-	if m.remoteStorage == nil {
-		return ErrStorageNil
-	}
 
-	m.logger.Info("Unlocking remote storage")
-	localManifest.Unlock()
+	m.logger.Info("Unlocking manifests")
 
-	m.logger.Info("Saving manifests")
-	err := m.librarian.SaveLocalManifest(ctx, localManifest)
+	// Get local manifest and unlock it
+	localManifest, err := m.librarian.GetLocalManifest(ctx)
 	if err != nil {
-		m.logger.Error("Failed to save local manifest", "error", err)
+		m.logger.Error("Failed to get local manifest for unlock", "error", err)
 		return err
 	}
+
+	if localManifest != nil {
+		localManifest.Unlock()
+		err = m.librarian.SaveLocalManifest(ctx, localManifest)
+		if err != nil {
+			m.logger.Error("Failed to unlock local manifest", "error", err)
+			return err
+		}
+		m.logger.Info("Successfully unlocked local manifest")
+	}
+
+	// Unlock remote manifest
 	err = m.librarian.SaveRemoteManifest(ctx, localManifest)
 	if err != nil {
-		m.logger.Error("Failed to save remote manifest", "error", err)
+		m.logger.Error("Failed to unlock remote manifest", "error", err)
 		return err
 	}
+	m.logger.Info("Successfully unlocked remote manifest")
 
 	return nil
 }
@@ -845,7 +685,7 @@ func (m *MolfarService) downloadAndExtractInstance(ctx context.Context, instance
 // Helper functions for world operations
 func (m *MolfarService) sanitizeWorldURI(uri string) (string, error) {
 	sanitizedURI := filepath.ToSlash(filepath.Clean(uri))
-	if !strings.HasPrefix(sanitizedURI, "worlds/") {
+	if !strings.HasPrefix(sanitizedURI, config.RemoteBackups+"/") {
 		return "", fmt.Errorf("invalid world URI: %s", sanitizedURI)
 	}
 	return sanitizedURI, nil
@@ -895,36 +735,5 @@ func (m *MolfarService) extractWorldArchive(ctx context.Context, sanitizedURI, i
 		return fmt.Errorf("failed to cleanup %s: %w", sanitizedURI, err)
 	}
 
-	return nil
-}
-
-// CreateLocalBackup creates a local backup copy of the world archive
-func (m *MolfarService) CreateLocalBackup(ctx context.Context, archivePath string, timestamp int64) error {
-	if ctx == nil {
-		return errors.New("context cannot be nil")
-	}
-	if archivePath == "" {
-		return errors.New("archive path cannot be empty")
-	}
-	if m.localStorage == nil {
-		return ErrStorageNil
-	}
-
-	m.logger.Info("Creating local backup", "archive_path", archivePath)
-
-	archiveData, err := os.ReadFile(archivePath)
-	if err != nil {
-		m.logger.Error("Failed to read archive file for local backup", "error", err)
-		return err
-	}
-
-	localBackupKey := fmt.Sprintf("local-backups/%d.zip", timestamp)
-	err = m.localStorage.Put(ctx, localBackupKey, archiveData)
-	if err != nil {
-		m.logger.Error("Failed to create local backup", "error", err)
-		return err
-	}
-
-	m.logger.Info("Local backup created successfully", "backup_key", localBackupKey)
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"ritual/internal/adapters"
+	"ritual/internal/config"
 	"ritual/internal/core/services"
 	"ritual/internal/testhelpers"
 	"testing"
@@ -21,7 +22,7 @@ func TestArchivePaperWorld(t *testing.T) {
 	require.NoError(t, err)
 	defer fs.Close()
 
-	instanceDir := filepath.Join(tempDir, "instance")
+	instanceDir := filepath.Join(tempDir, config.InstanceDir)
 	err = os.MkdirAll(instanceDir, 0755)
 	require.NoError(t, err)
 
@@ -29,7 +30,7 @@ func TestArchivePaperWorld(t *testing.T) {
 	_, _, worldsCompareFunc, err := testhelpers.PaperMinecraftWorldSetup(instanceDir)
 	require.NoError(t, err)
 
-	log.Println(fs.List(context.Background(), "instance"))
+	log.Println(fs.List(context.Background(), config.InstanceDir))
 
 	archiveService, err := services.NewArchiveService(tempDir)
 	require.NoError(t, err)
@@ -40,8 +41,8 @@ func TestArchivePaperWorld(t *testing.T) {
 		ctx,
 		fs,
 		archiveService,
-		"instance",
-		"tmp",
+		config.InstanceDir,
+		"temp",
 		"test_backup",
 	)
 
@@ -51,7 +52,7 @@ func TestArchivePaperWorld(t *testing.T) {
 	require.NotNil(t, cleanup)
 
 	// Verify archive path format
-	assert.Equal(t, archivePath, filepath.Join("tmp", "test_backup.zip"))
+	assert.Equal(t, archivePath, filepath.Join("temp", "test_backup.zip"))
 
 	// Verify archive file exists
 	_, err = os.Stat(filepath.Join(tempDir, archivePath))

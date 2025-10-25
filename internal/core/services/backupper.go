@@ -12,23 +12,28 @@ import (
 type BackupperService struct {
 	buildArchive func() (string, func() error, error) // Returns generated path and cleanup
 	targets      []ports.BackupTarget                 // List of backup destinations
+	workDir      string                               // Working directory for safe operations
 }
 
 // Compile-time check to ensure BackupperService implements ports.BackupperService
 var _ ports.BackupperService = (*BackupperService)(nil)
 
 // NewBackupperService creates a new backupper service instance
-func NewBackupperService(buildArchive func() (string, func() error, error), targets []ports.BackupTarget) (*BackupperService, error) {
+func NewBackupperService(buildArchive func() (string, func() error, error), targets []ports.BackupTarget, workDir string) (*BackupperService, error) {
 	if buildArchive == nil {
 		return nil, errors.New("buildArchive cannot be nil")
 	}
 	if len(targets) == 0 {
 		return nil, errors.New("at least one backup target is required")
 	}
+	if workDir == "" {
+		return nil, errors.New("workDir cannot be empty")
+	}
 
 	return &BackupperService{
 		buildArchive: buildArchive,
 		targets:      targets,
+		workDir:      workDir,
 	}, nil
 }
 
@@ -41,13 +46,20 @@ func (b *BackupperService) Run() (func() error, error) {
 	}
 	defer cleanup()
 
-	// Validate archive
-	if err := b.validateArchive(archivePath); err != nil {
+	// Open workdir as root for safe operations
+	workRoot, err := os.OpenRoot(b.workDir)
+	if err != nil {
+		return nil, err
+	}
+	defer workRoot.Close()
+
+	// Validate archive using root
+	if err := b.validateArchiveWithRoot(workRoot, archivePath); err != nil {
 		return nil, err
 	}
 
-	// Read archive data
-	data, err := os.ReadFile(archivePath)
+	// Read archive data using root
+	data, err := workRoot.ReadFile(archivePath)
 	if err != nil {
 		return nil, err
 	}
@@ -65,14 +77,14 @@ func (b *BackupperService) Run() (func() error, error) {
 	return cleanup, nil
 }
 
-// validateArchive confirms archive exists, readable, and checksum valid
-func (b *BackupperService) validateArchive(archivePath string) error {
+// validateArchiveWithRoot validates the archive file using os.Root
+func (b *BackupperService) validateArchiveWithRoot(root *os.Root, archivePath string) error {
 	if archivePath == "" {
 		return errors.New("archive path cannot be empty")
 	}
 
 	// Check if file exists
-	info, err := os.Stat(archivePath)
+	info, err := root.Stat(archivePath)
 	if err != nil {
 		return fmt.Errorf("archive file does not exist: %w", err)
 	}
@@ -88,7 +100,7 @@ func (b *BackupperService) validateArchive(archivePath string) error {
 	}
 
 	// Validate zip format by attempting to open
-	file, err := os.Open(archivePath)
+	file, err := root.Open(archivePath)
 	if err != nil {
 		return fmt.Errorf("failed to open archive file: %w", err)
 	}
