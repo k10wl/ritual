@@ -81,6 +81,11 @@
 - [ ] Integrate `BackupperService` with existing storage adapters
 - [ ] Update `MolfarService` to orchestrate backup operations
 - [ ] Document Backupper architecture and design patterns
+- [ ] Create centralized logging mechanism with structured logging
+- [ ] Implement log level configuration and filtering
+- [ ] Add log rotation and retention policies
+- [ ] Integrate logging across all services and adapters
+- [ ] Create comprehensive logging tests and validation
 
 ### Sprint 6: Retention Policy Integration (1 week)
 - [ ] **ROLLBACK**: Remove current O(n²) bubble sort from `RemoveOldestWorlds`

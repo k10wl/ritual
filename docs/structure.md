@@ -29,6 +29,8 @@ ritual/
 │   ├── structure.md             # This file - project structure documentation
 │   └── ritual.drawio            # Architecture diagrams
 └── internal/
+    ├── logger/
+    │   └── logger.go           # Centralized logging implementation
     ├── adapters/
     │   ├── cli.go               # CLI command handler
     │   ├── fs.go                # Local filesystem storage adapter
@@ -451,6 +453,15 @@ Provides comprehensive test utilities for Minecraft server testing:
 - Provides Copy operation for efficient data movement
 - Enables easy switching between storage backends
 
+### Logging Infrastructure (`internal/logger/logger.go`)
+- **Singleton Pattern**: Package-level logger configured once in `main.init()`
+- **Structured Logging**: JSON format with contextual fields
+- **Log Levels**: Debug, Info, Warn, Error, Fatal with runtime configuration
+- **Configurable Output**: File, stdout, or both with automatic rotation
+- **Context Fields**: Support for adding contextual information to log entries
+- **Direct Usage**: Used directly throughout codebase without dependency injection
+- **Global Access**: Services call logger package functions directly
+
 ## Development Guidelines
 
 ### File Naming Conventions
@@ -532,6 +543,62 @@ R.I.T.U.A.L. enforces NASA JPL Power of Ten defensive programming standards for 
 - **AI must update progress tracking in docs/progress.md when implementing components**
 - **MANDATORY**: Follow defensive programming standards per NASA JPL Power of Ten
 
+## Main Initialization Pattern
+
+### Logger Configuration in main.init()
+
+```go
+// cmd/cli/main.go
+import "ritual/internal/logger"
+
+func init() {
+    // Configure singleton logger (file, stdout, or both)
+    err := logger.Init(logger.InfoLevel, "ritual.log", logger.FileOutput|logger.StdoutOutput)
+    if err != nil {
+        log.Fatal("Failed to initialize logger:", err)
+    }
+    
+    logger.Info("R.I.T.U.A.L. logger initialized", map[string]interface{}{
+        "version": "1.0.0",
+        "component": "main",
+        "output": "file+stdout",
+    })
+}
+
+func main() {
+    // ... rest of initialization
+}
+```
+
+### Service Integration Pattern
+
+```go
+// internal/core/services/molfar.go
+import "ritual/internal/logger"
+
+type MolfarService struct {
+    librarian LibrarianService
+    validator ValidatorService
+    storage   StorageRepository
+}
+
+func NewMolfarService(librarian LibrarianService, validator ValidatorService, storage StorageRepository) *MolfarService {
+    return &MolfarService{
+        librarian: librarian,
+        validator: validator,
+        storage:   storage,
+    }
+}
+
+func (m *MolfarService) Prepare() error {
+    logger.Info("Starting Molfar preparation", map[string]interface{}{
+        "component": "molfar",
+        "operation": "prepare",
+    })
+    // ... implementation
+}
+```
+
 ## Structure.md Authority
 - **@structure.md is the authoritative source for project structure**
 - All architectural decisions must align with structure.md definitions
@@ -539,4 +606,4 @@ R.I.T.U.A.L. enforces NASA JPL Power of Ten defensive programming standards for 
 - Structure.md contains detailed examples and implementation patterns
 - Any structural changes require updating both code and structure.md documentation
 
-This structure ensures R.I.T.U.A.L. maintains clean architecture while supporting the complex requirements of Minecraft server orchestration, manifest management, and distributed storage synchronization.
+This structure ensures R.I.T.U.A.L. maintains clean architecture while supporting the complex requirements of Minecraft server orchestration, manifest management, distributed storage synchronization, and centralized logging infrastructure.
