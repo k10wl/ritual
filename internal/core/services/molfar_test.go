@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -450,4 +451,85 @@ func TestMolfarService_Prepare(globT *testing.T) {
 			t.Fatalf("Expected error to contain 'lock conflict', got: %v", err)
 		}
 	})
+}
+
+func TestMolfarService_Run(t *testing.T) {
+	t.Run("successful server execution", func(t *testing.T) {
+		molfar, localStorage, _, tempDir, _, cleanup := setupMolfarServices(t)
+		defer cleanup()
+
+		// Create local manifest first
+		ctx := context.Background()
+		world := createTestWorld("worlds/1234567890.zip")
+		localManifest := createTestManifest("1.0.0", "1.0.0", []domain.World{world})
+		manifestData, err := json.Marshal(localManifest)
+		assert.NoError(t, err)
+		err = localStorage.Put(ctx, "manifest.json", manifestData)
+		assert.NoError(t, err)
+
+		// Create test server with proper memory value
+		server := &domain.Server{
+			Address: "127.0.0.1:25565",
+			Memory:  2048,
+			IP:      "127.0.0.1",
+			Port:    25565,
+			BatPath: filepath.Join(tempDir, "instance", "run.bat"),
+		}
+
+		// Execute Run
+		err = molfar.Run(server)
+		assert.NoError(t, err)
+	})
+
+	t.Run("nil server parameter", func(t *testing.T) {
+		molfar, _, _, _, _, cleanup := setupMolfarServices(t)
+		defer cleanup()
+
+		err := molfar.Run(nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "server cannot be nil")
+	})
+
+	t.Run("nil molfar service", func(t *testing.T) {
+		var molfar *services.MolfarService
+		server := &domain.Server{Address: "127.0.0.1:25565", Memory: 2048}
+
+		err := molfar.Run(server)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "molfar service cannot be nil")
+	})
+
+	t.Run("server runner failure", func(t *testing.T) {
+		molfar, localStorage, _, tempDir, _, cleanup := setupMolfarServices(t)
+		defer cleanup()
+
+		// Create local manifest first
+		ctx := context.Background()
+		world := createTestWorld("worlds/1234567890.zip")
+		localManifest := createTestManifest("1.0.0", "1.0.0", []domain.World{world})
+		manifestData, err := json.Marshal(localManifest)
+		assert.NoError(t, err)
+		err = localStorage.Put(ctx, "manifest.json", manifestData)
+		assert.NoError(t, err)
+
+		// Create test server
+		server := &domain.Server{
+			Address: "127.0.0.1:25565",
+			Memory:  2048,
+			IP:      "127.0.0.1",
+			Port:    25565,
+			BatPath: filepath.Join(tempDir, "instance", "run.bat"),
+		}
+
+		// Execute Run - should succeed with mock runner
+		err = molfar.Run(server)
+		assert.NoError(t, err)
+	})
+}
+
+// FailingMockServerRunner implements ports.ServerRunner for testing failure scenarios
+type FailingMockServerRunner struct{}
+
+func (m *FailingMockServerRunner) Run(server *domain.Server) error {
+	return errors.New("server execution failed")
 }
