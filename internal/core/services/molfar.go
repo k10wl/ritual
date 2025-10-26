@@ -274,8 +274,8 @@ func (m *MolfarService) downloadAndExtractWorlds(ctx context.Context, remoteMani
 
 	latestWorld := remoteManifest.GetLatestWorld()
 	if latestWorld == nil {
-		m.logger.Error("No worlds available in remote manifest")
-		return fmt.Errorf("no worlds available in remote manifest")
+		m.logger.Info("No worlds available in remote manifest, skipping world download/extraction")
+		return nil
 	}
 
 	sanitizedURI, err := m.sanitizeWorldURI(latestWorld.URI)

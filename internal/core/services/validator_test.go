@@ -439,7 +439,6 @@ func TestValidatorService_CheckWorldBounds(t *testing.T) {
 		remote := &domain.Manifest{StoredWorlds: []domain.World{}}
 
 		err := validator.CheckWorld(local, remote)
-		assert.Error(t, err)
-		assert.Equal(t, ErrNoRemoteWorlds, err)
+		assert.NoError(t, err, "Empty remote worlds should be allowed")
 	})
 }

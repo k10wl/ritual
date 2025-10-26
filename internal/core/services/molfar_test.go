@@ -566,6 +566,44 @@ func TestMolfarService_Prepare(globT *testing.T) {
 			t.Fatalf("Expected error to contain 'lock conflict', got: %v", err)
 		}
 	})
+
+	globT.Run("no remote worlds - should launch successfully", func(t *testing.T) {
+		molfar, localStorage, remoteStorage, tempDir, remoteTempDir, cleanup := setupMolfarServices(t)
+		defer cleanup()
+
+		// Setup remote manifest with NO worlds
+		ctx := context.Background()
+		remoteManifest := createTestManifest("1.0.0", "1.0.0", []domain.World{}) // Empty worlds
+		manifestData, err := json.Marshal(remoteManifest)
+		assert.NoError(t, err)
+		err = remoteStorage.Put(ctx, "manifest.json", manifestData)
+		assert.NoError(t, err)
+
+		// Setup instance zip
+		setupInstanceZip(t, remoteStorage, remoteTempDir)
+
+		// Execute Prepare - should succeed even without remote worlds
+		err = molfar.Prepare()
+		assert.NoError(t, err, "Prepare should succeed without remote worlds")
+
+		// Verify local manifest was created
+		localManifestData, err := localStorage.Get(ctx, "manifest.json")
+		assert.NoError(t, err)
+		assert.NotEmpty(t, localManifestData)
+
+		// Parse and validate local manifest structure
+		var localManifestObj domain.Manifest
+		err = json.Unmarshal(localManifestData, &localManifestObj)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, localManifestObj.RitualVersion)
+		assert.NotEmpty(t, localManifestObj.InstanceVersion)
+		assert.False(t, localManifestObj.IsLocked())
+
+		// Verify instance directory was created
+		instancePath := filepath.Join(tempDir, config.InstanceDir)
+		_, err = os.Stat(instancePath)
+		assert.NoError(t, err)
+	})
 }
 
 func TestMolfarService_Run(t *testing.T) {

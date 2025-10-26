@@ -1,7 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"ritual/internal/config"
+)
 
 func main() {
-	fmt.Println("Hello, World!")
+	fmt.Println(config.RootPath)
 }
