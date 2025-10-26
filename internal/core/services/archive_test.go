@@ -12,6 +12,10 @@ import (
 
 func TestNewArchiveService(t *testing.T) {
 	basePath := t.TempDir()
+	root, err := os.OpenRoot(basePath)
+	require.NoError(t, err)
+	defer root.Close()
+
 	tests := []struct {
 		name    string
 		wantErr bool
@@ -24,7 +28,7 @@ func TestNewArchiveService(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NewArchiveService(basePath)
+			got, err := NewArchiveService(root)
 			assert.NoError(t, err)
 			if tt.wantErr {
 				assert.Nil(t, got)
@@ -37,10 +41,13 @@ func TestNewArchiveService(t *testing.T) {
 
 func TestArchiveService_Archive(t *testing.T) {
 	basePath := t.TempDir()
+	root, err := os.OpenRoot(basePath)
+	require.NoError(t, err)
+	defer root.Close()
 
 	// Create test files
 	testFile := filepath.Join(basePath, "test.txt")
-	err := os.WriteFile(testFile, []byte("test content"), 0644)
+	err = os.WriteFile(testFile, []byte("test content"), 0644)
 	require.NoError(t, err)
 
 	testSubDir := filepath.Join(basePath, "subdir")
@@ -51,7 +58,7 @@ func TestArchiveService_Archive(t *testing.T) {
 	err = os.WriteFile(testSubFile, []byte("sub content"), 0644)
 	require.NoError(t, err)
 
-	archiver, err := NewArchiveService(basePath)
+	archiver, err := NewArchiveService(root)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -124,13 +131,16 @@ func TestArchiveService_Archive(t *testing.T) {
 func TestArchiveService_Unarchive(t *testing.T) {
 	// Create temporary test directory
 	tempDir := t.TempDir()
+	tempRoot, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer tempRoot.Close()
 
 	// Create test archive
 	archivePath := "test.zip"
 	extractDir := "extracted"
 
 	// Create a valid zip file for testing using the archiver service
-	testArchiver, err := NewArchiveService(tempDir)
+	testArchiver, err := NewArchiveService(tempRoot)
 	require.NoError(t, err)
 
 	// Create test content to archive
@@ -146,7 +156,7 @@ func TestArchiveService_Unarchive(t *testing.T) {
 	err = testArchiver.Archive(context.Background(), "test_content", archivePath)
 	require.NoError(t, err)
 
-	archiver, err := NewArchiveService(tempDir)
+	archiver, err := NewArchiveService(tempRoot)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -213,10 +223,13 @@ func TestArchiveService_Unarchive(t *testing.T) {
 func TestArchiveService_Archive_Integration(t *testing.T) {
 	// Create temporary test directory
 	tempDir := t.TempDir()
+	tempRoot, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer tempRoot.Close()
 
 	// Create test files and directories
 	testFile := filepath.Join(tempDir, "file1.txt")
-	err := os.WriteFile(testFile, []byte("content1"), 0644)
+	err = os.WriteFile(testFile, []byte("content1"), 0644)
 	require.NoError(t, err)
 
 	testDir := filepath.Join(tempDir, "dir1")
@@ -227,7 +240,7 @@ func TestArchiveService_Archive_Integration(t *testing.T) {
 	err = os.WriteFile(testFile2, []byte("content2"), 0644)
 	require.NoError(t, err)
 
-	archiver, err := NewArchiveService(tempDir)
+	archiver, err := NewArchiveService(tempRoot)
 	require.NoError(t, err)
 
 	// Archive the directory using relative paths

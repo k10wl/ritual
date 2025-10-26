@@ -21,10 +21,9 @@ type FSRepository struct {
 }
 
 // NewFSRepository creates a new filesystem storage repository
-func NewFSRepository(basePath string) (*FSRepository, error) {
-	root, err := os.OpenRoot(basePath)
-	if err != nil {
-		return nil, fmt.Errorf(ErrOpenRootDir, basePath, err)
+func NewFSRepository(root *os.Root) (*FSRepository, error) {
+	if root == nil {
+		return nil, errors.New("root cannot be nil")
 	}
 
 	return &FSRepository{
@@ -102,12 +101,8 @@ func (f *FSRepository) Delete(ctx context.Context, key string) error {
 	}
 
 	if stat.IsDir() {
-		// For directories, we need to recursively delete contents
-		// Since os.Root doesn't have RemoveAll, we'll use standard os.RemoveAll
-		fullPath := filepath.Join(f.root.Name(), key)
-		if err := os.RemoveAll(fullPath); err != nil {
-			return fmt.Errorf("failed to delete directory %s: %w", key, err)
-		}
+		// Recursively delete directory contents
+		return f.deleteDirectoryRecursive(ctx, key)
 	} else {
 		// For files, use the existing Remove method
 		if err := f.root.Remove(key); err != nil {
@@ -229,6 +224,48 @@ func (f *FSRepository) Copy(ctx context.Context, sourceKey string, destKey strin
 			}
 			return fmt.Errorf("failed to read from source file %s: %w", sourceKey, err)
 		}
+	}
+
+	return nil
+}
+
+// deleteDirectoryRecursive recursively deletes a directory and its contents
+func (f *FSRepository) deleteDirectoryRecursive(ctx context.Context, dir string) error {
+	// Open directory
+	dirFile, err := f.root.Open(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("key not found: %s", dir)
+		}
+		return fmt.Errorf("failed to open directory %s: %w", dir, err)
+	}
+	defer dirFile.Close()
+
+	// Read directory entries
+	entries, err := dirFile.Readdir(0)
+	if err != nil {
+		return fmt.Errorf("failed to read directory %s: %w", dir, err)
+	}
+
+	// Delete all entries
+	for _, entry := range entries {
+		entryPath := filepath.Join(dir, entry.Name())
+		if entry.IsDir() {
+			// Recursively delete subdirectory
+			if err := f.deleteDirectoryRecursive(ctx, entryPath); err != nil {
+				return err
+			}
+		} else {
+			// Delete file
+			if err := f.root.Remove(entryPath); err != nil {
+				return fmt.Errorf("failed to delete file %s: %w", entryPath, err)
+			}
+		}
+	}
+
+	// Remove the directory itself
+	if err := f.root.Remove(dir); err != nil {
+		return fmt.Errorf("failed to delete directory %s: %w", dir, err)
 	}
 
 	return nil

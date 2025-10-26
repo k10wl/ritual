@@ -8,16 +8,9 @@ import (
 
 // PaperInstanceSetup creates a complete Paper Minecraft server instance for testing
 // Returns the temp directory path, a list of files that were created, and a comparison function
-func PaperInstanceSetup(dir string, version string) (string, []string, func(string) error, error) {
-	tempDir := dir
+func PaperInstanceSetup(root *os.Root, version string) (string, []string, func(string) error, error) {
+	tempDir := root.Name()
 	var createdFiles []string
-
-	// Open directory as Root for secure operations
-	root, err := os.OpenRoot(tempDir)
-	if err != nil {
-		return "", nil, nil, err
-	}
-	defer root.Close()
 
 	// Create server files
 	serverFiles, err := createServerFilesWithRoot(root, version)

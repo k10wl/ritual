@@ -21,15 +21,15 @@ import (
 
 // ArchiveService handles compression and extraction of data archives
 type ArchiveService struct {
-	basePath string
+	baseRoot *os.Root
 }
 
 // NewArchiveService creates a new ArchiveService instance
-func NewArchiveService(basePath string) (*ArchiveService, error) {
-	if basePath == "" {
-		return nil, fmt.Errorf("basePath cannot be empty")
+func NewArchiveService(root *os.Root) (*ArchiveService, error) {
+	if root == nil {
+		return nil, fmt.Errorf("root cannot be nil")
 	}
-	return &ArchiveService{basePath: basePath}, nil
+	return &ArchiveService{baseRoot: root}, nil
 }
 
 // Archive compresses source to destination
@@ -44,8 +44,9 @@ func (a *ArchiveService) Archive(ctx context.Context, relSrc string, relDest str
 		return fmt.Errorf("destination path cannot be empty")
 	}
 
-	source := filepath.Join(a.basePath, relSrc)
-	destination := filepath.Join(a.basePath, relDest)
+	// Get full paths for zip operations
+	source := filepath.Join(a.baseRoot.Name(), relSrc)
+	destination := filepath.Join(a.baseRoot.Name(), relDest)
 
 	// Check if source exists
 	if _, err := os.Stat(source); os.IsNotExist(err) {
@@ -145,8 +146,10 @@ func (a *ArchiveService) Unarchive(ctx context.Context, relArchive string, relDe
 		return fmt.Errorf("destination path cannot be empty")
 	}
 
-	destination := filepath.Join(a.basePath, relDestination)
-	archive := filepath.Join(a.basePath, relArchive)
+	// Get full paths for operations
+	destination := filepath.Join(a.baseRoot.Name(), relDestination)
+	archive := filepath.Join(a.baseRoot.Name(), relArchive)
+
 	// Check if archive exists
 	if _, err := os.Stat(archive); os.IsNotExist(err) {
 		return fmt.Errorf("archive file does not exist: %s", archive)

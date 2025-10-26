@@ -184,12 +184,12 @@ type ArchiveService interface {
 }
 
 type BackupTarget interface {
-    Backup(data []byte) error
+    Backup(data []byte, name string) error
     DataRetention() error
 }
 
 type BackupperService interface {
-    Run() (func() error, error)
+    Run() (string, error)
 }
 ```
 
@@ -208,17 +208,33 @@ Implements core business logic:
 ```go
 // internal/core/services/molfar.go
 type MolfarService struct {
-    librarian LibrarianService
-    validator ValidatorService
-    storage   StorageRepository
+    librarian     LibrarianService
+    validator     ValidatorService
+    archive       ArchiveService
+    localStorage  StorageRepository
+    remoteStorage StorageRepository
+    serverRunner  ServerRunner
+    backupper     BackupperService
+    logger        *slog.Logger
+    workRoot      *os.Root
 }
 
-func NewMolfarService(librarian LibrarianService, validator ValidatorService, storage StorageRepository) *MolfarService {
-    return &MolfarService{
-        librarian: librarian,
-        validator: validator,
-        storage:   storage,
+func NewMolfarService(librarian LibrarianService, validator ValidatorService, archive ArchiveService, localStorage StorageRepository, remoteStorage StorageRepository, serverRunner ServerRunner, backupper BackupperService, logger *slog.Logger, workRoot *os.Root) (*MolfarService, error) {
+    // Validate all dependencies are non-nil per NASA JPL standards
+    if workRoot == nil {
+        return nil, errors.New("workRoot cannot be nil")
     }
+    return &MolfarService{
+        librarian:     librarian,
+        validator:     validator,
+        archive:       archive,
+        localStorage:  localStorage,
+        remoteStorage: remoteStorage,
+        serverRunner:  serverRunner,
+        backupper:     backupper,
+        logger:        logger,
+        workRoot:      workRoot,
+    }, nil
 }
 
 ...
@@ -271,58 +287,58 @@ func (v *ValidatorService) CheckInstance(local *domain.Manifest, remote *domain.
 
 // internal/core/services/backupper.go
 type BackupperService struct {
-    buildArchive func() (string, func() error, error) // Returns generated path and cleanup
-    targets      []BackupTarget                       // List of backup destinations
+    buildArchive func() (string, string, func() error, error) // Returns path, name, cleanup
+    targets      []BackupTarget                                 // List of backup destinations
+    workRoot     *os.Root                                       // Working root for safe operations
 }
 
-func NewBackupperService(buildArchive func() (string, func() error, error), targets []BackupTarget) (*BackupperService, error) {
+func NewBackupperService(buildArchive func() (string, string, func() error, error), targets []BackupTarget, workRoot *os.Root) (*BackupperService, error) {
     if buildArchive == nil {
         return nil, errors.New("buildArchive cannot be nil")
     }
     if len(targets) == 0 {
         return nil, errors.New("at least one backup target is required")
     }
+    if workRoot == nil {
+        return nil, errors.New("workRoot cannot be nil")
+    }
     return &BackupperService{
         buildArchive: buildArchive,
         targets:      targets,
+        workRoot:     workRoot,
     }, nil
 }
 
-func (b *BackupperService) Run() (func() error, error) {
-    // Call buildArchive() to generate archive path and get cleanup function
-    archivePath, cleanup, err := b.buildArchive()
+func (b *BackupperService) Run() (string, error) {
+    // Call buildArchive() to generate archive path, name, and get cleanup function
+    archivePath, backupName, cleanup, err := b.buildArchive()
     if err != nil {
-        return nil, err
+        return "", err
     }
     defer cleanup()
 
-    // Validate archive
-    if err := b.validateArchive(archivePath); err != nil {
-        return nil, err
+    // Validate archive using root
+    if err := b.validateArchiveWithRoot(b.workRoot, archivePath); err != nil {
+        return "", err
     }
 
-    // Read archive data
-    data, err := os.ReadFile(archivePath)
+    // Read archive data using root
+    data, err := b.workRoot.ReadFile(archivePath)
     if err != nil {
-        return nil, err
+        return "", err
     }
 
     // Store to all targets and apply retention
     for _, target := range b.targets {
-        if err := target.Backup(data); err != nil {
-            return nil, err
+        if err := target.Backup(data, backupName); err != nil {
+            return "", err
         }
         if err := target.DataRetention(); err != nil {
-            return nil, err
+            return "", err
         }
     }
 
-    return cleanup, nil
-}
-
-func (b *BackupperService) validateArchive(archivePath string) error {
-    // Confirm archive exists, readable, and checksum valid
-    ...
+    return backupName, nil
 }
 ```
 
@@ -341,11 +357,14 @@ Implements external system integrations:
 ```go
 // internal/adapters/fs.go
 type FSRepository struct {
-    basePath string
+    root *os.Root
 }
 
-func NewFSRepository(basePath string) *FSRepository {
-    return &FSRepository{basePath: basePath}
+func NewFSRepository(root *os.Root) (*FSRepository, error) {
+    if root == nil {
+        return nil, errors.New("root cannot be nil")
+    }
+    return &FSRepository{root: root}, nil
 }
 
 // internal/adapters/r2.go
@@ -450,7 +469,7 @@ func (l *LocalBackupTarget) DataRetention() error {
 ### Archive (Archive Management)
 - Handles compression and extraction of data archives
 - Supports ZIP archive format for world/plugin backups
-- Manages archive lifecycle operations
+- Manages archive lifecycle operations using os.Root for secure path operations
 - Integrates with storage abstraction for remote archive operations
 
 ### Backupper (Backup Orchestration Engine)
@@ -485,21 +504,37 @@ Provides comprehensive test utilities for Minecraft server testing:
   - Creates logs directory with `latest.log` and `debug.log`
   - Accepts version parameter for `paper.yml` configuration
   - Returns temp directory path, created files list, and comparison function
-  - Uses `os.Root` for secure file operations
+  - Uses `os.Root` parameter for secure file operations (string paths removed)
 
 - **`paperworldsetup.go`** - Creates Paper Minecraft world directories with region files
-  - Generates world directory structure
+  - Generates world directory structure using os.Root for secure operations
   - Creates mock region files (.mca)
   - Creates level.dat and other world metadata files
   - Supports multiple world types (overworld, nether, end)
+  - All operations use Root methods (Mkdir, WriteFile, etc.)
 
-**Test Coverage**: Both helpers include comprehensive test suites with version validation, file structure verification, and comparison function testing.
+**Test Coverage**: Both helpers include comprehensive test suites with version validation, file structure verification, and comparison function testing. All test initialization uses os.OpenRoot before calling helper functions.
 
 ### Storage Abstraction
 - Unified interface for local (filesystem) and remote (R2) storage
 - Supports manifest, world data, and backup operations
 - Provides Copy operation for efficient data movement
 - Enables easy switching between storage backends
+- Uses os.Root for all filesystem operations to prevent path traversal attacks
+
+### Root-Based Security Architecture
+
+All filesystem operations use `os.Root` to enforce secure path boundaries:
+
+- **Path Security**: No string-based path construction - all operations constrained to Root boundary
+- **Initialization Pattern**: `root, err := os.OpenRoot(basePath)` creates secured root
+- **Service Integration**: All services (Molfar, Backupper, Archive) store `*os.Root` instead of string paths
+- **Adapter Pattern**: FSRepository and other adapters accept Root in constructors
+- **Operation Methods**: Use Root.Mkdir(), Root.ReadFile(), Root.WriteFile(), etc.
+- **Zero Path Traversal**: Impossible to escape root boundary with string manipulation
+- **Test Pattern**: Tests create roots before initializing services: `tempRoot, err := os.OpenRoot(tempDir)`
+
+**Migration Complete**: root.md documents full conversion from string-based paths to os.Root across all layers (Phases 1-4 complete, Phase 5 remaining for adapter review).
 
 ### Logging Infrastructure (`internal/logger/logger.go`)
 - **Singleton Pattern**: Package-level logger configured once in `main.init()`
@@ -618,6 +653,17 @@ func main() {
 }
 ```
 
+### Root-Based Initialization Pattern
+
+```go
+// Test setup pattern (internal/core/services/molfar_test.go)
+tempRoot, err := os.OpenRoot(tempDir)
+localStorage := adapters.NewFSRepository(tempRoot)
+remoteStorage := adapters.NewFSRepository(remoteRoot)
+archiveService := services.NewArchiveService(tempRoot)
+molfarService := services.NewMolfarService(librarian, validator, archive, localStorage, remoteStorage, serverRunner, backupper, logger, tempRoot)
+```
+
 ### Service Integration Pattern
 
 ```go
@@ -625,25 +671,37 @@ func main() {
 import "ritual/internal/logger"
 
 type MolfarService struct {
-    librarian LibrarianService
-    validator ValidatorService
-    storage   StorageRepository
+    librarian     LibrarianService
+    validator     ValidatorService
+    archive       ArchiveService
+    localStorage  StorageRepository
+    remoteStorage StorageRepository
+    serverRunner  ServerRunner
+    backupper     BackupperService
+    logger        *slog.Logger
+    workRoot      *os.Root
 }
 
-func NewMolfarService(librarian LibrarianService, validator ValidatorService, storage StorageRepository) *MolfarService {
-    return &MolfarService{
-        librarian: librarian,
-        validator: validator,
-        storage:   storage,
+func NewMolfarService(librarian LibrarianService, validator ValidatorService, archive ArchiveService, localStorage StorageRepository, remoteStorage StorageRepository, serverRunner ServerRunner, backupper BackupperService, logger *slog.Logger, workRoot *os.Root) (*MolfarService, error) {
+    if workRoot == nil {
+        return nil, errors.New("workRoot cannot be nil")
     }
+    return &MolfarService{
+        librarian:     librarian,
+        validator:     validator,
+        archive:       archive,
+        localStorage:  localStorage,
+        remoteStorage: remoteStorage,
+        serverRunner:  serverRunner,
+        backupper:     backupper,
+        logger:        logger,
+        workRoot:      workRoot,
+    }, nil
 }
 
 func (m *MolfarService) Prepare() error {
-    logger.Info("Starting Molfar preparation", map[string]interface{}{
-        "component": "molfar",
-        "operation": "prepare",
-    })
-    // ... implementation
+    m.logger.Info("Starting Molfar preparation", "component", "molfar", "workRoot", m.workRoot.Name())
+    // ... implementation using m.workRoot for all filesystem operations
 }
 ```
 
@@ -655,3 +713,4 @@ func (m *MolfarService) Prepare() error {
 - Any structural changes require updating both code and structure.md documentation
 
 This structure ensures R.I.T.U.A.L. maintains clean architecture while supporting the complex requirements of Minecraft server orchestration, manifest management, distributed storage synchronization, and centralized logging infrastructure.
+

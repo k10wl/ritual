@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -18,7 +19,7 @@ func ArchivePaperWorld(
 	ctx context.Context,
 	storage ports.StorageRepository,
 	archiveService ports.ArchiveService,
-	instancePath string,
+	instanceRoot *os.Root,
 	destinationPath string,
 	name string,
 ) (string, string, func() error, error) {
@@ -28,8 +29,8 @@ func ArchivePaperWorld(
 	if archiveService == nil {
 		return "", "", func() error { return nil }, errors.New("archiveService cannot be nil")
 	}
-	if instancePath == "" {
-		return "", "", func() error { return nil }, errors.New("instancePath cannot be empty")
+	if instanceRoot == nil {
+		return "", "", func() error { return nil }, errors.New("instanceRoot cannot be nil")
 	}
 	if destinationPath == "" {
 		return "", "", func() error { return nil }, errors.New("destinationPath cannot be empty")
@@ -41,10 +42,12 @@ func ArchivePaperWorld(
 	archivePath := filepath.Join(destinationPath, fmt.Sprintf("%s.zip", name))
 	log.Println("Archiving worlds directly to", archivePath)
 
-	targetPaths := []string{
-		filepath.Join(instancePath, "world"),
-		filepath.Join(instancePath, "world_nether"),
-		filepath.Join(instancePath, "world_the_end"),
+	// Get relative paths for storage operations
+	// These paths are relative to wherever the storage is rooted
+	targetKeys := []string{
+		filepath.Join(config.InstanceDir, "world"),
+		filepath.Join(config.InstanceDir, "world_nether"),
+		filepath.Join(config.InstanceDir, "world_the_end"),
 	}
 
 	archiveName := fmt.Sprintf("%s.zip", name)
@@ -52,11 +55,11 @@ func ArchivePaperWorld(
 	tempDir := filepath.Join(destinationPath, fmt.Sprintf("%s_%s", config.TmpDir, archiveName))
 	log.Println("Temp dir:", tempDir)
 
-	for _, targetPath := range targetPaths {
-		leaf := filepath.Base(targetPath)
-		fullDestinationPath := filepath.Join(tempDir, leaf)
-		log.Println("Copying", targetPath, "to", fullDestinationPath)
-		err := storage.Copy(ctx, targetPath, fullDestinationPath)
+	for _, targetKey := range targetKeys {
+		leaf := filepath.Base(targetKey)
+		destKey := filepath.Join(tempDir, leaf)
+		log.Println("Copying", targetKey, "to", destKey)
+		err := storage.Copy(ctx, targetKey, destKey)
 		if err != nil {
 			return "", "", func() error { return nil }, err
 		}

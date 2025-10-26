@@ -185,16 +185,10 @@ func createDimensionDirsWithRoot(root *os.Root, worldName string) error {
 
 // PaperMinecraftWorldSetup creates Paper Minecraft world directories for testing
 // Returns the temp directory path, a list of files that were created, and a comparison function
-func PaperMinecraftWorldSetup(dir string) (string, []string, func(string) error, error) {
-	tempDir := dir
+func PaperMinecraftWorldSetup(root *os.Root) (string, []string, func(string) error, error) {
+	tempDir := root.Name()
 	var createdFiles []string
-
-	// Open directory as Root for secure operations
-	root, err := os.OpenRoot(tempDir)
-	if err != nil {
-		return "", nil, nil, err
-	}
-	defer root.Close()
+	var err error
 
 	// Create world directories
 	worlds := []string{"world", "world_nether", "world_the_end"}

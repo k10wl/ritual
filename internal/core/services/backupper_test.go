@@ -31,7 +31,11 @@ func TestNewBackupperService(t *testing.T) {
 		&mockBackupTarget{},
 	}
 
-	service, err := NewBackupperService(buildArchive, targets, t.TempDir())
+	tempDir := t.TempDir()
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	service, err := NewBackupperService(buildArchive, targets, root)
 	require.NoError(t, err)
 	require.NotNil(t, service)
 	require.NotNil(t, service.buildArchive)
@@ -43,7 +47,11 @@ func TestNewBackupperService_NilBuildArchive(t *testing.T) {
 		&mockBackupTarget{},
 	}
 
-	_, err := NewBackupperService(nil, targets, t.TempDir())
+	tempDir := t.TempDir()
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	_, err = NewBackupperService(nil, targets, root)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "buildArchive cannot be nil")
 }
@@ -53,7 +61,11 @@ func TestNewBackupperService_EmptyTargets(t *testing.T) {
 		return "test-archive.zip", "test-backup", func() error { return nil }, nil
 	}
 
-	_, err := NewBackupperService(buildArchive, []ports.BackupTarget{}, t.TempDir())
+	tempDir := t.TempDir()
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	_, err = NewBackupperService(buildArchive, []ports.BackupTarget{}, root)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at least one backup target is required")
 }
@@ -65,17 +77,20 @@ func TestBackupperService_Run_HappyScenario(t *testing.T) {
 
 	// Create a temporary directory for the test
 	tempDir := t.TempDir()
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
 
 	// Create a mock archive file
 	archivePath := "test-archive.zip"
-	err := os.WriteFile(tempDir+"/"+archivePath, []byte("PK\x03\x04test data"), 0644)
+	err = os.WriteFile(tempDir+"/"+archivePath, []byte("PK\x03\x04test data"), 0644)
 	require.NoError(t, err)
 
 	buildArchive := func() (string, string, func() error, error) {
 		return archivePath, "test-backup", func() error { return nil }, nil
 	}
 
-	backupper, err := NewBackupperService(buildArchive, targets, tempDir)
+	backupper, err := NewBackupperService(buildArchive, targets, root)
 	require.NoError(t, err)
 	require.NotNil(t, backupper)
 
@@ -92,12 +107,16 @@ func TestBackupperService_Run_HappyScenario(t *testing.T) {
 
 // Test validateArchiveWithRoot method
 func TestBackupperService_validateArchiveWithRoot(t *testing.T) {
+	tempDir := t.TempDir()
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
 	backupper, err := NewBackupperService(
 		func() (string, string, func() error, error) {
 			return "", "test-backup", func() error { return nil }, nil
 		},
 		[]ports.BackupTarget{&mockBackupTarget{}},
-		t.TempDir(),
+		root,
 	)
 	require.NoError(t, err)
 
@@ -120,17 +139,20 @@ func TestBackupperService_Run_BackupTargetError(t *testing.T) {
 
 	// Create a temporary directory for the test
 	tempDir := t.TempDir()
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
 
 	// Create a mock archive file
 	archivePath := "test-archive.zip"
-	err := os.WriteFile(tempDir+"/"+archivePath, []byte("PK\x03\x04test data"), 0644)
+	err = os.WriteFile(tempDir+"/"+archivePath, []byte("PK\x03\x04test data"), 0644)
 	require.NoError(t, err)
 
 	buildArchive := func() (string, string, func() error, error) {
 		return archivePath, "test-backup", func() error { return nil }, nil
 	}
 
-	backupper, err := NewBackupperService(buildArchive, targets, tempDir)
+	backupper, err := NewBackupperService(buildArchive, targets, root)
 	require.NoError(t, err)
 
 	// Execute backup orchestration should fail
@@ -146,17 +168,20 @@ func TestBackupperService_Run_RetentionError(t *testing.T) {
 
 	// Create a temporary directory for the test
 	tempDir := t.TempDir()
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
 
 	// Create a mock archive file
 	archivePath := "test-archive.zip"
-	err := os.WriteFile(tempDir+"/"+archivePath, []byte("PK\x03\x04test data"), 0644)
+	err = os.WriteFile(tempDir+"/"+archivePath, []byte("PK\x03\x04test data"), 0644)
 	require.NoError(t, err)
 
 	buildArchive := func() (string, string, func() error, error) {
 		return archivePath, "test-backup", func() error { return nil }, nil
 	}
 
-	backupper, err := NewBackupperService(buildArchive, targets, tempDir)
+	backupper, err := NewBackupperService(buildArchive, targets, root)
 	require.NoError(t, err)
 
 	// Execute backup orchestration should fail

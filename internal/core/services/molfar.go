@@ -45,7 +45,7 @@ type MolfarService struct {
 	serverRunner  ports.ServerRunner
 	backupper     ports.BackupperService
 	logger        *slog.Logger
-	workdir       string
+	workRoot      *os.Root
 	currentLockID string // Tracks the current lock ID for ownership validation (internal use only)
 }
 
@@ -60,7 +60,7 @@ func NewMolfarService(
 	serverRunner ports.ServerRunner,
 	backupper ports.BackupperService,
 	logger *slog.Logger,
-	workdir string,
+	workRoot *os.Root,
 ) (*MolfarService, error) {
 	if librarian == nil {
 		return nil, ErrLibrarianNil
@@ -86,8 +86,8 @@ func NewMolfarService(
 	if logger == nil {
 		return nil, errors.New("logger cannot be nil")
 	}
-	if workdir == "" {
-		return nil, errors.New("workdir cannot be empty")
+	if workRoot == nil {
+		return nil, errors.New("workRoot cannot be nil")
 	}
 
 	molfar := &MolfarService{
@@ -99,7 +99,7 @@ func NewMolfarService(
 		serverRunner:  serverRunner,
 		backupper:     backupper,
 		logger:        logger,
-		workdir:       workdir,
+		workRoot:      workRoot,
 	}
 
 	return molfar, nil
@@ -118,7 +118,7 @@ func (m *MolfarService) Prepare() error {
 		return ErrValidatorNil
 	}
 
-	m.logger.Info("Starting preparation phase", "workdir", m.workdir)
+	m.logger.Info("Starting preparation phase", "workRoot", m.workRoot.Name())
 	ctx := context.Background()
 
 	remoteManifest, err := m.getRemoteManifest(ctx)
@@ -161,13 +161,12 @@ func (m *MolfarService) initializeLocalInstance(ctx context.Context, remoteManif
 	}
 
 	m.logger.Info("Initializing new local instance", "instance_version", remoteManifest.InstanceVersion)
-	instancePath := filepath.Join(m.workdir, InstanceDir)
 
-	if err := m.downloadAndExtractInstance(ctx, instancePath); err != nil {
+	if err := m.downloadAndExtractInstance(ctx, InstanceDir); err != nil {
 		return err
 	}
 
-	if err := m.downloadAndExtractWorlds(ctx, remoteManifest, instancePath); err != nil {
+	if err := m.downloadAndExtractWorlds(ctx, remoteManifest, InstanceDir); err != nil {
 		return err
 	}
 
@@ -202,9 +201,8 @@ func (m *MolfarService) updateLocalInstance(ctx context.Context, remoteManifest 
 	}
 
 	m.logger.Info("Updating local instance", "instance_version", remoteManifest.InstanceVersion)
-	instancePath := filepath.Join(m.workdir, InstanceDir)
 
-	if err := m.downloadAndExtractInstance(ctx, instancePath); err != nil {
+	if err := m.downloadAndExtractInstance(ctx, InstanceDir); err != nil {
 		return err
 	}
 
@@ -236,12 +234,10 @@ func (m *MolfarService) updateLocalWorlds(ctx context.Context, remoteManifest *d
 	}
 
 	m.logger.Info("Updating local worlds", "instance_version", remoteManifest.InstanceVersion)
-	instancePath := filepath.Join(m.workdir, InstanceDir)
-	backupPath := filepath.Join(m.workdir, BackupDir, PreUpdateDir)
 
 	// Copy current worlds to backup
-	m.logger.Info("Backing up current worlds", "source", instancePath, "backup", backupPath)
-	err := m.copyWorldsToBackup(instancePath, backupPath)
+	m.logger.Info("Backing up current worlds", "source", InstanceDir, "backup", filepath.Join(BackupDir, PreUpdateDir))
+	err := m.copyWorldsToBackup(InstanceDir, filepath.Join(BackupDir, PreUpdateDir))
 	if err != nil {
 		m.logger.Error("Failed to backup current worlds", "error", err)
 		return fmt.Errorf("failed to backup current worlds: %w", err)
@@ -249,7 +245,7 @@ func (m *MolfarService) updateLocalWorlds(ctx context.Context, remoteManifest *d
 
 	// Download and extract new worlds
 	m.logger.Info("Downloading and extracting new worlds")
-	err = m.downloadAndExtractWorlds(ctx, remoteManifest, instancePath)
+	err = m.downloadAndExtractWorlds(ctx, remoteManifest, InstanceDir)
 	if err != nil {
 		m.logger.Error("Failed to download and extract new worlds", "error", err)
 		return fmt.Errorf("failed to download and extract new worlds: %w", err)
@@ -306,15 +302,15 @@ func (m *MolfarService) copyWorldsToBackup(instancePath, backupPath string) erro
 }
 
 // downloadAndExtractWorlds downloads worlds from remote storage and extracts them
-func (m *MolfarService) downloadAndExtractWorlds(ctx context.Context, remoteManifest *domain.Manifest, instancePath string) error {
+func (m *MolfarService) downloadAndExtractWorlds(ctx context.Context, remoteManifest *domain.Manifest, relInstanceDir string) error {
 	if ctx == nil {
 		return errors.New("context cannot be nil")
 	}
 	if remoteManifest == nil {
 		return errors.New("remote manifest cannot be nil")
 	}
-	if instancePath == "" {
-		return errors.New("instance path cannot be empty")
+	if relInstanceDir == "" {
+		return errors.New("instance directory cannot be empty")
 	}
 	if m.localStorage == nil {
 		return ErrStorageNil
@@ -341,7 +337,7 @@ func (m *MolfarService) downloadAndExtractWorlds(ctx context.Context, remoteMani
 		return err
 	}
 
-	if err := m.extractWorldArchive(ctx, sanitizedURI, instancePath); err != nil {
+	if err := m.extractWorldArchive(ctx, sanitizedURI, relInstanceDir); err != nil {
 		return err
 	}
 
@@ -765,7 +761,7 @@ func (m *MolfarService) validateManifests(localManifest, remoteManifest *domain.
 }
 
 // Helper functions for instance operations
-func (m *MolfarService) downloadAndExtractInstance(ctx context.Context, instancePath string) error {
+func (m *MolfarService) downloadAndExtractInstance(ctx context.Context, relInstanceDir string) error {
 	m.logger.Info("Downloading instance from remote storage", "key", InstanceZipKey)
 	instanceZipData, err := m.remoteStorage.Get(ctx, InstanceZipKey)
 	if err != nil {
@@ -781,19 +777,10 @@ func (m *MolfarService) downloadAndExtractInstance(ctx context.Context, instance
 		return fmt.Errorf("failed to store %s in temp storage: %w", InstanceZipKey, err)
 	}
 
-	tempFilePath := filepath.Join(m.workdir, tempKey)
-	relTempFilePath, err := filepath.Rel(m.workdir, tempFilePath)
+	m.logger.Info("Extracting instance archive", "source", tempKey, "destination", relInstanceDir)
+	err = m.archive.Unarchive(ctx, tempKey, relInstanceDir)
 	if err != nil {
-		return fmt.Errorf("failed to get relative temp path: %w", err)
-	}
-	relInstancePath, err := filepath.Rel(m.workdir, instancePath)
-	if err != nil {
-		return fmt.Errorf("failed to get relative instance path: %w", err)
-	}
-	m.logger.Info("Extracting instance archive", "source", relTempFilePath, "destination", relInstancePath)
-	err = m.archive.Unarchive(ctx, relTempFilePath, relInstancePath)
-	if err != nil {
-		m.logger.Error("Failed to extract instance archive", "source", tempFilePath, "destination", instancePath, "error", err)
+		m.logger.Error("Failed to extract instance archive", "source", tempKey, "destination", relInstanceDir, "error", err)
 		return err
 	}
 
@@ -835,21 +822,12 @@ func (m *MolfarService) downloadWorldArchive(ctx context.Context, sanitizedURI s
 	return nil
 }
 
-func (m *MolfarService) extractWorldArchive(ctx context.Context, sanitizedURI, instancePath string) error {
+func (m *MolfarService) extractWorldArchive(ctx context.Context, sanitizedURI, relInstanceDir string) error {
 	tempKey := filepath.Join(TempPrefix, sanitizedURI)
-	tempFilePath := filepath.Join(m.workdir, tempKey)
-	relTempFilePath, err := filepath.Rel(m.workdir, tempFilePath)
+	m.logger.Info("Extracting worlds archive", "source", tempKey, "destination", relInstanceDir)
+	err := m.archive.Unarchive(ctx, tempKey, relInstanceDir)
 	if err != nil {
-		return fmt.Errorf("failed to get relative temp path: %w", err)
-	}
-	relInstancePath, err := filepath.Rel(m.workdir, instancePath)
-	if err != nil {
-		return fmt.Errorf("failed to get relative instance path: %w", err)
-	}
-	m.logger.Info("Extracting worlds archive", "source", relTempFilePath, "destination", relInstancePath)
-	err = m.archive.Unarchive(ctx, relTempFilePath, relInstancePath)
-	if err != nil {
-		m.logger.Error("Failed to extract worlds archive", "source", tempFilePath, "destination", instancePath, "error", err)
+		m.logger.Error("Failed to extract worlds archive", "source", tempKey, "destination", relInstanceDir, "error", err)
 		return fmt.Errorf("failed to extract worlds: %w", err)
 	}
 

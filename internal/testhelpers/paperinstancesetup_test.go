@@ -21,7 +21,10 @@ const (
 
 func TestPaperInstanceSetup(t *testing.T) {
 	tempDir := t.TempDir()
-	tempDir, createdFiles, compareFunc, err := PaperInstanceSetup(tempDir, "1.20.1")
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	tempDir, createdFiles, compareFunc, err := PaperInstanceSetup(root, "1.20.1")
 	require.NoError(t, err)
 
 	// Verify temp directory exists
@@ -75,7 +78,11 @@ func TestPaperInstanceSetupWithCustomDir(t *testing.T) {
 	err := os.MkdirAll(customDir, 0755)
 	require.NoError(t, err)
 
-	tempDir, _, compareFunc, err := PaperInstanceSetup(customDir, "1.20.1")
+	root, err := os.OpenRoot(customDir)
+	require.NoError(t, err)
+	defer root.Close()
+
+	tempDir, _, compareFunc, err := PaperInstanceSetup(root, "1.20.1")
 	require.NoError(t, err)
 
 	// Verify custom directory was used
@@ -101,7 +108,10 @@ func TestPaperInstanceSetupWithCustomDir(t *testing.T) {
 
 func TestPaperInstanceSetupComparison(t *testing.T) {
 	tempDir := t.TempDir()
-	tempDir, _, compareFunc, err := PaperInstanceSetup(tempDir, "1.20.1")
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	tempDir, _, compareFunc, err := PaperInstanceSetup(root, "1.20.1")
 	require.NoError(t, err)
 
 	// Create a copy of the directory structure
@@ -127,7 +137,10 @@ func TestPaperInstanceSetupComparison(t *testing.T) {
 
 func TestPaperInstanceSetupFailure(t *testing.T) {
 	tempDir := t.TempDir()
-	tempDir, _, compareFunc, err := PaperInstanceSetup(tempDir, "1.20.1")
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	tempDir, _, compareFunc, err := PaperInstanceSetup(root, "1.20.1")
 	require.NoError(t, err)
 
 	// Create a directory with missing files
@@ -168,7 +181,10 @@ func TestPaperInstanceSetup_VersionParameter(t *testing.T) {
 	for _, version := range testVersions {
 		t.Run("version_"+version, func(t *testing.T) {
 			tempDir := t.TempDir()
-			_, _, _, err := PaperInstanceSetup(tempDir, version)
+			root, err := os.OpenRoot(tempDir)
+			require.NoError(t, err)
+			defer root.Close()
+			_, _, _, err = PaperInstanceSetup(root, version)
 			require.NoError(t, err)
 
 			// Verify version is written to paper.yml
@@ -183,8 +199,16 @@ func TestPaperInstanceSetup_VersionParameter(t *testing.T) {
 func TestPaperInstanceSetup_NegativeCases(t *testing.T) {
 	// Test with invalid directory path
 	invalidDir := "/invalid/path/that/does/not/exist"
-	_, _, _, err := PaperInstanceSetup(invalidDir, "1.20.1")
+	invalidRoot, err := os.OpenRoot(invalidDir)
 	assert.Error(t, err, "Should fail with invalid directory path")
+	if invalidRoot == nil {
+		// If root creation failed, skip the rest
+		return
+	}
+	defer invalidRoot.Close()
+
+	_, _, _, err = PaperInstanceSetup(invalidRoot, "1.20.1")
+	// May or may not fail depending on root creation
 
 	// Test with read-only directory (if possible on current OS)
 	tempDir := t.TempDir()
@@ -194,17 +218,24 @@ func TestPaperInstanceSetup_NegativeCases(t *testing.T) {
 
 	// On Windows, read-only directories may still allow file creation
 	// So we'll skip this test if it doesn't fail as expected
-	_, _, _, err = PaperInstanceSetup(readOnlyDir, "1.20.1")
-	if err != nil {
-		assert.Error(t, err, "Should fail with read-only directory")
-	} else {
-		t.Log("Read-only directory test skipped - OS allows file creation in read-only dir")
+	readOnlyRoot, err := os.OpenRoot(readOnlyDir)
+	if err == nil {
+		defer readOnlyRoot.Close()
+		_, _, _, err = PaperInstanceSetup(readOnlyRoot, "1.20.1")
+		if err != nil {
+			assert.Error(t, err, "Should fail with read-only directory")
+		} else {
+			t.Log("Read-only directory test skipped - OS allows file creation in read-only dir")
+		}
 	}
 }
 
 func TestPaperInstanceSetup_ComparisonFunction_NegativeCases(t *testing.T) {
 	tempDir := t.TempDir()
-	_, _, compareFunc, err := PaperInstanceSetup(tempDir, "1.20.1")
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	_, _, compareFunc, err := PaperInstanceSetup(root, "1.20.1")
 	require.NoError(t, err)
 
 	// Test comparison with non-existent directory
@@ -230,7 +261,10 @@ func TestPaperInstanceSetup_ComparisonFunction_NegativeCases(t *testing.T) {
 
 func TestPaperInstanceIntegration_ServerFileFormatCompliance(t *testing.T) {
 	tempDir := t.TempDir()
-	_, createdFiles, _, err := PaperInstanceSetup(tempDir, "1.20.1")
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	_, createdFiles, _, err := PaperInstanceSetup(root, "1.20.1")
 	require.NoError(t, err)
 
 	// Test server.properties format compliance
@@ -282,7 +316,10 @@ func TestPaperInstanceIntegration_ServerFileFormatCompliance(t *testing.T) {
 
 func TestPaperInstanceIntegration_DirectoryStructure(t *testing.T) {
 	tempDir := t.TempDir()
-	_, _, _, err := PaperInstanceSetup(tempDir, "1.20.1")
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	_, _, _, err = PaperInstanceSetup(root, "1.20.1")
 	require.NoError(t, err)
 
 	// Test instance directory structure
@@ -301,7 +338,10 @@ func TestPaperInstanceIntegration_DirectoryStructure(t *testing.T) {
 
 func TestPaperInstanceIntegration_PluginConfiguration(t *testing.T) {
 	tempDir := t.TempDir()
-	_, _, _, err := PaperInstanceSetup(tempDir, "1.20.1")
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	_, _, _, err = PaperInstanceSetup(root, "1.20.1")
 	require.NoError(t, err)
 
 	// Test plugin configuration files
@@ -323,7 +363,10 @@ func TestPaperInstanceIntegration_PluginConfiguration(t *testing.T) {
 
 func TestPaperInstanceIntegration_LogFiles(t *testing.T) {
 	tempDir := t.TempDir()
-	_, _, _, err := PaperInstanceSetup(tempDir, "1.20.1")
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	_, _, _, err = PaperInstanceSetup(root, "1.20.1")
 	require.NoError(t, err)
 
 	// Test latest.log format

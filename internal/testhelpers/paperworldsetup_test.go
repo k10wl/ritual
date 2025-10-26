@@ -22,7 +22,10 @@ const (
 
 func TestPaperMinecraftWorldSetup(t *testing.T) {
 	tempDir := t.TempDir()
-	tempDir, createdFiles, compareFunc, err := PaperMinecraftWorldSetup(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	tempDir, createdFiles, compareFunc, err := PaperMinecraftWorldSetup(root)
 	require.NoError(t, err)
 
 	// Verify temp directory exists
@@ -86,7 +89,11 @@ func TestPaperMinecraftWorldSetupWithCustomDir(t *testing.T) {
 	err := os.MkdirAll(customDir, 0755)
 	require.NoError(t, err)
 
-	tempDir, createdFiles, compareFunc, err := PaperMinecraftWorldSetup(customDir)
+	root, err := os.OpenRoot(customDir)
+	require.NoError(t, err)
+	defer root.Close()
+
+	tempDir, createdFiles, compareFunc, err := PaperMinecraftWorldSetup(root)
 	require.NoError(t, err)
 
 	// Verify custom directory was used
@@ -138,7 +145,10 @@ func TestPaperMinecraftWorldSetupWithCustomDir(t *testing.T) {
 
 func TestPaperMinecraftWorldSetupComparison(t *testing.T) {
 	tempDir := t.TempDir()
-	tempDir, _, compareFunc, err := PaperMinecraftWorldSetup(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	tempDir, _, compareFunc, err := PaperMinecraftWorldSetup(root)
 	require.NoError(t, err)
 
 	// Create a copy of the directory structure
@@ -164,7 +174,10 @@ func TestPaperMinecraftWorldSetupComparison(t *testing.T) {
 
 func TestPaperMinecraftWorldSetupFailure(t *testing.T) {
 	tempDir := t.TempDir()
-	tempDir, _, compareFunc, err := PaperMinecraftWorldSetup(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	tempDir, _, compareFunc, err := PaperMinecraftWorldSetup(root)
 	require.NoError(t, err)
 
 	// Create a directory with missing files
@@ -228,8 +241,16 @@ func TestGetFileHash(t *testing.T) {
 func TestPaperMinecraftWorldSetup_NegativeCases(t *testing.T) {
 	// Test with invalid directory path
 	invalidDir := "/invalid/path/that/does/not/exist"
-	_, _, _, err := PaperMinecraftWorldSetup(invalidDir)
+	invalidRoot, err := os.OpenRoot(invalidDir)
 	assert.Error(t, err, "Should fail with invalid directory path")
+	if invalidRoot == nil {
+		// If root creation failed, skip the rest
+		return
+	}
+	defer invalidRoot.Close()
+
+	_, _, _, err = PaperMinecraftWorldSetup(invalidRoot)
+	// May or may not fail depending on root creation
 
 	// Test with read-only directory (if possible on current OS)
 	tempDir := t.TempDir()
@@ -239,17 +260,24 @@ func TestPaperMinecraftWorldSetup_NegativeCases(t *testing.T) {
 
 	// On Windows, read-only directories may still allow file creation
 	// So we'll skip this test if it doesn't fail as expected
-	_, _, _, err = PaperMinecraftWorldSetup(readOnlyDir)
-	if err != nil {
-		assert.Error(t, err, "Should fail with read-only directory")
-	} else {
-		t.Log("Read-only directory test skipped - OS allows file creation in read-only dir")
+	readOnlyRoot, err := os.OpenRoot(readOnlyDir)
+	if err == nil {
+		defer readOnlyRoot.Close()
+		_, _, _, err = PaperMinecraftWorldSetup(readOnlyRoot)
+		if err != nil {
+			assert.Error(t, err, "Should fail with read-only directory")
+		} else {
+			t.Log("Read-only directory test skipped - OS allows file creation in read-only dir")
+		}
 	}
 }
 
 func TestPaperMinecraftWorldSetup_ComparisonFunction_NegativeCases(t *testing.T) {
 	tempDir := t.TempDir()
-	_, _, compareFunc, err := PaperMinecraftWorldSetup(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	_, _, compareFunc, err := PaperMinecraftWorldSetup(root)
 	require.NoError(t, err)
 
 	// Test comparison with non-existent directory
@@ -279,7 +307,10 @@ func TestPaperMinecraftWorldSetup_ComparisonFunction_NegativeCases(t *testing.T)
 
 func TestPaperWorldIntegration_FileFormatCompliance(t *testing.T) {
 	tempDir := t.TempDir()
-	_, createdFiles, _, err := PaperMinecraftWorldSetup(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	_, createdFiles, _, err := PaperMinecraftWorldSetup(root)
 	require.NoError(t, err)
 
 	// Test Paper-specific file formats
@@ -330,7 +361,10 @@ func TestPaperWorldIntegration_FileFormatCompliance(t *testing.T) {
 
 func TestPaperWorldIntegration_DirectoryStructure(t *testing.T) {
 	tempDir := t.TempDir()
-	_, _, _, err := PaperMinecraftWorldSetup(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	_, _, _, err = PaperMinecraftWorldSetup(root)
 	require.NoError(t, err)
 
 	// Test main world directory structure
@@ -368,7 +402,10 @@ func TestPaperWorldIntegration_DirectoryStructure(t *testing.T) {
 
 func TestPaperWorldIntegration_CrossPlatformPaths(t *testing.T) {
 	tempDir := t.TempDir()
-	_, createdFiles, compareFunc, err := PaperMinecraftWorldSetup(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer root.Close()
+	_, createdFiles, compareFunc, err := PaperMinecraftWorldSetup(root)
 	require.NoError(t, err)
 
 	// Test that all file paths use forward slashes (standard for archives)

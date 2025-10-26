@@ -18,8 +18,10 @@ import (
 
 func TestArchivePaperWorld(t *testing.T) {
 	tempDir := t.TempDir()
+	root, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
 
-	fs, err := adapters.NewFSRepository(tempDir)
+	fs, err := adapters.NewFSRepository(root)
 	require.NoError(t, err)
 	defer fs.Close()
 
@@ -27,22 +29,28 @@ func TestArchivePaperWorld(t *testing.T) {
 	err = os.MkdirAll(instanceDir, 0755)
 	require.NoError(t, err)
 
+	instanceRoot, err := os.OpenRoot(instanceDir)
+	require.NoError(t, err)
+	defer instanceRoot.Close()
+
 	// Create temporary directory structure mimicking Minecraft world
-	_, _, worldsCompareFunc, err := testhelpers.PaperMinecraftWorldSetup(instanceDir)
+	_, _, worldsCompareFunc, err := testhelpers.PaperMinecraftWorldSetup(instanceRoot)
 	require.NoError(t, err)
 
 	log.Println(fs.List(context.Background(), config.InstanceDir))
 
-	archiveService, err := services.NewArchiveService(tempDir)
+	archiveService, err := services.NewArchiveService(root)
 	require.NoError(t, err)
 
 	// Execute ArchivePaperWorld
 	ctx := context.Background()
+	// instanceRoot already opened above
+
 	archivePath, backupName, cleanup, err := services.ArchivePaperWorld(
 		ctx,
 		fs,
 		archiveService,
-		config.InstanceDir,
+		instanceRoot,
 		"temp",
 		"test_backup",
 	)

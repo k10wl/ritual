@@ -12,28 +12,28 @@ import (
 type BackupperService struct {
 	buildArchive func() (string, string, func() error, error) // Returns generated path, name, and cleanup
 	targets      []ports.BackupTarget                         // List of backup destinations
-	workDir      string                                       // Working directory for safe operations
+	workRoot     *os.Root                                      // Working root for safe operations
 }
 
 // Compile-time check to ensure BackupperService implements ports.BackupperService
 var _ ports.BackupperService = (*BackupperService)(nil)
 
 // NewBackupperService creates a new backupper service instance
-func NewBackupperService(buildArchive func() (string, string, func() error, error), targets []ports.BackupTarget, workDir string) (*BackupperService, error) {
+func NewBackupperService(buildArchive func() (string, string, func() error, error), targets []ports.BackupTarget, workRoot *os.Root) (*BackupperService, error) {
 	if buildArchive == nil {
 		return nil, errors.New("buildArchive cannot be nil")
 	}
 	if len(targets) == 0 {
 		return nil, errors.New("at least one backup target is required")
 	}
-	if workDir == "" {
-		return nil, errors.New("workDir cannot be empty")
+	if workRoot == nil {
+		return nil, errors.New("workRoot cannot be nil")
 	}
 
 	return &BackupperService{
 		buildArchive: buildArchive,
 		targets:      targets,
-		workDir:      workDir,
+		workRoot:     workRoot,
 	}, nil
 }
 
@@ -47,20 +47,13 @@ func (b *BackupperService) Run() (string, error) {
 	}
 	defer cleanup()
 
-	// Open workdir as root for safe operations
-	workRoot, err := os.OpenRoot(b.workDir)
-	if err != nil {
-		return "", err
-	}
-	defer workRoot.Close()
-
 	// Validate archive using root
-	if err := b.validateArchiveWithRoot(workRoot, archivePath); err != nil {
+	if err := b.validateArchiveWithRoot(b.workRoot, archivePath); err != nil {
 		return "", err
 	}
 
 	// Read archive data using root
-	data, err := workRoot.ReadFile(archivePath)
+	data, err := b.workRoot.ReadFile(archivePath)
 	if err != nil {
 		return "", err
 	}
