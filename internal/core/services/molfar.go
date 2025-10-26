@@ -19,8 +19,6 @@ const (
 	InstanceZipKey = "instance.zip"
 	TempPrefix     = config.TmpDir
 	InstanceDir    = config.InstanceDir
-	BackupDir      = "backups"
-	PreUpdateDir   = "pre-update"
 )
 
 // Molfar error constants
@@ -235,69 +233,21 @@ func (m *MolfarService) updateLocalWorlds(ctx context.Context, remoteManifest *d
 
 	m.logger.Info("Updating local worlds", "instance_version", remoteManifest.InstanceVersion)
 
-	// Copy current worlds to backup
-	m.logger.Info("Backing up current worlds", "source", InstanceDir, "backup", filepath.Join(BackupDir, PreUpdateDir))
-	err := m.copyWorldsToBackup(InstanceDir, filepath.Join(BackupDir, PreUpdateDir))
-	if err != nil {
-		m.logger.Error("Failed to backup current worlds", "error", err)
-		return fmt.Errorf("failed to backup current worlds: %w", err)
-	}
-
 	// Download and extract new worlds
 	m.logger.Info("Downloading and extracting new worlds")
-	err = m.downloadAndExtractWorlds(ctx, remoteManifest, InstanceDir)
-	if err != nil {
+	if err := m.downloadAndExtractWorlds(ctx, remoteManifest, InstanceDir); err != nil {
 		m.logger.Error("Failed to download and extract new worlds", "error", err)
 		return fmt.Errorf("failed to download and extract new worlds: %w", err)
 	}
 
 	// Update local manifest with new world information
 	m.logger.Info("Updating local manifest with new world information")
-	err = m.librarian.SaveLocalManifest(ctx, remoteManifest)
-	if err != nil {
+	if err := m.librarian.SaveLocalManifest(ctx, remoteManifest); err != nil {
 		m.logger.Error("Failed to save updated local manifest", "error", err)
 		return fmt.Errorf("failed to save updated local manifest: %w", err)
 	}
 
 	m.logger.Info("Local worlds update completed successfully")
-	return nil
-}
-
-// copyWorldsToBackup copies existing world directories to backup location
-func (m *MolfarService) copyWorldsToBackup(instancePath, backupPath string) error {
-	if instancePath == "" {
-		return errors.New("instance path cannot be empty")
-	}
-	if backupPath == "" {
-		return errors.New("backup path cannot be empty")
-	}
-	if m.localStorage == nil {
-		return ErrStorageNil
-	}
-
-	m.logger.Info("Starting world backup process", "source", instancePath, "backup", backupPath)
-	ctx := context.Background()
-	worldDirs := []string{"world", "world_nether", "world_the_end"}
-
-	for _, worldDir := range worldDirs {
-		sourceKey := filepath.Join(InstanceDir, worldDir)
-		destKey := filepath.Join(BackupDir, worldDir)
-
-		m.logger.Debug("Copying world directory", "world", worldDir, "source", sourceKey, "dest", destKey)
-		err := m.localStorage.Copy(ctx, sourceKey, destKey)
-		if err != nil {
-			// Skip if source doesn't exist
-			if strings.Contains(err.Error(), "source key not found") {
-				m.logger.Debug("World directory not found, skipping", "world", worldDir)
-				continue
-			}
-			m.logger.Error("Failed to copy world directory", "world", worldDir, "error", err)
-			return fmt.Errorf("failed to copy %s to backup: %w", worldDir, err)
-		}
-		m.logger.Debug("Successfully backed up world directory", "world", worldDir)
-	}
-
-	m.logger.Info("World backup process completed successfully")
 	return nil
 }
 
