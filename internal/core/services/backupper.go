@@ -38,43 +38,44 @@ func NewBackupperService(buildArchive func() (string, string, func() error, erro
 }
 
 // Run executes the backup orchestration process
-func (b *BackupperService) Run() error {
+// Returns the archive name that was created for manifest updates
+func (b *BackupperService) Run() (string, error) {
 	// Call buildArchive() to generate archive path, name, and get cleanup function
 	archivePath, backupName, cleanup, err := b.buildArchive()
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer cleanup()
 
 	// Open workdir as root for safe operations
 	workRoot, err := os.OpenRoot(b.workDir)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer workRoot.Close()
 
 	// Validate archive using root
 	if err := b.validateArchiveWithRoot(workRoot, archivePath); err != nil {
-		return err
+		return "", err
 	}
 
 	// Read archive data using root
 	data, err := workRoot.ReadFile(archivePath)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// Store to all targets and apply retention
 	for _, target := range b.targets {
 		if err := target.Backup(data, backupName); err != nil {
-			return err
+			return "", err
 		}
 		if err := target.DataRetention(); err != nil {
-			return err
+			return "", err
 		}
 	}
 
-	return nil
+	return backupName, nil
 }
 
 // validateArchiveWithRoot validates the archive file using os.Root

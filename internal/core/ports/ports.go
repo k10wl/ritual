@@ -104,5 +104,6 @@ type BackupTarget interface {
 // BackupperService handles backup creation and restoration using template method pattern
 type BackupperService interface {
 	// Run executes the backup orchestration process
-	Run() error
+	// Returns the archive name that was created for manifest updates
+	Run() (string, error)
 }

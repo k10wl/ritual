@@ -80,8 +80,9 @@ func TestBackupperService_Run_HappyScenario(t *testing.T) {
 	require.NotNil(t, backupper)
 
 	// Execute backup orchestration
-	err = backupper.Run()
+	archiveName, err := backupper.Run()
 	require.NoError(t, err)
+	require.Equal(t, "test-backup", archiveName)
 
 	// Verify backup was called on target
 	require.True(t, mockTarget.backupCalled)
@@ -133,7 +134,7 @@ func TestBackupperService_Run_BackupTargetError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Execute backup orchestration should fail
-	err = backupper.Run()
+	_, err = backupper.Run()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "backup failed")
 }
@@ -159,7 +160,7 @@ func TestBackupperService_Run_RetentionError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Execute backup orchestration should fail
-	err = backupper.Run()
+	_, err = backupper.Run()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "retention failed")
 }
