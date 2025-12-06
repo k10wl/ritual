@@ -33,6 +33,7 @@ func NewFSRepository(root *os.Root) (*FSRepository, error) {
 
 // Get retrieves data by key from filesystem
 func (f *FSRepository) Get(ctx context.Context, key string) ([]byte, error) {
+	key = filepath.FromSlash(key)
 	file, err := f.root.Open(key)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -62,6 +63,7 @@ func (f *FSRepository) Get(ctx context.Context, key string) ([]byte, error) {
 
 // Put stores data with the given key to filesystem
 func (f *FSRepository) Put(ctx context.Context, key string, data []byte) error {
+	key = filepath.FromSlash(key)
 	dir := filepath.Dir(key)
 	if dir != "." {
 		if err := f.root.MkdirAll(dir, 0755); err != nil {
@@ -84,6 +86,7 @@ func (f *FSRepository) Put(ctx context.Context, key string, data []byte) error {
 
 // Delete removes data by key from filesystem
 func (f *FSRepository) Delete(ctx context.Context, key string) error {
+	key = filepath.FromSlash(key)
 	// Check if key is a directory by trying to open it
 	file, err := f.root.Open(key)
 	if err != nil {
@@ -122,6 +125,8 @@ func (f *FSRepository) List(ctx context.Context, prefix string) ([]string, error
 
 	if prefix == "" {
 		prefix = "."
+	} else {
+		prefix = filepath.FromSlash(prefix)
 	}
 
 	file, err := f.root.Open(prefix)
@@ -172,6 +177,9 @@ func (f *FSRepository) Copy(ctx context.Context, sourceKey string, destKey strin
 	if f.root == nil {
 		return fmt.Errorf("root filesystem cannot be nil")
 	}
+
+	sourceKey = filepath.FromSlash(sourceKey)
+	destKey = filepath.FromSlash(destKey)
 
 	// Open source file/directory
 	sourceFile, err := f.root.Open(sourceKey)

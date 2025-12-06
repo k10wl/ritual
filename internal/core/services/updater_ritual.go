@@ -4,86 +4,116 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"ritual/internal/core/ports"
 )
 
 // RitualUpdater error constants
 var (
 	ErrRitualUpdaterLibrarianNil = errors.New("librarian service cannot be nil")
-	ErrRitualUpdaterValidatorNil = errors.New("validator service cannot be nil")
+	ErrRitualUpdaterStorageNil   = errors.New("storage repository cannot be nil")
 	ErrRitualUpdaterNil          = errors.New("ritual updater cannot be nil")
-	ErrRitualVersionMismatch     = errors.New("ritual version mismatch: self-update required")
+	ErrRitualCtxNil              = errors.New("context cannot be nil")
+	ErrRitualRemoteManifestNil   = errors.New("remote manifest cannot be nil")
+	ErrRitualLocalManifestNil    = errors.New("local manifest cannot be nil")
 )
 
-// RitualUpdater implements UpdaterService for ritual version checks
-// RitualUpdater compares local and remote ritual versions
-// Currently returns error if versions don't match (placeholder for future self-update)
+// RitualUpdater constants
+const (
+	ritualBinaryKey = "ritual.exe"
+)
+
+// RitualUpdater implements UpdaterService for ritual self-updates
+// Compares local and remote ritual versions and performs self-update if local is outdated
 type RitualUpdater struct {
 	librarian ports.LibrarianService
-	validator ports.ValidatorService
+	storage   ports.StorageRepository
 }
 
 // Compile-time check to ensure RitualUpdater implements ports.UpdaterService
 var _ ports.UpdaterService = (*RitualUpdater)(nil)
 
 // NewRitualUpdater creates a new ritual updater
-// Validates all dependencies are non-nil per NASA JPL defensive programming standards
 func NewRitualUpdater(
 	librarian ports.LibrarianService,
-	validator ports.ValidatorService,
+	storage ports.StorageRepository,
 ) (*RitualUpdater, error) {
 	if librarian == nil {
 		return nil, ErrRitualUpdaterLibrarianNil
 	}
-	if validator == nil {
-		return nil, ErrRitualUpdaterValidatorNil
+	if storage == nil {
+		return nil, ErrRitualUpdaterStorageNil
 	}
 
-	updater := &RitualUpdater{
+	return &RitualUpdater{
 		librarian: librarian,
-		validator: validator,
-	}
-
-	// Postcondition assertion
-	if updater == nil {
-		return nil, errors.New("ritual updater initialization failed")
-	}
-
-	return updater, nil
+		storage:   storage,
+	}, nil
 }
 
-// Run executes the ritual version check
-// Returns nil if versions match, error if they don't (placeholder for self-update)
+// Run executes the ritual self-update process
+// Downloads new binary if local version is outdated, replaces current exe, and restarts
 func (u *RitualUpdater) Run(ctx context.Context) error {
 	if u == nil {
 		return ErrRitualUpdaterNil
 	}
 	if ctx == nil {
-		return errors.New("context cannot be nil")
+		return ErrRitualCtxNil
 	}
 
-	// Get remote manifest
 	remoteManifest, err := u.librarian.GetRemoteManifest(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get remote manifest: %w", err)
 	}
 	if remoteManifest == nil {
-		return errors.New("remote manifest cannot be nil")
+		return ErrRitualRemoteManifestNil
 	}
 
-	// Get local manifest
 	localManifest, err := u.librarian.GetLocalManifest(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get local manifest: %w", err)
 	}
 	if localManifest == nil {
-		return errors.New("local manifest cannot be nil")
+		return ErrRitualLocalManifestNil
 	}
 
-	// Compare ritual versions
-	if localManifest.RitualVersion != remoteManifest.RitualVersion {
-		return ErrRitualVersionMismatch
+	// No update needed if versions match
+	if localManifest.RitualVersion == remoteManifest.RitualVersion {
+		return nil
 	}
 
+	// Download new binary
+	currentExe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get current executable path: %w", err)
+	}
+
+	data, err := u.storage.Get(ctx, ritualBinaryKey)
+	if err != nil {
+		return fmt.Errorf("failed to download ritual binary: %w", err)
+	}
+
+	// Overwrite current binary
+	if err := os.WriteFile(currentExe, data, 0755); err != nil {
+		return fmt.Errorf("failed to replace binary: %w", err)
+	}
+
+	// Update local manifest with new version
+	localManifest.RitualVersion = remoteManifest.RitualVersion
+	if err := u.librarian.SaveLocalManifest(ctx, localManifest); err != nil {
+		return fmt.Errorf("failed to save local manifest: %w", err)
+	}
+
+	// Restart with same arguments
+	cmd := exec.Command(currentExe, os.Args[1:]...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to restart: %w", err)
+	}
+
+	os.Exit(0)
 	return nil
 }
