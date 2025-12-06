@@ -29,6 +29,8 @@ ritual/
 │   ├── structure.md             # This file - project structure documentation
 │   └── ritual.drawio            # Architecture diagrams
 └── internal/
+    ├── config/
+    │   └── config.go           # Centralized configuration constants
     ├── logger/
     │   └── logger.go           # Centralized logging implementation
     ├── adapters/
@@ -74,6 +76,100 @@ ritual/
 ```
 
 ## Architecture Layers
+
+### Configuration Layer (`internal/config/`)
+
+Centralizes all application constants and configuration values:
+
+- **`config.go`** - Single source of truth for all constants
+
+#### Configuration Categories
+
+```go
+// Application identity
+const (
+    GroupName = "k10wl"
+    AppName   = "ritualdev"
+)
+
+// Directory names
+const (
+    LocalBackups  = "world_backups"
+    RemoteBackups = "worlds"
+    InstanceDir   = "instance"
+    TmpDir        = "temp"
+)
+
+// File names and keys
+const (
+    ManifestFilename   = "manifest.json"
+    InstanceArchiveKey = "instance.tar.gz"
+    RemoteBinaryKey    = "ritual.exe"
+)
+
+// Backup configuration
+const (
+    R2MaxBackups    = 5
+    LocalMaxBackups = 10
+    MaxFiles        = 1000
+    TimestampFormat = "20060102150405"
+    BackupExtension = ".tar.gz"
+)
+
+// World directories (relative to instance)
+var WorldDirs = []string{
+    "world",
+    "world_nether",
+    "world_the_end",
+}
+
+// Update process flags and timing
+const (
+    ReplaceFlag          = "--replace-old"
+    CleanupFlag          = "--cleanup-update"
+    UpdateProcessDelayMs = 500
+    UpdateFilePattern    = "ritual_update_%d.exe"
+    UpdateFileGlob       = "ritual_update_*.exe"
+)
+
+// Lock ID format
+const (
+    LockIDSeparator = "__"  // Format: {hostname}__{timestamp}
+)
+
+// S3/R2 configuration
+const (
+    S3PartSize       = 5 * 1024 * 1024  // 5 MB parts
+    S3Concurrency    = 1                 // Sequential upload
+    R2EndpointFormat = "https://%s.r2.cloudflarestorage.com"
+)
+
+// File permissions
+const (
+    DirPermission  = 0755
+    FilePermission = 0644
+)
+
+// RootPath is computed at init from user home directory
+var RootPath string
+```
+
+#### Usage Pattern
+
+All services import from the config package instead of defining local constants:
+
+```go
+import "ritual/internal/config"
+
+// Use centralized constants
+timestamp := time.Now().Format(config.TimestampFormat)
+key := config.RemoteBackups + "/" + timestamp + config.BackupExtension
+
+// World directories
+for _, dir := range config.WorldDirs {
+    worldPath := filepath.Join(rootPath, config.InstanceDir, dir)
+}
+```
 
 ### Core Domain Layer (`internal/core/domain/`)
 
@@ -240,6 +336,8 @@ func NewMolfarService(librarian LibrarianService, validator ValidatorService, ar
 ...
 
 // internal/core/services/librarian.go
+import "ritual/internal/config"
+
 type LibrarianService struct {
     localStorage  StorageRepository
     remoteStorage StorageRepository
@@ -256,6 +354,12 @@ func NewLibrarianService(localStorage StorageRepository, remoteStorage StorageRe
         localStorage: localStorage,
         remoteStorage: remoteStorage,
     }, nil
+}
+
+func (l *LibrarianService) GetLocalManifest(ctx context.Context) (*domain.Manifest, error) {
+    // Uses config.ManifestFilename for consistent file naming
+    data, err := l.localStorage.Get(ctx, config.ManifestFilename)
+    // ...
 }
 
 // internal/core/services/validator.go
