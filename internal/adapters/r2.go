@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	"ritual/internal/core/ports"
 
@@ -63,6 +64,7 @@ func NewR2RepositoryWithClient(client S3Client, bucket string) *R2Repository {
 }
 
 func (r *R2Repository) Get(ctx context.Context, key string) ([]byte, error) {
+	key = filepath.ToSlash(key)
 	result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
@@ -76,6 +78,7 @@ func (r *R2Repository) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 func (r *R2Repository) Put(ctx context.Context, key string, data []byte) error {
+	key = filepath.ToSlash(key)
 	_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
@@ -89,6 +92,7 @@ func (r *R2Repository) Put(ctx context.Context, key string, data []byte) error {
 }
 
 func (r *R2Repository) Delete(ctx context.Context, key string) error {
+	key = filepath.ToSlash(key)
 	_, err := r.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
@@ -101,6 +105,7 @@ func (r *R2Repository) Delete(ctx context.Context, key string) error {
 }
 
 func (r *R2Repository) List(ctx context.Context, prefix string) ([]string, error) {
+	prefix = filepath.ToSlash(prefix)
 	result, err := r.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket: aws.String(r.bucket),
 		Prefix: aws.String(prefix),
@@ -139,6 +144,9 @@ func (r *R2Repository) Copy(ctx context.Context, sourceKey string, destKey strin
 	if r.bucket == "" {
 		return fmt.Errorf("bucket name cannot be empty")
 	}
+
+	sourceKey = filepath.ToSlash(sourceKey)
+	destKey = filepath.ToSlash(destKey)
 
 	// Create source URI for copy operation
 	sourceURI := fmt.Sprintf("%s/%s", r.bucket, sourceKey)

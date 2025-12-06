@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"path/filepath"
 	"time"
 )
 
@@ -18,7 +19,7 @@ func NewWorld(uri string) (*World, error) {
 	}
 
 	return &World{
-		URI:       uri,
+		URI:       filepath.ToSlash(uri),
 		CreatedAt: time.Now(),
 	}, nil
 }
