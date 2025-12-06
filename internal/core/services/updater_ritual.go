@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"ritual/internal/config"
 	"ritual/internal/core/ports"
 	"strconv"
 	"strings"
@@ -21,13 +22,6 @@ var (
 	ErrRitualUpdaterNil           = errors.New("ritual updater cannot be nil")
 	ErrRitualCtxNil               = errors.New("context cannot be nil")
 	ErrRitualRemoteManifestNil    = errors.New("remote manifest cannot be nil")
-)
-
-// RitualUpdater constants
-const (
-	replaceFlag     = "--replace-old"
-	cleanupFlag     = "--cleanup-update"
-	remoteBinaryKey = "ritual.exe"
 )
 
 // RitualUpdater implements UpdaterService for ritual self-updates
@@ -97,10 +91,10 @@ func (u *RitualUpdater) Run(ctx context.Context) error {
 	}
 	fmt.Printf("Current exe: %s\n", currentExe)
 
-	fmt.Printf("Downloading %s...\n", remoteBinaryKey)
-	data, err := u.storage.Get(ctx, remoteBinaryKey)
+	fmt.Printf("Downloading %s...\n", config.RemoteBinaryKey)
+	data, err := u.storage.Get(ctx, config.RemoteBinaryKey)
 	if err != nil {
-		return fmt.Errorf("failed to download %s: %w", remoteBinaryKey, err)
+		return fmt.Errorf("failed to download %s: %w", config.RemoteBinaryKey, err)
 	}
 	fmt.Printf("Downloaded %d bytes\n", len(data))
 
@@ -120,15 +114,15 @@ func (u *RitualUpdater) Run(ctx context.Context) error {
 
 	// Write new binary to temp dir (can't overwrite running exe on Windows)
 	// Use epoch nanoseconds to avoid collisions
-	updateExe := filepath.Join(os.TempDir(), fmt.Sprintf("ritual_update_%d.exe", time.Now().UnixNano()))
+	updateExe := filepath.Join(os.TempDir(), fmt.Sprintf(config.UpdateFilePattern, time.Now().UnixNano()))
 	fmt.Printf("Writing update to: %s\n", updateExe)
-	if err := os.WriteFile(updateExe, data, 0755); err != nil {
+	if err := os.WriteFile(updateExe, data, config.FilePermission); err != nil {
 		return fmt.Errorf("failed to write update file: %w", err)
 	}
 
 	// Launch new binary with replace flag - it will replace the old exe and restart
 	fmt.Println("Launching new version...")
-	cmd := exec.Command(updateExe, replaceFlag, currentExe)
+	cmd := exec.Command(updateExe, config.ReplaceFlag, currentExe)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -144,13 +138,13 @@ func (u *RitualUpdater) Run(ctx context.Context) error {
 // Returns true if this is an update process and main should exit
 func HandleUpdateProcess() bool {
 	// Handle --replace-old flag (called by old version to replace itself)
-	if len(os.Args) >= 3 && os.Args[1] == replaceFlag {
+	if len(os.Args) >= 3 && os.Args[1] == config.ReplaceFlag {
 		handleReplace(os.Args[2])
 		return true
 	}
 
 	// Handle --cleanup-update flag (called after replacement to clean temp file)
-	if len(os.Args) >= 3 && os.Args[1] == cleanupFlag {
+	if len(os.Args) >= 3 && os.Args[1] == config.CleanupFlag {
 		handleCleanup(os.Args[2])
 		// Continue running normally after cleanup
 		return false
@@ -171,7 +165,7 @@ func handleReplace(oldExe string) {
 	fmt.Printf("Replacing %s with %s\n", oldExe, currentExe)
 
 	// Wait for old process to exit
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(config.UpdateProcessDelayMs * time.Millisecond)
 
 	// Copy current exe over old exe
 	data, err := os.ReadFile(currentExe)
@@ -180,14 +174,14 @@ func handleReplace(oldExe string) {
 		os.Exit(1)
 	}
 
-	if err := os.WriteFile(oldExe, data, 0755); err != nil {
+	if err := os.WriteFile(oldExe, data, config.FilePermission); err != nil {
 		fmt.Printf("Failed to replace old exe: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Launch the replaced exe with cleanup flag
 	fmt.Println("Starting updated version...")
-	cmd := exec.Command(oldExe, cleanupFlag, currentExe)
+	cmd := exec.Command(oldExe, config.CleanupFlag, currentExe)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -201,7 +195,7 @@ func handleReplace(oldExe string) {
 
 func handleCleanup(updateFile string) {
 	// Wait for update process to exit
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(config.UpdateProcessDelayMs * time.Millisecond)
 	os.Remove(updateFile)
 	// Remove cleanup args so app runs normally
 	os.Args = append(os.Args[:1], os.Args[3:]...)
@@ -209,7 +203,7 @@ func handleCleanup(updateFile string) {
 
 func cleanupLeftoverUpdateFile() {
 	// Clean any leftover ritual_update_*.exe files from temp dir
-	pattern := filepath.Join(os.TempDir(), "ritual_update_*.exe")
+	pattern := filepath.Join(os.TempDir(), config.UpdateFileGlob)
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return

@@ -170,7 +170,7 @@ func (u *WorldsUpdater) downloadAndExtractWorld(ctx context.Context, key string)
 	}
 
 	// Destination is the instance directory
-	destPath := filepath.Join(u.workRoot.Name(), instanceDir)
+	destPath := filepath.Join(u.workRoot.Name(), config.InstanceDir)
 
 	// Use streamer.Pull to download and extract
 	err := streamer.Pull(ctx, streamer.PullConfig{

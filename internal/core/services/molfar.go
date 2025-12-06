@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"time"
@@ -208,7 +209,7 @@ func (m *MolfarService) acquireManifestLocks(ctx context.Context, localManifest,
 	}
 	m.logger.Info("Retrieved hostname", "hostname", hostname)
 
-	lockID := fmt.Sprintf("%s__%d", hostname, time.Now().Unix())
+	lockID := fmt.Sprintf("%s"+config.LockIDSeparator+"%d", hostname, time.Now().Unix())
 	m.logger.Info("Generated lock ID", "lock_id", lockID)
 	localManifest.LockedBy = lockID
 	remoteManifest.LockedBy = lockID

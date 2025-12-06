@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"ritual/internal/adapters/streamer"
+	appconfig "ritual/internal/config"
 	"ritual/internal/core/ports"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -41,7 +42,7 @@ func setupS3Client(accountID string, accessKeyID string, secretAccessKey string)
 	}
 
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountID))
+		o.BaseEndpoint = aws.String(fmt.Sprintf(appconfig.R2EndpointFormat, accountID))
 	})
 
 	return client, nil
@@ -230,8 +231,8 @@ func NewS3Uploader(client S3Client, bucket string) (*S3Uploader, error) {
 	}
 
 	uploader := manager.NewUploader(s3Client, func(u *manager.Uploader) {
-		u.PartSize = 5 * 1024 * 1024 // 5 MB parts for multipart upload
-		u.Concurrency = 1            // Sequential upload to minimize memory
+		u.PartSize = appconfig.S3PartSize
+		u.Concurrency = appconfig.S3Concurrency
 	})
 
 	return &S3Uploader{

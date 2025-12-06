@@ -13,12 +13,6 @@ import (
 	"strings"
 )
 
-// InstanceUpdater constants
-const (
-	instanceArchiveKey = "instance.tar.gz"
-	instanceDir        = config.InstanceDir
-)
-
 // InstanceUpdater error constants
 var (
 	ErrInstanceUpdaterLibrarianNil     = errors.New("librarian service cannot be nil")
@@ -212,12 +206,12 @@ func (u *InstanceUpdater) downloadAndExtractInstance(ctx context.Context) error 
 	}
 
 	// Destination directory
-	destPath := filepath.Join(u.workRoot.Name(), instanceDir)
+	destPath := filepath.Join(u.workRoot.Name(), config.InstanceDir)
 
 	// Use streamer.Pull to download and extract
 	err := streamer.Pull(ctx, streamer.PullConfig{
 		Bucket:   u.bucket,
-		Key:      instanceArchiveKey,
+		Key:      config.InstanceArchiveKey,
 		Dest:     destPath,
 		Conflict: streamer.Replace,
 	}, u.downloader)

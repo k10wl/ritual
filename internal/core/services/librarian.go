@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )
-
-const ManifestFilename = "manifest.json"
 
 var (
 	ErrEmptyData   = errors.New("empty data")
@@ -44,7 +43,7 @@ func (l *LibrarianService) GetLocalManifest(ctx context.Context) (*domain.Manife
 	if l.localStorage == nil {
 		return nil, fmt.Errorf("localStorage repository is nil")
 	}
-	data, err := l.localStorage.Get(ctx, ManifestFilename)
+	data, err := l.localStorage.Get(ctx, config.ManifestFilename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get local manifest: %w", err)
 	}
@@ -69,7 +68,7 @@ func (l *LibrarianService) GetRemoteManifest(ctx context.Context) (*domain.Manif
 	if l.remoteStorage == nil {
 		return nil, fmt.Errorf("remoteStorage repository is nil")
 	}
-	data, err := l.remoteStorage.Get(ctx, ManifestFilename)
+	data, err := l.remoteStorage.Get(ctx, config.ManifestFilename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get remote manifest: %w", err)
 	}
@@ -103,7 +102,7 @@ func (l *LibrarianService) SaveLocalManifest(ctx context.Context, manifest *doma
 		return fmt.Errorf("failed to marshal manifest: %w", err)
 	}
 
-	if err := l.localStorage.Put(ctx, ManifestFilename, data); err != nil {
+	if err := l.localStorage.Put(ctx, config.ManifestFilename, data); err != nil {
 		return fmt.Errorf("failed to save local manifest: %w", err)
 	}
 
@@ -127,7 +126,7 @@ func (l *LibrarianService) SaveRemoteManifest(ctx context.Context, manifest *dom
 		return fmt.Errorf("failed to marshal manifest: %w", err)
 	}
 
-	if err := l.remoteStorage.Put(ctx, ManifestFilename, data); err != nil {
+	if err := l.remoteStorage.Put(ctx, config.ManifestFilename, data); err != nil {
 		return fmt.Errorf("failed to save remote manifest: %w", err)
 	}
 

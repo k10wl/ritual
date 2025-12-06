@@ -15,14 +15,6 @@ import (
 	"ritual/internal/core/ports"
 )
 
-// R2Backupper constants
-const (
-	r2MaxBackups        = 5
-	r2MaxFiles          = 1000
-	r2TimestampFormat   = "20060102150405"
-	r2BackupExtension   = ".tar.gz"
-)
-
 // R2Backupper error constants
 var (
 	ErrR2BackupperUploaderNil      = errors.New("uploader cannot be nil")
@@ -92,15 +84,14 @@ func (b *R2Backupper) Run(ctx context.Context) (string, error) {
 	}
 
 	// Generate backup key based on timestamp
-	timestamp := time.Now().Format(r2TimestampFormat)
-	key := config.RemoteBackups + "/" + timestamp + r2BackupExtension
+	timestamp := time.Now().Format(config.TimestampFormat)
+	key := config.RemoteBackups + "/" + timestamp + config.BackupExtension
 
 	// World directories to backup (relative to workRoot)
 	rootPath := b.workRoot.Name()
-	worldDirs := []string{
-		filepath.Join(rootPath, config.InstanceDir, "world"),
-		filepath.Join(rootPath, config.InstanceDir, "world_nether"),
-		filepath.Join(rootPath, config.InstanceDir, "world_the_end"),
+	worldDirs := make([]string, len(config.WorldDirs))
+	for i, dir := range config.WorldDirs {
+		worldDirs[i] = filepath.Join(rootPath, config.InstanceDir, dir)
 	}
 
 	// Filter to only existing directories
@@ -118,7 +109,7 @@ func (b *R2Backupper) Run(ctx context.Context) (string, error) {
 	// Prepare local path if configured
 	var localBackupPath string
 	if b.localPath != "" {
-		localBackupPath = filepath.Join(b.localPath, timestamp+r2BackupExtension)
+		localBackupPath = filepath.Join(b.localPath, timestamp+config.BackupExtension)
 	}
 
 	// Execute streaming push
@@ -156,14 +147,14 @@ func (b *R2Backupper) applyRetention(ctx context.Context) error {
 	}
 
 	// Static bounds check
-	if len(keys) > r2MaxFiles {
-		return fmt.Errorf("too many backup files: %d exceeds limit %d", len(keys), r2MaxFiles)
+	if len(keys) > config.MaxFiles {
+		return fmt.Errorf("too many backup files: %d exceeds limit %d", len(keys), config.MaxFiles)
 	}
 
 	// Filter valid backup files
 	var backups []string
 	for _, key := range keys {
-		if strings.HasSuffix(key, r2BackupExtension) {
+		if strings.HasSuffix(key, config.BackupExtension) {
 			backups = append(backups, key)
 		}
 	}
@@ -174,8 +165,8 @@ func (b *R2Backupper) applyRetention(ctx context.Context) error {
 	})
 
 	// Delete excess backups
-	if len(backups) > r2MaxBackups {
-		for _, key := range backups[r2MaxBackups:] {
+	if len(backups) > config.R2MaxBackups {
+		for _, key := range backups[config.R2MaxBackups:] {
 			if err := b.remoteStorage.Delete(ctx, key); err != nil {
 				return fmt.Errorf("failed to delete old backup %s: %w", key, err)
 			}

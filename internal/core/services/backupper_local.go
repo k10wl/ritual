@@ -15,14 +15,6 @@ import (
 	"ritual/internal/core/ports"
 )
 
-// LocalBackupper constants
-const (
-	localMaxBackups        = 10
-	localMaxFiles          = 1000
-	localTimestampFormat   = "20060102150405"
-	localBackupExtension   = ".tar.gz"
-)
-
 // LocalBackupper error constants
 var (
 	ErrLocalBackupperStorageNil  = errors.New("local storage repository cannot be nil")
@@ -76,15 +68,14 @@ func (b *LocalBackupper) Run(ctx context.Context) (string, error) {
 	}
 
 	// Generate backup name based on timestamp
-	timestamp := time.Now().Format(localTimestampFormat)
-	backupName := timestamp + localBackupExtension
+	timestamp := time.Now().Format(config.TimestampFormat)
+	backupName := timestamp + config.BackupExtension
 
 	// World directories to backup (relative to workRoot)
 	rootPath := b.workRoot.Name()
-	worldDirs := []string{
-		filepath.Join(rootPath, config.InstanceDir, "world"),
-		filepath.Join(rootPath, config.InstanceDir, "world_nether"),
-		filepath.Join(rootPath, config.InstanceDir, "world_the_end"),
+	worldDirs := make([]string, len(config.WorldDirs))
+	for i, dir := range config.WorldDirs {
+		worldDirs[i] = filepath.Join(rootPath, config.InstanceDir, dir)
 	}
 
 	// Filter to only existing directories
@@ -139,14 +130,14 @@ func (b *LocalBackupper) applyRetention(ctx context.Context) error {
 	}
 
 	// Static bounds check
-	if len(keys) > localMaxFiles {
-		return fmt.Errorf("too many backup files: %d exceeds limit %d", len(keys), localMaxFiles)
+	if len(keys) > config.MaxFiles {
+		return fmt.Errorf("too many backup files: %d exceeds limit %d", len(keys), config.MaxFiles)
 	}
 
 	// Filter valid backup files
 	var backups []string
 	for _, key := range keys {
-		if strings.HasSuffix(key, localBackupExtension) {
+		if strings.HasSuffix(key, config.BackupExtension) {
 			// Skip temp files
 			if strings.Contains(key, "temp_") {
 				continue
@@ -161,8 +152,8 @@ func (b *LocalBackupper) applyRetention(ctx context.Context) error {
 	})
 
 	// Delete excess backups
-	if len(backups) > localMaxBackups {
-		for _, key := range backups[localMaxBackups:] {
+	if len(backups) > config.LocalMaxBackups {
+		for _, key := range backups[config.LocalMaxBackups:] {
 			if err := b.localStorage.Delete(ctx, key); err != nil {
 				return fmt.Errorf("failed to delete old backup %s: %w", key, err)
 			}
