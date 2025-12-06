@@ -90,20 +90,18 @@ type ServerRunner interface {
 	Run(server *domain.Server) error
 }
 
-// BackupTarget defines the interface for backup destinations
-// BackupTarget abstracts backup storage implementations for testability
-type BackupTarget interface {
-	// Backup stores the provided data to the backup destination with the given name
-	Backup(data []byte, name string) error
-
-	// DataRetention applies retention policies to manage stored backups
-	DataRetention() error
-}
-
 // BackupperService defines the backup orchestration interface
-// BackupperService handles backup creation and restoration using template method pattern
+// BackupperService handles backup creation and storage
 type BackupperService interface {
 	// Run executes the backup orchestration process
-	// Returns the archive name that was created for manifest updates
-	Run() (string, error)
+	// Returns the archive name/URI that was created for manifest updates
+	Run(ctx context.Context) (string, error)
+}
+
+// UpdaterService defines the interface for update operations
+// Updaters handle downloading and extracting content from remote storage
+type UpdaterService interface {
+	// Run executes the update process
+	// Returns nil if no update needed or update succeeded, error if update failed
+	Run(ctx context.Context) error
 }

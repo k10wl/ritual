@@ -6,27 +6,15 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
-	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
-	"strings"
 	"time"
-)
-
-// Molfar constants
-const (
-	InstanceZipKey = "instance.zip"
-	TempPrefix     = config.TmpDir
-	InstanceDir    = config.InstanceDir
 )
 
 // Molfar error constants
 var (
 	ErrLibrarianNil               = errors.New("librarian service cannot be nil")
 	ErrValidatorNil               = errors.New("validator service cannot be nil")
-	ErrArchiveNil                 = errors.New("archive service cannot be nil")
-	ErrStorageNil                 = errors.New("storage repository cannot be nil")
 	ErrServerRunnerNil            = errors.New("server runner cannot be nil")
 	ErrMolfarInitializationFailed = errors.New("molfar initialization failed")
 	ErrMolfarNil                  = errors.New("molfar service cannot be nil")
@@ -35,13 +23,10 @@ var (
 // MolfarService implements the main orchestration interface as a state machine
 // Molfar coordinates the complete server lifecycle and manages all operations
 type MolfarService struct {
-	librarian     ports.LibrarianService
-	validator     ports.ValidatorService
-	archive       ports.ArchiveService
-	localStorage  ports.StorageRepository
-	remoteStorage ports.StorageRepository
+	updaters      []ports.UpdaterService
+	backuppers    []ports.BackupperService
 	serverRunner  ports.ServerRunner
-	backupper     ports.BackupperService
+	librarian     ports.LibrarianService
 	logger        *slog.Logger
 	workRoot      *os.Root
 	currentLockID string // Tracks the current lock ID for ownership validation (internal use only)
@@ -50,36 +35,34 @@ type MolfarService struct {
 // NewMolfarService creates a new Molfar orchestration service
 // Validates all dependencies are non-nil per NASA JPL defensive programming standards
 func NewMolfarService(
-	librarian ports.LibrarianService,
-	validator ports.ValidatorService,
-	archive ports.ArchiveService,
-	localStorage ports.StorageRepository,
-	remoteStorage ports.StorageRepository,
+	updaters []ports.UpdaterService,
+	backuppers []ports.BackupperService,
 	serverRunner ports.ServerRunner,
-	backupper ports.BackupperService,
+	librarian ports.LibrarianService,
 	logger *slog.Logger,
 	workRoot *os.Root,
 ) (*MolfarService, error) {
-	if librarian == nil {
-		return nil, ErrLibrarianNil
+	if updaters == nil {
+		return nil, errors.New("updaters slice cannot be nil")
 	}
-	if validator == nil {
-		return nil, ErrValidatorNil
+	for i, u := range updaters {
+		if u == nil {
+			return nil, fmt.Errorf("updater at index %d cannot be nil", i)
+		}
 	}
-	if archive == nil {
-		return nil, ErrArchiveNil
+	if backuppers == nil {
+		return nil, errors.New("backuppers slice cannot be nil")
 	}
-	if localStorage == nil {
-		return nil, ErrStorageNil
-	}
-	if remoteStorage == nil {
-		return nil, ErrStorageNil
+	for i, b := range backuppers {
+		if b == nil {
+			return nil, fmt.Errorf("backupper at index %d cannot be nil", i)
+		}
 	}
 	if serverRunner == nil {
 		return nil, ErrServerRunnerNil
 	}
-	if backupper == nil {
-		return nil, errors.New("backupper service cannot be nil")
+	if librarian == nil {
+		return nil, ErrLibrarianNil
 	}
 	if logger == nil {
 		return nil, errors.New("logger cannot be nil")
@@ -89,209 +72,38 @@ func NewMolfarService(
 	}
 
 	molfar := &MolfarService{
-		librarian:     librarian,
-		validator:     validator,
-		archive:       archive,
-		localStorage:  localStorage,
-		remoteStorage: remoteStorage,
-		serverRunner:  serverRunner,
-		backupper:     backupper,
-		logger:        logger,
-		workRoot:      workRoot,
+		updaters:     updaters,
+		backuppers:   backuppers,
+		serverRunner: serverRunner,
+		librarian:    librarian,
+		logger:       logger,
+		workRoot:     workRoot,
 	}
 
 	return molfar, nil
 }
 
 // Prepare initializes the environment and validates prerequisites
-// Transitions to Running state
+// Runs all updaters in sequence
 func (m *MolfarService) Prepare() error {
 	if m == nil {
 		return ErrMolfarNil
-	}
-	if m.librarian == nil {
-		return ErrLibrarianNil
-	}
-	if m.validator == nil {
-		return ErrValidatorNil
 	}
 
 	m.logger.Info("Starting preparation phase", "workRoot", m.workRoot.Name())
 	ctx := context.Background()
 
-	remoteManifest, err := m.getRemoteManifest(ctx)
-	if err != nil {
-		return err
-	}
-
-	localManifest, err := m.getOrInitializeLocalManifest(ctx, remoteManifest)
-	if err != nil {
-		return err
-	}
-
-	if err := m.validateManifests(localManifest, remoteManifest); err != nil {
-		return err
+	// Run all updaters
+	for i, updater := range m.updaters {
+		m.logger.Info("Running updater", "index", i)
+		if err := updater.Run(ctx); err != nil {
+			m.logger.Error("Updater failed", "index", i, "error", err)
+			return fmt.Errorf("updater %d failed: %w", i, err)
+		}
+		m.logger.Info("Updater completed", "index", i)
 	}
 
 	m.logger.Info("Preparation phase completed successfully")
-	return nil
-}
-
-// initializeLocalInstance sets up a new local instance when none exists
-func (m *MolfarService) initializeLocalInstance(ctx context.Context, remoteManifest *domain.Manifest) error {
-	if ctx == nil {
-		return errors.New("context cannot be nil")
-	}
-	if m.librarian == nil {
-		return ErrLibrarianNil
-	}
-	if m.archive == nil {
-		return ErrArchiveNil
-	}
-	if m.localStorage == nil {
-		return ErrStorageNil
-	}
-	if m.remoteStorage == nil {
-		return ErrStorageNil
-	}
-	if remoteManifest == nil {
-		return errors.New("remote manifest cannot be nil")
-	}
-
-	m.logger.Info("Initializing new local instance", "instance_version", remoteManifest.InstanceVersion)
-
-	if err := m.downloadAndExtractInstance(ctx, InstanceDir); err != nil {
-		return err
-	}
-
-	if err := m.downloadAndExtractWorlds(ctx, remoteManifest, InstanceDir); err != nil {
-		return err
-	}
-
-	if err := m.librarian.SaveLocalManifest(ctx, remoteManifest); err != nil {
-		m.logger.Error("Failed to save local manifest", "error", err)
-		return err
-	}
-
-	m.logger.Info("Local instance initialization completed successfully")
-	return nil
-}
-
-// updateLocalInstance replaces existing instance with updated version
-func (m *MolfarService) updateLocalInstance(ctx context.Context, remoteManifest *domain.Manifest) error {
-	if ctx == nil {
-		return errors.New("context cannot be nil")
-	}
-	if remoteManifest == nil {
-		return errors.New("remote manifest cannot be nil")
-	}
-	if m.librarian == nil {
-		return ErrLibrarianNil
-	}
-	if m.archive == nil {
-		return ErrArchiveNil
-	}
-	if m.localStorage == nil {
-		return ErrStorageNil
-	}
-	if m.remoteStorage == nil {
-		return ErrStorageNil
-	}
-
-	m.logger.Info("Updating local instance", "instance_version", remoteManifest.InstanceVersion)
-
-	if err := m.downloadAndExtractInstance(ctx, InstanceDir); err != nil {
-		return err
-	}
-
-	if err := m.librarian.SaveLocalManifest(ctx, remoteManifest); err != nil {
-		m.logger.Error("Failed to save updated local manifest", "error", err)
-		return err
-	}
-
-	m.logger.Info("Local instance update completed successfully")
-	return nil
-}
-
-// updateLocalWorlds replaces existing worlds with updated versions
-func (m *MolfarService) updateLocalWorlds(ctx context.Context, remoteManifest *domain.Manifest) error {
-	if ctx == nil {
-		return errors.New("context cannot be nil")
-	}
-	if remoteManifest == nil {
-		return errors.New("remote manifest cannot be nil")
-	}
-	if m.localStorage == nil {
-		return ErrStorageNil
-	}
-	if m.archive == nil {
-		return ErrArchiveNil
-	}
-	if m.remoteStorage == nil {
-		return ErrStorageNil
-	}
-
-	m.logger.Info("Updating local worlds", "instance_version", remoteManifest.InstanceVersion)
-
-	// Download and extract new worlds
-	m.logger.Info("Downloading and extracting new worlds")
-	if err := m.downloadAndExtractWorlds(ctx, remoteManifest, InstanceDir); err != nil {
-		m.logger.Error("Failed to download and extract new worlds", "error", err)
-		return fmt.Errorf("failed to download and extract new worlds: %w", err)
-	}
-
-	// Update local manifest with new world information
-	m.logger.Info("Updating local manifest with new world information")
-	if err := m.librarian.SaveLocalManifest(ctx, remoteManifest); err != nil {
-		m.logger.Error("Failed to save updated local manifest", "error", err)
-		return fmt.Errorf("failed to save updated local manifest: %w", err)
-	}
-
-	m.logger.Info("Local worlds update completed successfully")
-	return nil
-}
-
-// downloadAndExtractWorlds downloads worlds from remote storage and extracts them
-func (m *MolfarService) downloadAndExtractWorlds(ctx context.Context, remoteManifest *domain.Manifest, relInstanceDir string) error {
-	if ctx == nil {
-		return errors.New("context cannot be nil")
-	}
-	if remoteManifest == nil {
-		return errors.New("remote manifest cannot be nil")
-	}
-	if relInstanceDir == "" {
-		return errors.New("instance directory cannot be empty")
-	}
-	if m.localStorage == nil {
-		return ErrStorageNil
-	}
-	if m.archive == nil {
-		return ErrArchiveNil
-	}
-	if m.remoteStorage == nil {
-		return ErrStorageNil
-	}
-
-	latestWorld := remoteManifest.GetLatestWorld()
-	if latestWorld == nil {
-		m.logger.Info("No worlds available in remote manifest, skipping world download/extraction")
-		return nil
-	}
-
-	sanitizedURI, err := m.sanitizeWorldURI(latestWorld.URI)
-	if err != nil {
-		return err
-	}
-
-	if err := m.downloadWorldArchive(ctx, sanitizedURI, latestWorld.CreatedAt); err != nil {
-		return err
-	}
-
-	if err := m.extractWorldArchive(ctx, sanitizedURI, relInstanceDir); err != nil {
-		return err
-	}
-
-	m.logger.Info("World download and extraction completed successfully")
 	return nil
 }
 
@@ -314,7 +126,7 @@ func (m *MolfarService) Run(server *domain.Server) error {
 	m.logger.Info("Starting execution phase", "server_address", server.Address, "server_memory", server.Memory, "server_ip", server.IP, "server_port", server.Port)
 	ctx := context.Background()
 
-	// Fetch remote manifest again before run
+	// Fetch remote manifest before run
 	remoteManifest, err := m.getRemoteManifest(ctx)
 	if err != nil {
 		return err
@@ -462,13 +274,10 @@ func (m *MolfarService) executeServer(ctx context.Context, server *domain.Server
 }
 
 // Exit gracefully shuts down the server and cleans up resources
-// Transitions to Exiting state
+// Runs all backuppers in sequence
 func (m *MolfarService) Exit() error {
 	if m == nil {
 		return ErrMolfarNil
-	}
-	if m.backupper == nil {
-		return errors.New("backupper service cannot be nil")
 	}
 	if m.librarian == nil {
 		return ErrLibrarianNil
@@ -477,18 +286,25 @@ func (m *MolfarService) Exit() error {
 	m.logger.Info("Starting exit phase")
 	ctx := context.Background()
 
-	// Run backup process
-	archiveName, err := m.backupper.Run()
-	if err != nil {
-		m.logger.Error("Backup execution failed", "error", err)
-		return err
+	// Run all backuppers and collect archive names
+	var lastArchiveName string
+	for i, backupper := range m.backuppers {
+		m.logger.Info("Running backupper", "index", i)
+		archiveName, err := backupper.Run(ctx)
+		if err != nil {
+			m.logger.Error("Backupper failed", "index", i, "error", err)
+			return fmt.Errorf("backupper %d failed: %w", i, err)
+		}
+		m.logger.Info("Backupper completed", "index", i, "archive_name", archiveName)
+		lastArchiveName = archiveName
 	}
-	m.logger.Info("Backup completed successfully", "archive_name", archiveName)
 
-	// Update manifests with new archive name
-	if err := m.updateManifestsWithArchive(ctx, archiveName); err != nil {
-		m.logger.Error("Failed to update manifests with archive", "error", err)
-		return err
+	// Update manifests with last archive name (from any backupper)
+	if lastArchiveName != "" {
+		if err := m.updateManifestsWithArchive(ctx, lastArchiveName); err != nil {
+			m.logger.Error("Failed to update manifests with archive", "error", err)
+			return err
+		}
 	}
 
 	// Unlock manifests after successful backup
@@ -626,7 +442,7 @@ func (m *MolfarService) unlockManifests(ctx context.Context) error {
 	return nil
 }
 
-// Helper functions for Prepare method
+// Helper function for Run method
 func (m *MolfarService) getRemoteManifest(ctx context.Context) (*domain.Manifest, error) {
 	remoteManifest, err := m.librarian.GetRemoteManifest(ctx)
 	if err != nil {
@@ -638,155 +454,4 @@ func (m *MolfarService) getRemoteManifest(ctx context.Context) (*domain.Manifest
 	}
 	m.logger.Info("Retrieved remote manifest", "ritual_version", remoteManifest.RitualVersion, "instance_version", remoteManifest.InstanceVersion)
 	return remoteManifest, nil
-}
-
-func (m *MolfarService) getOrInitializeLocalManifest(ctx context.Context, remoteManifest *domain.Manifest) (*domain.Manifest, error) {
-	localManifest, err := m.librarian.GetLocalManifest(ctx)
-	if err != nil {
-		if strings.Contains(err.Error(), "key not found") {
-			m.logger.Info("Local manifest not found, initializing new instance")
-			if initErr := m.initializeLocalInstance(ctx, remoteManifest); initErr != nil {
-				m.logger.Error("Failed to initialize local instance", "error", initErr)
-				return nil, initErr
-			}
-			localManifest, err = m.librarian.GetLocalManifest(ctx)
-			if err != nil {
-				m.logger.Error("Failed to get local manifest after initialization", "error", err)
-				return nil, err
-			}
-			m.logger.Info("Successfully initialized local instance")
-		} else {
-			m.logger.Error("Failed to get local manifest", "error", err)
-			return nil, err
-		}
-	} else {
-		m.logger.Info("Retrieved local manifest", "ritual_version", localManifest.RitualVersion, "instance_version", localManifest.InstanceVersion)
-	}
-	if localManifest == nil {
-		return nil, errors.New("local manifest cannot be nil")
-	}
-	return localManifest, nil
-}
-
-func (m *MolfarService) validateManifests(localManifest, remoteManifest *domain.Manifest) error {
-	if err := m.validator.CheckLock(localManifest, remoteManifest); err != nil {
-		m.logger.Error("Lock validation failed", "error", err)
-		return err
-	}
-	m.logger.Info("Lock validation passed")
-
-	if err := m.validator.CheckInstance(localManifest, remoteManifest); err != nil {
-		if err.Error() == "outdated instance" {
-			m.logger.Info("Instance is outdated, updating local instance")
-			if updateErr := m.updateLocalInstance(context.Background(), remoteManifest); updateErr != nil {
-				m.logger.Error("Failed to update local instance", "error", updateErr)
-				return updateErr
-			}
-			m.logger.Info("Successfully updated local instance")
-		} else {
-			m.logger.Error("Instance validation failed", "error", err)
-			return err
-		}
-	} else {
-		m.logger.Info("Instance validation passed")
-	}
-
-	if err := m.validator.CheckWorld(localManifest, remoteManifest); err != nil {
-		if err.Error() == "outdated world" {
-			m.logger.Info("World is outdated, updating local worlds")
-			if updateErr := m.updateLocalWorlds(context.Background(), remoteManifest); updateErr != nil {
-				m.logger.Error("Failed to update local worlds", "error", updateErr)
-				return updateErr
-			}
-			m.logger.Info("Successfully updated local worlds")
-		} else {
-			m.logger.Error("World validation failed", "error", err)
-			return err
-		}
-	} else {
-		m.logger.Info("World validation passed")
-	}
-
-	return nil
-}
-
-// Helper functions for instance operations
-func (m *MolfarService) downloadAndExtractInstance(ctx context.Context, relInstanceDir string) error {
-	m.logger.Info("Downloading instance from remote storage", "key", InstanceZipKey)
-	instanceZipData, err := m.remoteStorage.Get(ctx, InstanceZipKey)
-	if err != nil {
-		m.logger.Error("Failed to get instance from remote storage", "key", InstanceZipKey, "error", err)
-		return fmt.Errorf("failed to get %s from remote storage: %w", InstanceZipKey, err)
-	}
-
-	tempKey := filepath.Join(TempPrefix, InstanceZipKey)
-	m.logger.Info("Storing instance in temporary storage", "temp_key", tempKey)
-	err = m.localStorage.Put(ctx, tempKey, instanceZipData)
-	if err != nil {
-		m.logger.Error("Failed to store instance in temp storage", "temp_key", tempKey, "error", err)
-		return fmt.Errorf("failed to store %s in temp storage: %w", InstanceZipKey, err)
-	}
-
-	m.logger.Info("Extracting instance archive", "source", tempKey, "destination", relInstanceDir)
-	err = m.archive.Unarchive(ctx, tempKey, relInstanceDir)
-	if err != nil {
-		m.logger.Error("Failed to extract instance archive", "source", tempKey, "destination", relInstanceDir, "error", err)
-		return err
-	}
-
-	m.logger.Info("Cleaning up temporary files", "temp_key", tempKey)
-	err = m.localStorage.Delete(ctx, tempKey)
-	if err != nil {
-		m.logger.Error("Failed to cleanup temp files", "temp_key", tempKey, "error", err)
-		return fmt.Errorf("failed to cleanup temp %s: %w", InstanceZipKey, err)
-	}
-
-	return nil
-}
-
-// Helper functions for world operations
-func (m *MolfarService) sanitizeWorldURI(uri string) (string, error) {
-	sanitizedURI := filepath.ToSlash(filepath.Clean(uri))
-	if !strings.HasPrefix(sanitizedURI, config.RemoteBackups+"/") {
-		return "", fmt.Errorf("invalid world URI: %s", sanitizedURI)
-	}
-	return sanitizedURI, nil
-}
-
-func (m *MolfarService) downloadWorldArchive(ctx context.Context, sanitizedURI string, createdAt time.Time) error {
-	m.logger.Info("Downloading worlds from remote storage", "world_uri", sanitizedURI, "created_at", createdAt)
-	worldZipData, err := m.remoteStorage.Get(ctx, sanitizedURI)
-	if err != nil {
-		m.logger.Error("Failed to get worlds from remote storage", "world_uri", sanitizedURI, "error", err)
-		return fmt.Errorf("failed to get %s from remote storage: %w", sanitizedURI, err)
-	}
-
-	tempKey := filepath.Join(TempPrefix, sanitizedURI)
-	m.logger.Info("Storing worlds in temporary storage", "temp_key", tempKey)
-	err = m.localStorage.Put(ctx, tempKey, worldZipData)
-	if err != nil {
-		m.logger.Error("Failed to store worlds in temp storage", "temp_key", tempKey, "error", err)
-		return fmt.Errorf("failed to store %s in temp storage: %w", sanitizedURI, err)
-	}
-
-	return nil
-}
-
-func (m *MolfarService) extractWorldArchive(ctx context.Context, sanitizedURI, relInstanceDir string) error {
-	tempKey := filepath.Join(TempPrefix, sanitizedURI)
-	m.logger.Info("Extracting worlds archive", "source", tempKey, "destination", relInstanceDir)
-	err := m.archive.Unarchive(ctx, tempKey, relInstanceDir)
-	if err != nil {
-		m.logger.Error("Failed to extract worlds archive", "source", tempKey, "destination", relInstanceDir, "error", err)
-		return fmt.Errorf("failed to extract worlds: %w", err)
-	}
-
-	m.logger.Info("Cleaning up temporary world files", "temp_key", tempKey)
-	err = m.localStorage.Delete(ctx, tempKey)
-	if err != nil {
-		m.logger.Error("Failed to cleanup temp world files", "temp_key", tempKey, "error", err)
-		return fmt.Errorf("failed to cleanup %s: %w", sanitizedURI, err)
-	}
-
-	return nil
 }

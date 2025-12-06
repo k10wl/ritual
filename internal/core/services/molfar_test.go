@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/ports/mocks"
 	"ritual/internal/core/services"
 	"ritual/internal/testhelpers"
 	"strings"
@@ -90,44 +90,45 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 	// Create mock server runner
 	mockServerRunner := &MockServerRunner{}
 
-	// Create real local backup target using FS storage
-	localBackupTarget, err := adapters.NewLocalBackupTarget(localStorage, context.Background())
-	assert.NoError(t, err)
-
-	// Create real backupper service using ArchivePaperWorld
-	backupperService, err := services.NewBackupperService(
-		func() (string, string, func() error, error) {
-			ctx := context.Background()
-			instanceRoot, err := os.OpenRoot(filepath.Join(tempDir, config.InstanceDir))
-			if err != nil {
-				return "", "", func() error { return nil }, fmt.Errorf("failed to access instance directory: %w", err)
-			}
-			archivePath, backupName, cleanup, err := services.ArchivePaperWorld(
-				ctx,
-				localStorage,
-				archiveService,
-				instanceRoot,
-				config.LocalBackups,
-				fmt.Sprintf("%d", time.Now().Unix()),
-			)
-			// Close instance root after archiving
-			instanceRoot.Close()
-			return archivePath, backupName, cleanup, err
-		},
-		[]ports.BackupTarget{localBackupTarget},
+	// Create real updaters
+	instanceUpdater, err := services.NewInstanceUpdater(
+		librarianService,
+		validatorService,
+		localStorage,
+		remoteStorage,
+		archiveService,
 		tempRoot,
 	)
 	assert.NoError(t, err)
 
-	// Create molfar service
-	molfarService, err := services.NewMolfarService(
+	worldsUpdater, err := services.NewWorldsUpdater(
 		librarianService,
 		validatorService,
-		archiveService,
 		localStorage,
 		remoteStorage,
+		archiveService,
+		tempRoot,
+	)
+	assert.NoError(t, err)
+
+	updaters := []ports.UpdaterService{instanceUpdater, worldsUpdater}
+
+	// Create real local backupper
+	localBackupper, err := services.NewLocalBackupper(
+		localStorage,
+		archiveService,
+		tempRoot,
+	)
+	assert.NoError(t, err)
+
+	backuppers := []ports.BackupperService{localBackupper}
+
+	// Create molfar service with new constructor
+	molfarService, err := services.NewMolfarService(
+		updaters,
+		backuppers,
 		mockServerRunner,
-		backupperService,
+		librarianService,
 		slog.Default(),
 		tempRoot,
 	)
@@ -560,35 +561,6 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		assert.True(t, match, "Updated world directories should match remote checksums")
 	})
 
-	globT.Run("lock conflict scenario", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, _, remoteTempDir, cleanup := setupMolfarServices(t)
-		defer cleanup()
-
-		// Setup remote data
-		setupRemoteManifest(t, remoteStorage, "1.0.0", "1.0.0", config.RemoteBackups+"/1234567890.zip")
-		setupInstanceZip(t, remoteStorage, remoteTempDir)
-		setupWorldZip(t, remoteStorage, remoteTempDir, config.RemoteBackups+"/1234567890.zip")
-
-		// Create local manifest with lock
-		ctx := context.Background()
-		world := createTestWorld(config.RemoteBackups + "/1234567890.zip")
-		lockedManifest := createTestManifest("1.0.0", "1.0.0", []domain.World{world})
-		lockedManifest.LockedBy = "other-host__1234567890"
-		manifestData, err := json.Marshal(lockedManifest)
-		assert.NoError(t, err)
-		err = localStorage.Put(ctx, "manifest.json", manifestData)
-		assert.NoError(t, err)
-
-		// Execute Prepare - should fail due to lock conflict
-		err = molfar.Prepare()
-		if err == nil {
-			t.Fatal("Expected Prepare to fail due to lock conflict, but it succeeded")
-		}
-		if !assert.Contains(t, err.Error(), "lock conflict") {
-			t.Fatalf("Expected error to contain 'lock conflict', got: %v", err)
-		}
-	})
-
 	globT.Run("no remote worlds - should launch successfully", func(t *testing.T) {
 		molfar, localStorage, remoteStorage, tempDir, remoteTempDir, cleanup := setupMolfarServices(t)
 		defer cleanup()
@@ -625,6 +597,43 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		instancePath := filepath.Join(tempDir, config.InstanceDir)
 		_, err = os.Stat(instancePath)
 		assert.NoError(t, err)
+	})
+
+	globT.Run("updater failure returns error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		// Create a failing mock updater
+		failingUpdater := mocks.NewMockUpdaterService()
+		failingUpdater.RunFunc = func(ctx context.Context) error {
+			return errors.New("updater failed")
+		}
+
+		updaters := []ports.UpdaterService{failingUpdater}
+		backuppers := []ports.BackupperService{&mocks.MockBackupperService{}}
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		molfar, err := services.NewMolfarService(
+			updaters,
+			backuppers,
+			&MockServerRunner{},
+			librarianService,
+			slog.Default(),
+			tempRoot,
+		)
+		assert.NoError(t, err)
+
+		err = molfar.Prepare()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "updater 0 failed")
 	})
 }
 
@@ -981,16 +990,9 @@ func TestMolfarService_Exit(t *testing.T) {
 		showDirectoryTree(t, tempDir, "")
 
 		// Verify backup was created by checking if backup files exist
-		// Note: LocalBackupTarget skips backup if newest file is from same month
-		// Since this is a test, we expect backup to be created (no existing backups)
 		backupFiles, err := localStorage.List(ctx, "world_backups")
 		assert.NoError(t, err)
-		if len(backupFiles) == 0 {
-			t.Log("No backup files found - LocalBackupTarget may have skipped backup due to monthly frequency check")
-			t.Log("This is expected behavior when backup frequency is limited to monthly")
-		} else {
-			assert.NotEmpty(t, backupFiles, "Backup files should be created")
-		}
+		assert.NotEmpty(t, backupFiles, "Backup files should be created")
 
 		// Verify backup archive can be extracted and validated
 		if len(backupFiles) > 0 {
@@ -1011,6 +1013,7 @@ func TestMolfarService_Exit(t *testing.T) {
 			// Extract and verify using testhelpers
 			extractRoot, err := os.OpenRoot(tempDir)
 			assert.NoError(t, err)
+			defer extractRoot.Close()
 			archiveService, err := services.NewArchiveService(extractRoot)
 			assert.NoError(t, err)
 			err = archiveService.Unarchive(ctx, "test_backup.zip", "extracted")
@@ -1048,6 +1051,44 @@ func TestMolfarService_Exit(t *testing.T) {
 		err := molfar.Exit()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "molfar service cannot be nil")
+	})
+
+	t.Run("backupper failure returns error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		// Create a failing mock backupper
+		failingBackupper := &mocks.MockBackupperService{
+			RunFunc: func(ctx context.Context) (string, error) {
+				return "", errors.New("backupper failed")
+			},
+		}
+
+		updaters := []ports.UpdaterService{mocks.NewMockUpdaterService()}
+		backuppers := []ports.BackupperService{failingBackupper}
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		molfar, err := services.NewMolfarService(
+			updaters,
+			backuppers,
+			&MockServerRunner{},
+			librarianService,
+			slog.Default(),
+			tempRoot,
+		)
+		assert.NoError(t, err)
+
+		err = molfar.Exit()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "backupper 0 failed")
 	})
 }
 
@@ -1335,6 +1376,276 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 		// Local manifest should be unlocked successfully
 		assert.False(t, localManifestObj.IsLocked(), "Local manifest should be unlocked")
 		t.Logf("Local manifest lock status: %v", localManifestObj.IsLocked())
+	})
+}
+
+func TestNewMolfarService(t *testing.T) {
+	t.Run("nil updaters slice returns error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		_, err = services.NewMolfarService(
+			nil,
+			[]ports.BackupperService{&mocks.MockBackupperService{}},
+			&MockServerRunner{},
+			librarianService,
+			slog.Default(),
+			tempRoot,
+		)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "updaters slice cannot be nil")
+	})
+
+	t.Run("nil updater in slice returns error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		_, err = services.NewMolfarService(
+			[]ports.UpdaterService{nil},
+			[]ports.BackupperService{&mocks.MockBackupperService{}},
+			&MockServerRunner{},
+			librarianService,
+			slog.Default(),
+			tempRoot,
+		)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "updater at index 0 cannot be nil")
+	})
+
+	t.Run("nil backuppers slice returns error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		_, err = services.NewMolfarService(
+			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
+			nil,
+			&MockServerRunner{},
+			librarianService,
+			slog.Default(),
+			tempRoot,
+		)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "backuppers slice cannot be nil")
+	})
+
+	t.Run("nil backupper in slice returns error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		_, err = services.NewMolfarService(
+			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
+			[]ports.BackupperService{nil},
+			&MockServerRunner{},
+			librarianService,
+			slog.Default(),
+			tempRoot,
+		)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "backupper at index 0 cannot be nil")
+	})
+
+	t.Run("nil serverRunner returns error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		_, err = services.NewMolfarService(
+			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
+			[]ports.BackupperService{&mocks.MockBackupperService{}},
+			nil,
+			librarianService,
+			slog.Default(),
+			tempRoot,
+		)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "server runner cannot be nil")
+	})
+
+	t.Run("nil librarian returns error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		_, err = services.NewMolfarService(
+			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
+			[]ports.BackupperService{&mocks.MockBackupperService{}},
+			&MockServerRunner{},
+			nil,
+			slog.Default(),
+			tempRoot,
+		)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "librarian service cannot be nil")
+	})
+
+	t.Run("nil logger returns error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		_, err = services.NewMolfarService(
+			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
+			[]ports.BackupperService{&mocks.MockBackupperService{}},
+			&MockServerRunner{},
+			librarianService,
+			nil,
+			tempRoot,
+		)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "logger cannot be nil")
+	})
+
+	t.Run("nil workRoot returns error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		_, err = services.NewMolfarService(
+			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
+			[]ports.BackupperService{&mocks.MockBackupperService{}},
+			&MockServerRunner{},
+			librarianService,
+			slog.Default(),
+			nil,
+		)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "workRoot cannot be nil")
+	})
+
+	t.Run("valid dependencies returns molfar", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		molfar, err := services.NewMolfarService(
+			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
+			[]ports.BackupperService{&mocks.MockBackupperService{}},
+			&MockServerRunner{},
+			librarianService,
+			slog.Default(),
+			tempRoot,
+		)
+		assert.NoError(t, err)
+		assert.NotNil(t, molfar)
+	})
+
+	t.Run("empty updaters slice is valid", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		molfar, err := services.NewMolfarService(
+			[]ports.UpdaterService{},
+			[]ports.BackupperService{&mocks.MockBackupperService{}},
+			&MockServerRunner{},
+			librarianService,
+			slog.Default(),
+			tempRoot,
+		)
+		assert.NoError(t, err)
+		assert.NotNil(t, molfar)
+	})
+
+	t.Run("empty backuppers slice is valid", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		molfar, err := services.NewMolfarService(
+			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
+			[]ports.BackupperService{},
+			&MockServerRunner{},
+			librarianService,
+			slog.Default(),
+			tempRoot,
+		)
+		assert.NoError(t, err)
+		assert.NotNil(t, molfar)
 	})
 }
 
