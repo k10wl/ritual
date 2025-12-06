@@ -396,8 +396,14 @@ func TestMolfarService_Prepare(globT *testing.T) {
 
 		// Calculate checksums for each world directory and compare to remote storage
 		worldDirs := []string{"world", "world_nether", "world_the_end"}
-		err = testhelpers.CompareWorldDirectories(instancePath, filepath.Join(remoteTempDir, config.RemoteBackups), worldDirs)
-		assert.NoError(t, err, "World directories should match remote checksums")
+		var localWorldPaths, remoteWorldPaths []string
+		for _, wd := range worldDirs {
+			localWorldPaths = append(localWorldPaths, filepath.Join(instancePath, wd))
+			remoteWorldPaths = append(remoteWorldPaths, filepath.Join(remoteTempDir, config.RemoteBackups, wd))
+		}
+		match, err := testhelpers.CheckDirs(testhelpers.DirPair{P1: localWorldPaths, P2: remoteWorldPaths})
+		assert.NoError(t, err)
+		assert.True(t, match, "World directories should match remote checksums")
 
 		// Remove world directories after successful checksum verification
 		for _, worldDir := range worldDirs {
@@ -411,8 +417,12 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		}
 
 		// Calculate final instance directory checksum and compare to remote storage
-		err = testhelpers.CompareInstanceDirectories(instancePath, filepath.Join(remoteTempDir, config.InstanceDir))
-		assert.NoError(t, err, "Instance directory should match remote checksum (both without worlds)")
+		match, err = testhelpers.CheckDirs(testhelpers.DirPair{
+			P1: []string{instancePath},
+			P2: []string{filepath.Join(remoteTempDir, config.InstanceDir)},
+		})
+		assert.NoError(t, err)
+		assert.True(t, match, "Instance directory should match remote checksum (both without worlds)")
 
 	})
 
@@ -470,8 +480,14 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		// Verify world directories match remote after update
 		instancePath := filepath.Join(tempDir, config.InstanceDir)
 		worldDirs := []string{"world", "world_nether", "world_the_end"}
-		err = testhelpers.CompareWorldDirectories(instancePath, filepath.Join(remoteTempDir, config.RemoteBackups), worldDirs)
-		assert.NoError(t, err, "Updated world directories should match remote checksums")
+		var localWorldPaths, remoteWorldPaths []string
+		for _, wd := range worldDirs {
+			localWorldPaths = append(localWorldPaths, filepath.Join(instancePath, wd))
+			remoteWorldPaths = append(remoteWorldPaths, filepath.Join(remoteTempDir, config.RemoteBackups, wd))
+		}
+		match, err := testhelpers.CheckDirs(testhelpers.DirPair{P1: localWorldPaths, P2: remoteWorldPaths})
+		assert.NoError(t, err)
+		assert.True(t, match, "Updated world directories should match remote checksums")
 	})
 
 	globT.Run("existing local manifest, outdated worlds", func(t *testing.T) {
@@ -534,8 +550,14 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		// Verify world directories match remote after update
 		instancePath := filepath.Join(tempDir, config.InstanceDir)
 		worldDirs := []string{"world", "world_nether", "world_the_end"}
-		err = testhelpers.CompareWorldDirectories(instancePath, filepath.Join(remoteTempDir, config.RemoteBackups), worldDirs)
-		assert.NoError(t, err, "Updated world directories should match remote checksums")
+		var localWorldPaths, remoteWorldPaths []string
+		for _, wd := range worldDirs {
+			localWorldPaths = append(localWorldPaths, filepath.Join(instancePath, wd))
+			remoteWorldPaths = append(remoteWorldPaths, filepath.Join(remoteTempDir, config.RemoteBackups, wd))
+		}
+		match, err := testhelpers.CheckDirs(testhelpers.DirPair{P1: localWorldPaths, P2: remoteWorldPaths})
+		assert.NoError(t, err)
+		assert.True(t, match, "Updated world directories should match remote checksums")
 	})
 
 	globT.Run("lock conflict scenario", func(t *testing.T) {
@@ -1002,15 +1024,21 @@ func TestMolfarService_Exit(t *testing.T) {
 
 			// Verify extracted world directories match original instance directories
 			worldDirs := []string{"world", "world_nether", "world_the_end"}
-			err = testhelpers.CompareWorldDirectories(extractDir, instancePath, worldDirs)
-			if err != nil {
+			var extractedPaths, instancePaths []string
+			for _, wd := range worldDirs {
+				extractedPaths = append(extractedPaths, filepath.Join(extractDir, wd))
+				instancePaths = append(instancePaths, filepath.Join(instancePath, wd))
+			}
+			match, err := testhelpers.CheckDirs(testhelpers.DirPair{P1: extractedPaths, P2: instancePaths})
+			if err != nil || !match {
 				t.Logf("=== COMPARISON ERROR ===")
-				t.Logf("Error: %v", err)
+				t.Logf("Error: %v, Match: %v", err, match)
 				t.Logf("ExtractDir: %s", extractDir)
 				t.Logf("InstancePath: %s", instancePath)
 				t.Logf("WorldDirs: %v", worldDirs)
 			}
-			assert.NoError(t, err, "Extracted backup world directories should match original instance directories")
+			assert.NoError(t, err)
+			assert.True(t, match, "Extracted backup world directories should match original instance directories")
 		}
 	})
 
