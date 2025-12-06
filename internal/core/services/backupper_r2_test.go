@@ -1,13 +1,17 @@
 package services_test
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"ritual/internal/adapters"
+	"ritual/internal/adapters/streamer"
 	"ritual/internal/config"
 	"ritual/internal/core/services"
 	"ritual/internal/testhelpers"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,14 +21,38 @@ import (
 
 // R2Backupper Tests
 //
-// TDD approach: Write tests first, then implement R2Backupper to make them pass.
-// R2Backupper creates archives from world directories and uploads to R2 storage.
-// Uses FSRepository as mock for R2 storage in tests.
+// R2Backupper creates streaming tar.gz archives from world directories and uploads to R2 storage.
+// Uses mockStreamUploader and FSRepository to simulate R2 storage in tests.
+
+// mockStreamUploader implements streamer.S3StreamUploader for testing
+type mockStreamUploader struct {
+	storage   *adapters.FSRepository
+	basePath  string
+	uploadErr error
+}
+
+func (m *mockStreamUploader) Upload(ctx context.Context, bucket, key string, body io.Reader) (int64, error) {
+	if m.uploadErr != nil {
+		return 0, m.uploadErr
+	}
+
+	// Read the stream and store using FSRepository
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return 0, err
+	}
+
+	err = m.storage.Put(ctx, key, data)
+	if err != nil {
+		return 0, err
+	}
+
+	return int64(len(data)), nil
+}
 
 func setupR2BackupperServices(t *testing.T) (
+	*mockStreamUploader,
 	*adapters.FSRepository,
-	*adapters.FSRepository,
-	*services.ArchiveService,
 	string,
 	*os.Root,
 	func(),
@@ -39,24 +67,22 @@ func setupR2BackupperServices(t *testing.T) (
 	remoteRoot, err := os.OpenRoot(remoteTempDir)
 	require.NoError(t, err)
 
-	// Create local storage (FS)
-	localStorage, err := adapters.NewFSRepository(tempRoot)
-	require.NoError(t, err)
-
 	// Create remote storage (FS for testing - simulates R2)
 	remoteStorage, err := adapters.NewFSRepository(remoteRoot)
 	require.NoError(t, err)
 
-	// Create archive service
-	archiveService, err := services.NewArchiveService(tempRoot)
-	require.NoError(t, err)
-
-	cleanup := func() {
-		localStorage.Close()
-		remoteStorage.Close()
+	// Create mock uploader that writes to remote storage
+	uploader := &mockStreamUploader{
+		storage:  remoteStorage,
+		basePath: remoteTempDir,
 	}
 
-	return localStorage, remoteStorage, archiveService, tempDir, tempRoot, cleanup
+	cleanup := func() {
+		remoteStorage.Close()
+		tempRoot.Close()
+	}
+
+	return uploader, remoteStorage, tempDir, tempRoot, cleanup
 }
 
 func setupR2BackupperWorldData(t *testing.T, tempDir string) {
@@ -76,7 +102,7 @@ func setupR2BackupperWorldData(t *testing.T, tempDir string) {
 
 func TestR2Backupper_Run(t *testing.T) {
 	t.Run("creates archive from world directories", func(t *testing.T) {
-		localStorage, remoteStorage, archive, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
 		// Setup world data
@@ -84,10 +110,12 @@ func TestR2Backupper_Run(t *testing.T) {
 
 		// Create R2Backupper
 		backupper, err := services.NewR2Backupper(
-			localStorage,
+			uploader,
 			remoteStorage,
-			archive,
+			"test-bucket",
 			workRoot,
+			"",   // no local backup
+			nil,  // no backup condition
 		)
 		require.NoError(t, err)
 
@@ -96,10 +124,11 @@ func TestR2Backupper_Run(t *testing.T) {
 		archiveName, err := backupper.Run(ctx)
 		require.NoError(t, err)
 		assert.NotEmpty(t, archiveName)
+		assert.True(t, strings.HasSuffix(archiveName, ".tar.gz"))
 	})
 
 	t.Run("uploads archive to R2 storage", func(t *testing.T) {
-		localStorage, remoteStorage, archive, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
 		// Setup world data
@@ -107,10 +136,12 @@ func TestR2Backupper_Run(t *testing.T) {
 
 		// Create R2Backupper
 		backupper, err := services.NewR2Backupper(
-			localStorage,
+			uploader,
 			remoteStorage,
-			archive,
+			"test-bucket",
 			workRoot,
+			"",
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -120,13 +151,13 @@ func TestR2Backupper_Run(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify backup was uploaded to remote storage
-		backupFiles, err := remoteStorage.List(ctx, config.LocalBackups)
+		backupFiles, err := remoteStorage.List(ctx, config.RemoteBackups)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, backupFiles, "Backup file should be uploaded to R2")
 	})
 
-	t.Run("returns archive URI for manifest", func(t *testing.T) {
-		localStorage, remoteStorage, archive, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+	t.Run("returns archive key for manifest", func(t *testing.T) {
+		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
 		// Setup world data
@@ -134,24 +165,27 @@ func TestR2Backupper_Run(t *testing.T) {
 
 		// Create R2Backupper
 		backupper, err := services.NewR2Backupper(
-			localStorage,
+			uploader,
 			remoteStorage,
-			archive,
+			"test-bucket",
 			workRoot,
+			"",
+			nil,
 		)
 		require.NoError(t, err)
 
 		// Execute backup
 		ctx := context.Background()
-		archiveName, err := backupper.Run(ctx)
+		archiveKey, err := backupper.Run(ctx)
 		require.NoError(t, err)
 
-		// Archive name should be non-empty and usable for manifest
-		assert.NotEmpty(t, archiveName)
+		// Archive key should be non-empty and usable for manifest
+		assert.NotEmpty(t, archiveKey)
+		assert.True(t, strings.HasPrefix(archiveKey, config.RemoteBackups+"/"))
 	})
 
 	t.Run("applies retention policy - max 5 backups", func(t *testing.T) {
-		localStorage, remoteStorage, archive, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
 		// Setup world data
@@ -163,17 +197,19 @@ func TestR2Backupper_Run(t *testing.T) {
 		for i := 0; i < 7; i++ {
 			// Create fake backup files with different timestamps
 			timestamp := time.Now().Add(time.Duration(-i*24) * time.Hour).Format("20060102150405")
-			filename := filepath.Join(config.LocalBackups, timestamp+".zip")
-			err := remoteStorage.Put(ctx, filename, []byte("PK\x03\x04fake backup data"))
+			filename := config.RemoteBackups + "/" + timestamp + ".tar.gz"
+			err := remoteStorage.Put(ctx, filename, []byte("fake tar.gz backup data"))
 			require.NoError(t, err)
 		}
 
 		// Create R2Backupper
 		backupper, err := services.NewR2Backupper(
-			localStorage,
+			uploader,
 			remoteStorage,
-			archive,
+			"test-bucket",
 			workRoot,
+			"",
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -182,27 +218,29 @@ func TestR2Backupper_Run(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify retention was applied - should have at most 5 backups
-		backupFiles, err := remoteStorage.List(ctx, config.LocalBackups)
+		backupFiles, err := remoteStorage.List(ctx, config.RemoteBackups)
 		assert.NoError(t, err)
-		// Filter only .zip files
-		zipCount := 0
+		// Filter only .tar.gz files
+		tarGzCount := 0
 		for _, f := range backupFiles {
-			if filepath.Ext(f) == ".zip" {
-				zipCount++
+			if strings.HasSuffix(f, ".tar.gz") {
+				tarGzCount++
 			}
 		}
-		assert.LessOrEqual(t, zipCount, 5, "Should have at most 5 backup files after retention")
+		assert.LessOrEqual(t, tarGzCount, 5, "Should have at most 5 backup files after retention")
 	})
 
 	t.Run("nil context returns error", func(t *testing.T) {
-		localStorage, remoteStorage, archive, _, workRoot, cleanup := setupR2BackupperServices(t)
+		uploader, remoteStorage, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
 		backupper, err := services.NewR2Backupper(
-			localStorage,
+			uploader,
 			remoteStorage,
-			archive,
+			"test-bucket",
 			workRoot,
+			"",
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -213,48 +251,177 @@ func TestR2Backupper_Run(t *testing.T) {
 }
 
 func TestNewR2Backupper(t *testing.T) {
-	t.Run("nil localStorage returns error", func(t *testing.T) {
-		_, remoteStorage, archive, _, workRoot, cleanup := setupR2BackupperServices(t)
+	t.Run("nil uploader returns error", func(t *testing.T) {
+		_, remoteStorage, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(nil, remoteStorage, archive, workRoot)
+		_, err := services.NewR2Backupper(nil, remoteStorage, "bucket", workRoot, "", nil)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "storage")
+		assert.Contains(t, err.Error(), "uploader")
 	})
 
 	t.Run("nil remoteStorage returns error", func(t *testing.T) {
-		localStorage, _, archive, _, workRoot, cleanup := setupR2BackupperServices(t)
+		uploader, _, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(localStorage, nil, archive, workRoot)
+		_, err := services.NewR2Backupper(uploader, nil, "bucket", workRoot, "", nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "storage")
 	})
 
-	t.Run("nil archive returns error", func(t *testing.T) {
-		localStorage, remoteStorage, _, _, workRoot, cleanup := setupR2BackupperServices(t)
-		defer cleanup()
-
-		_, err := services.NewR2Backupper(localStorage, remoteStorage, nil, workRoot)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "archive")
-	})
-
 	t.Run("nil workRoot returns error", func(t *testing.T) {
-		localStorage, remoteStorage, archive, _, _, cleanup := setupR2BackupperServices(t)
+		uploader, remoteStorage, _, _, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(localStorage, remoteStorage, archive, nil)
+		_, err := services.NewR2Backupper(uploader, remoteStorage, "bucket", nil, "", nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "workRoot")
 	})
 
 	t.Run("valid dependencies returns backupper", func(t *testing.T) {
-		localStorage, remoteStorage, archive, _, workRoot, cleanup := setupR2BackupperServices(t)
+		uploader, remoteStorage, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		backupper, err := services.NewR2Backupper(localStorage, remoteStorage, archive, workRoot)
+		backupper, err := services.NewR2Backupper(uploader, remoteStorage, "bucket", workRoot, "", nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, backupper)
 	})
+}
+
+// TestR2Backupper_LocalBackup tests the optional local backup feature
+func TestR2Backupper_LocalBackup(t *testing.T) {
+	t.Run("creates local backup when condition true", func(t *testing.T) {
+		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+		defer cleanup()
+
+		// Setup world data
+		setupR2BackupperWorldData(t, tempDir)
+
+		localBackupDir := filepath.Join(tempDir, "local_backups")
+
+		// Create R2Backupper with local backup enabled
+		backupper, err := services.NewR2Backupper(
+			uploader,
+			remoteStorage,
+			"test-bucket",
+			workRoot,
+			localBackupDir,
+			func() bool { return true },
+		)
+		require.NoError(t, err)
+
+		// Execute backup
+		ctx := context.Background()
+		_, err = backupper.Run(ctx)
+		require.NoError(t, err)
+
+		// Verify local backup was created
+		files, err := os.ReadDir(localBackupDir)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, files, "Local backup should be created")
+	})
+
+	t.Run("skips local backup when condition false", func(t *testing.T) {
+		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+		defer cleanup()
+
+		// Setup world data
+		setupR2BackupperWorldData(t, tempDir)
+
+		localBackupDir := filepath.Join(tempDir, "local_backups_skip")
+
+		// Create R2Backupper with local backup disabled
+		backupper, err := services.NewR2Backupper(
+			uploader,
+			remoteStorage,
+			"test-bucket",
+			workRoot,
+			localBackupDir,
+			func() bool { return false },
+		)
+		require.NoError(t, err)
+
+		// Execute backup
+		ctx := context.Background()
+		_, err = backupper.Run(ctx)
+		require.NoError(t, err)
+
+		// Verify local backup was NOT created
+		_, err = os.ReadDir(localBackupDir)
+		assert.True(t, os.IsNotExist(err), "Local backup directory should not exist")
+	})
+}
+
+// TestR2Backupper_StreamingVerification verifies the archive is valid tar.gz
+func TestR2Backupper_StreamingVerification(t *testing.T) {
+	t.Run("produces valid tar.gz archive", func(t *testing.T) {
+		// Use a capturing uploader to verify the content
+		var capturedData bytes.Buffer
+		capturingUploader := &capturingStreamUploader{buf: &capturedData}
+
+		tempDir := t.TempDir()
+		remoteTempDir := t.TempDir()
+
+		tempRoot, err := os.OpenRoot(tempDir)
+		require.NoError(t, err)
+
+		remoteRoot, err := os.OpenRoot(remoteTempDir)
+		require.NoError(t, err)
+
+		remoteStorage, err := adapters.NewFSRepository(remoteRoot)
+		require.NoError(t, err)
+		defer remoteStorage.Close()
+
+		// Setup world data
+		setupR2BackupperWorldData(t, tempDir)
+
+		backupper, err := services.NewR2Backupper(
+			capturingUploader,
+			remoteStorage,
+			"test-bucket",
+			tempRoot,
+			"",
+			nil,
+		)
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		_, err = backupper.Run(ctx)
+		require.NoError(t, err)
+
+		// Verify the captured data is valid by extracting it
+		extractDir := t.TempDir()
+		mockDownloader := &mockStreamDownloader{data: capturedData.Bytes()}
+
+		err = streamer.Pull(ctx, streamer.PullConfig{
+			Bucket:   "test",
+			Key:      "test.tar.gz",
+			Dest:     extractDir,
+			Conflict: streamer.Replace,
+		}, mockDownloader)
+		require.NoError(t, err)
+
+		// Verify extracted content has world directory
+		_, err = os.Stat(filepath.Join(extractDir, "world"))
+		assert.NoError(t, err, "world directory should be extracted")
+	})
+}
+
+// capturingStreamUploader captures the uploaded data for verification
+type capturingStreamUploader struct {
+	buf *bytes.Buffer
+}
+
+func (c *capturingStreamUploader) Upload(ctx context.Context, bucket, key string, body io.Reader) (int64, error) {
+	n, err := io.Copy(c.buf, body)
+	return n, err
+}
+
+// mockStreamDownloader implements streamer.S3StreamDownloader for testing
+type mockStreamDownloader struct {
+	data []byte
+}
+
+func (m *mockStreamDownloader) Download(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(m.data)), nil
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"ritual/internal/adapters/streamer"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
@@ -14,31 +15,27 @@ import (
 
 // InstanceUpdater constants
 const (
-	instanceZipKey = "instance.zip"
-	instanceDir    = config.InstanceDir
-	tempPrefix     = config.TmpDir
+	instanceArchiveKey = "instance.tar.gz"
+	instanceDir        = config.InstanceDir
 )
 
 // InstanceUpdater error constants
 var (
 	ErrInstanceUpdaterLibrarianNil     = errors.New("librarian service cannot be nil")
 	ErrInstanceUpdaterValidatorNil     = errors.New("validator service cannot be nil")
-	ErrInstanceUpdaterLocalStorageNil  = errors.New("local storage repository cannot be nil")
-	ErrInstanceUpdaterRemoteStorageNil = errors.New("remote storage repository cannot be nil")
-	ErrInstanceUpdaterArchiveNil       = errors.New("archive service cannot be nil")
+	ErrInstanceUpdaterDownloaderNil    = errors.New("downloader cannot be nil")
 	ErrInstanceUpdaterWorkRootNil      = errors.New("workRoot cannot be nil")
 	ErrInstanceUpdaterNil              = errors.New("instance updater cannot be nil")
 )
 
 // InstanceUpdater implements UpdaterService for instance updates
-// InstanceUpdater handles downloading and extracting instance.zip from remote storage
+// InstanceUpdater handles downloading and extracting instance.tar.gz from remote storage
 type InstanceUpdater struct {
-	librarian     ports.LibrarianService
-	validator     ports.ValidatorService
-	localStorage  ports.StorageRepository
-	remoteStorage ports.StorageRepository
-	archive       ports.ArchiveService
-	workRoot      *os.Root
+	librarian  ports.LibrarianService
+	validator  ports.ValidatorService
+	downloader streamer.S3StreamDownloader
+	bucket     string
+	workRoot   *os.Root
 }
 
 // Compile-time check to ensure InstanceUpdater implements ports.UpdaterService
@@ -49,9 +46,8 @@ var _ ports.UpdaterService = (*InstanceUpdater)(nil)
 func NewInstanceUpdater(
 	librarian ports.LibrarianService,
 	validator ports.ValidatorService,
-	localStorage ports.StorageRepository,
-	remoteStorage ports.StorageRepository,
-	archive ports.ArchiveService,
+	downloader streamer.S3StreamDownloader,
+	bucket string,
 	workRoot *os.Root,
 ) (*InstanceUpdater, error) {
 	if librarian == nil {
@@ -60,26 +56,19 @@ func NewInstanceUpdater(
 	if validator == nil {
 		return nil, ErrInstanceUpdaterValidatorNil
 	}
-	if localStorage == nil {
-		return nil, ErrInstanceUpdaterLocalStorageNil
-	}
-	if remoteStorage == nil {
-		return nil, ErrInstanceUpdaterRemoteStorageNil
-	}
-	if archive == nil {
-		return nil, ErrInstanceUpdaterArchiveNil
+	if downloader == nil {
+		return nil, ErrInstanceUpdaterDownloaderNil
 	}
 	if workRoot == nil {
 		return nil, ErrInstanceUpdaterWorkRootNil
 	}
 
 	updater := &InstanceUpdater{
-		librarian:     librarian,
-		validator:     validator,
-		localStorage:  localStorage,
-		remoteStorage: remoteStorage,
-		archive:       archive,
-		workRoot:      workRoot,
+		librarian:  librarian,
+		validator:  validator,
+		downloader: downloader,
+		bucket:     bucket,
+		workRoot:   workRoot,
 	}
 
 	// Postcondition assertion
@@ -216,35 +205,24 @@ func (u *InstanceUpdater) updateInstance(ctx context.Context, remoteManifest *do
 	return nil
 }
 
-// downloadAndExtractInstance downloads instance.zip from remote and extracts it
+// downloadAndExtractInstance downloads instance.tar.gz from remote and extracts it
 func (u *InstanceUpdater) downloadAndExtractInstance(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("context cannot be nil")
 	}
 
-	// Download instance.zip from remote storage
-	instanceZipData, err := u.remoteStorage.Get(ctx, instanceZipKey)
-	if err != nil {
-		return fmt.Errorf("failed to get %s from remote storage: %w", instanceZipKey, err)
-	}
+	// Destination directory
+	destPath := filepath.Join(u.workRoot.Name(), instanceDir)
 
-	// Store in temporary location
-	tempKey := filepath.Join(tempPrefix, instanceZipKey)
-	err = u.localStorage.Put(ctx, tempKey, instanceZipData)
+	// Use streamer.Pull to download and extract
+	err := streamer.Pull(ctx, streamer.PullConfig{
+		Bucket:   u.bucket,
+		Key:      instanceArchiveKey,
+		Dest:     destPath,
+		Conflict: streamer.Replace,
+	}, u.downloader)
 	if err != nil {
-		return fmt.Errorf("failed to store %s in temp storage: %w", instanceZipKey, err)
-	}
-
-	// Extract archive
-	err = u.archive.Unarchive(ctx, tempKey, instanceDir)
-	if err != nil {
-		return fmt.Errorf("failed to extract instance archive: %w", err)
-	}
-
-	// Cleanup temp file
-	err = u.localStorage.Delete(ctx, tempKey)
-	if err != nil {
-		return fmt.Errorf("failed to cleanup temp %s: %w", instanceZipKey, err)
+		return fmt.Errorf("failed to download and extract instance: %w", err)
 	}
 
 	return nil

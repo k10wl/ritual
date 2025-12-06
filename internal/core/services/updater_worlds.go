@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"ritual/internal/adapters/streamer"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
@@ -14,24 +15,21 @@ import (
 
 // WorldsUpdater error constants
 var (
-	ErrWorldsUpdaterLibrarianNil     = errors.New("librarian service cannot be nil")
-	ErrWorldsUpdaterValidatorNil     = errors.New("validator service cannot be nil")
-	ErrWorldsUpdaterLocalStorageNil  = errors.New("local storage repository cannot be nil")
-	ErrWorldsUpdaterRemoteStorageNil = errors.New("remote storage repository cannot be nil")
-	ErrWorldsUpdaterArchiveNil       = errors.New("archive service cannot be nil")
-	ErrWorldsUpdaterWorkRootNil      = errors.New("workRoot cannot be nil")
-	ErrWorldsUpdaterNil              = errors.New("worlds updater cannot be nil")
+	ErrWorldsUpdaterLibrarianNil  = errors.New("librarian service cannot be nil")
+	ErrWorldsUpdaterValidatorNil  = errors.New("validator service cannot be nil")
+	ErrWorldsUpdaterDownloaderNil = errors.New("downloader cannot be nil")
+	ErrWorldsUpdaterWorkRootNil   = errors.New("workRoot cannot be nil")
+	ErrWorldsUpdaterNil           = errors.New("worlds updater cannot be nil")
 )
 
 // WorldsUpdater implements UpdaterService for world updates
 // WorldsUpdater handles downloading and extracting world archives from remote storage
 type WorldsUpdater struct {
-	librarian     ports.LibrarianService
-	validator     ports.ValidatorService
-	localStorage  ports.StorageRepository
-	remoteStorage ports.StorageRepository
-	archive       ports.ArchiveService
-	workRoot      *os.Root
+	librarian  ports.LibrarianService
+	validator  ports.ValidatorService
+	downloader streamer.S3StreamDownloader
+	bucket     string
+	workRoot   *os.Root
 }
 
 // Compile-time check to ensure WorldsUpdater implements ports.UpdaterService
@@ -42,9 +40,8 @@ var _ ports.UpdaterService = (*WorldsUpdater)(nil)
 func NewWorldsUpdater(
 	librarian ports.LibrarianService,
 	validator ports.ValidatorService,
-	localStorage ports.StorageRepository,
-	remoteStorage ports.StorageRepository,
-	archive ports.ArchiveService,
+	downloader streamer.S3StreamDownloader,
+	bucket string,
 	workRoot *os.Root,
 ) (*WorldsUpdater, error) {
 	if librarian == nil {
@@ -53,26 +50,19 @@ func NewWorldsUpdater(
 	if validator == nil {
 		return nil, ErrWorldsUpdaterValidatorNil
 	}
-	if localStorage == nil {
-		return nil, ErrWorldsUpdaterLocalStorageNil
-	}
-	if remoteStorage == nil {
-		return nil, ErrWorldsUpdaterRemoteStorageNil
-	}
-	if archive == nil {
-		return nil, ErrWorldsUpdaterArchiveNil
+	if downloader == nil {
+		return nil, ErrWorldsUpdaterDownloaderNil
 	}
 	if workRoot == nil {
 		return nil, ErrWorldsUpdaterWorkRootNil
 	}
 
 	updater := &WorldsUpdater{
-		librarian:     librarian,
-		validator:     validator,
-		localStorage:  localStorage,
-		remoteStorage: remoteStorage,
-		archive:       archive,
-		workRoot:      workRoot,
+		librarian:  librarian,
+		validator:  validator,
+		downloader: downloader,
+		bucket:     bucket,
+		workRoot:   workRoot,
 	}
 
 	// Postcondition assertion
@@ -148,13 +138,8 @@ func (u *WorldsUpdater) updateWorlds(ctx context.Context, remoteManifest *domain
 		return err
 	}
 
-	// Download world archive
-	if err := u.downloadWorldArchive(ctx, sanitizedURI); err != nil {
-		return err
-	}
-
-	// Extract world archive
-	if err := u.extractWorldArchive(ctx, sanitizedURI); err != nil {
+	// Download and extract world archive using streamer.Pull
+	if err := u.downloadAndExtractWorld(ctx, sanitizedURI); err != nil {
 		return err
 	}
 
@@ -175,52 +160,27 @@ func (u *WorldsUpdater) sanitizeWorldURI(uri string) (string, error) {
 	return sanitizedURI, nil
 }
 
-// downloadWorldArchive downloads the world archive from remote storage
-func (u *WorldsUpdater) downloadWorldArchive(ctx context.Context, sanitizedURI string) error {
+// downloadAndExtractWorld downloads and extracts the world archive from remote storage
+func (u *WorldsUpdater) downloadAndExtractWorld(ctx context.Context, key string) error {
 	if ctx == nil {
 		return errors.New("context cannot be nil")
 	}
-	if sanitizedURI == "" {
-		return errors.New("sanitized URI cannot be empty")
+	if key == "" {
+		return errors.New("key cannot be empty")
 	}
 
-	// Download world archive from remote storage
-	worldZipData, err := u.remoteStorage.Get(ctx, sanitizedURI)
+	// Destination is the instance directory
+	destPath := filepath.Join(u.workRoot.Name(), instanceDir)
+
+	// Use streamer.Pull to download and extract
+	err := streamer.Pull(ctx, streamer.PullConfig{
+		Bucket:   u.bucket,
+		Key:      key,
+		Dest:     destPath,
+		Conflict: streamer.Replace,
+	}, u.downloader)
 	if err != nil {
-		return fmt.Errorf("failed to get %s from remote storage: %w", sanitizedURI, err)
-	}
-
-	// Store in temporary location
-	tempKey := filepath.Join(tempPrefix, sanitizedURI)
-	err = u.localStorage.Put(ctx, tempKey, worldZipData)
-	if err != nil {
-		return fmt.Errorf("failed to store %s in temp storage: %w", sanitizedURI, err)
-	}
-
-	return nil
-}
-
-// extractWorldArchive extracts the world archive to the instance directory
-func (u *WorldsUpdater) extractWorldArchive(ctx context.Context, sanitizedURI string) error {
-	if ctx == nil {
-		return errors.New("context cannot be nil")
-	}
-	if sanitizedURI == "" {
-		return errors.New("sanitized URI cannot be empty")
-	}
-
-	tempKey := filepath.Join(tempPrefix, sanitizedURI)
-
-	// Extract archive to instance directory
-	err := u.archive.Unarchive(ctx, tempKey, instanceDir)
-	if err != nil {
-		return fmt.Errorf("failed to extract worlds: %w", err)
-	}
-
-	// Cleanup temp file
-	err = u.localStorage.Delete(ctx, tempKey)
-	if err != nil {
-		return fmt.Errorf("failed to cleanup %s: %w", sanitizedURI, err)
+		return fmt.Errorf("failed to download and extract world: %w", err)
 	}
 
 	return nil

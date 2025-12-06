@@ -1,13 +1,16 @@
 package services_test
 
 import (
-	"archive/zip"
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"ritual/internal/adapters"
+	"ritual/internal/adapters/streamer"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/services"
@@ -21,15 +24,27 @@ import (
 
 // InstanceUpdater Tests
 //
-// TDD approach: Write tests first, then implement InstanceUpdater to make them pass.
-// Uses same patterns as molfar_test.go - real FS storage, testhelpers for setup.
+// Uses streamer.Pull for downloading and extracting instance.tar.gz archives.
+// Uses mockTarGzDownloader to simulate R2 storage in tests.
+
+// mockInstanceDownloader implements streamer.S3StreamDownloader for testing
+type mockInstanceDownloader struct {
+	data map[string][]byte
+}
+
+func (m *mockInstanceDownloader) Download(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
+	if data, ok := m.data[key]; ok {
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}
+	return nil, io.EOF
+}
 
 func setupInstanceUpdaterServices(t *testing.T) (
 	*adapters.FSRepository,
 	*adapters.FSRepository,
 	*services.LibrarianService,
 	*services.ValidatorService,
-	*services.ArchiveService,
+	*mockInstanceDownloader,
 	string,
 	string,
 	*os.Root,
@@ -53,9 +68,10 @@ func setupInstanceUpdaterServices(t *testing.T) (
 	remoteStorage, err := adapters.NewFSRepository(remoteRoot)
 	require.NoError(t, err)
 
-	// Create archive service
-	archiveService, err := services.NewArchiveService(tempRoot)
-	require.NoError(t, err)
+	// Create mock downloader
+	downloader := &mockInstanceDownloader{
+		data: make(map[string][]byte),
+	}
 
 	// Create librarian service
 	librarianService, err := services.NewLibrarianService(localStorage, remoteStorage)
@@ -68,9 +84,10 @@ func setupInstanceUpdaterServices(t *testing.T) (
 	cleanup := func() {
 		localStorage.Close()
 		remoteStorage.Close()
+		tempRoot.Close()
 	}
 
-	return localStorage, remoteStorage, librarianService, validatorService, archiveService, tempDir, remoteTempDir, tempRoot, cleanup
+	return localStorage, remoteStorage, librarianService, validatorService, downloader, tempDir, remoteTempDir, tempRoot, cleanup
 }
 
 func createInstanceTestManifest(ritualVersion string, instanceVersion string, worlds []domain.World) *domain.Manifest {
@@ -91,9 +108,7 @@ func setupInstanceRemoteManifest(t *testing.T, remoteStorage *adapters.FSReposit
 	require.NoError(t, err)
 }
 
-func setupInstanceRemoteInstanceZip(t *testing.T, remoteStorage *adapters.FSRepository, remoteTempDir string) {
-	ctx := context.Background()
-
+func setupInstanceRemoteTarGz(t *testing.T, downloader *mockInstanceDownloader, remoteTempDir string) {
 	// Create instance directory structure in remote temp dir
 	instanceDir := filepath.Join(remoteTempDir, config.InstanceDir)
 	err := os.MkdirAll(instanceDir, 0755)
@@ -107,72 +122,77 @@ func setupInstanceRemoteInstanceZip(t *testing.T, remoteStorage *adapters.FSRepo
 	_, _, _, err = testhelpers.PaperInstanceSetup(instanceRoot, "1.20.1")
 	require.NoError(t, err)
 
-	// Create zip file using standard zip package
-	zipPath := filepath.Join(remoteTempDir, "instance.zip")
-	zipFile, err := os.Create(zipPath)
-	require.NoError(t, err)
-	defer zipFile.Close()
+	// Create tar.gz archive in memory
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
 
-	zipWriter := zip.NewWriter(zipFile)
-	defer zipWriter.Close()
-
-	// Walk through instance directory and add files to zip
+	// Walk through instance directory and add files to tar
 	err = filepath.Walk(instanceDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
+
+		relPath, err := filepath.Rel(instanceDir, path)
+		if err != nil {
+			return err
+		}
+
+		// Skip the root directory itself
+		if relPath == "." {
 			return nil
 		}
 
-		relPath, err := filepath.Rel(instanceDir, path)
-		require.NoError(t, err)
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.ToSlash(relPath)
 
-		header, err := zip.FileInfoHeader(info)
-		require.NoError(t, err)
-		header.Name = relPath
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
 
-		writer, err := zipWriter.CreateHeader(header)
-		require.NoError(t, err)
+		if !info.IsDir() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
 
-		file, err := os.Open(path)
-		require.NoError(t, err)
-		defer file.Close()
-
-		_, err = io.Copy(writer, file)
-		require.NoError(t, err)
+			_, err = io.Copy(tw, file)
+			if err != nil {
+				return err
+			}
+		}
 
 		return nil
 	})
 	require.NoError(t, err)
 
-	// Close zip writer to flush
-	zipWriter.Close()
+	// Close in correct order
+	require.NoError(t, tw.Close())
+	require.NoError(t, gw.Close())
 
-	// Read the zip file and store in remote storage
-	zipData, err := os.ReadFile(zipPath)
-	require.NoError(t, err)
-
-	err = remoteStorage.Put(ctx, "instance.zip", zipData)
-	require.NoError(t, err)
+	// Store in mock downloader
+	downloader.data["instance.tar.gz"] = buf.Bytes()
 }
 
 func TestInstanceUpdater_Run(t *testing.T) {
 	t.Run("no local manifest - downloads and extracts instance", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, archive, tempDir, remoteTempDir, workRoot, cleanup := setupInstanceUpdaterServices(t)
+		localStorage, remoteStorage, librarian, validator, downloader, tempDir, remoteTempDir, workRoot, cleanup := setupInstanceUpdaterServices(t)
 		defer cleanup()
 
 		// Setup remote data
 		setupInstanceRemoteManifest(t, remoteStorage, "1.0.0", "1.20.1")
-		setupInstanceRemoteInstanceZip(t, remoteStorage, remoteTempDir)
+		setupInstanceRemoteTarGz(t, downloader, remoteTempDir)
 
 		// Create InstanceUpdater
 		updater, err := services.NewInstanceUpdater(
 			librarian,
 			validator,
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		require.NoError(t, err)
@@ -200,12 +220,12 @@ func TestInstanceUpdater_Run(t *testing.T) {
 	})
 
 	t.Run("outdated instance version - updates instance", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, archive, tempDir, remoteTempDir, workRoot, cleanup := setupInstanceUpdaterServices(t)
+		localStorage, remoteStorage, librarian, validator, downloader, tempDir, remoteTempDir, workRoot, cleanup := setupInstanceUpdaterServices(t)
 		defer cleanup()
 
 		// Setup remote data with newer version
 		setupInstanceRemoteManifest(t, remoteStorage, "1.0.0", "1.20.2")
-		setupInstanceRemoteInstanceZip(t, remoteStorage, remoteTempDir)
+		setupInstanceRemoteTarGz(t, downloader, remoteTempDir)
 
 		// Create local manifest with older version
 		ctx := context.Background()
@@ -219,9 +239,8 @@ func TestInstanceUpdater_Run(t *testing.T) {
 		updater, err := services.NewInstanceUpdater(
 			librarian,
 			validator,
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		require.NoError(t, err)
@@ -246,7 +265,7 @@ func TestInstanceUpdater_Run(t *testing.T) {
 	})
 
 	t.Run("up-to-date instance - no download", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, archive, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
+		localStorage, remoteStorage, librarian, validator, downloader, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
 		defer cleanup()
 
 		// Setup remote data
@@ -264,9 +283,8 @@ func TestInstanceUpdater_Run(t *testing.T) {
 		updater, err := services.NewInstanceUpdater(
 			librarian,
 			validator,
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		require.NoError(t, err)
@@ -286,34 +304,34 @@ func TestInstanceUpdater_Run(t *testing.T) {
 	})
 
 	t.Run("nil context - returns error", func(t *testing.T) {
-		_, _, librarian, validator, archive, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
+		_, _, librarian, validator, downloader, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
 		defer cleanup()
 
 		updater, err := services.NewInstanceUpdater(
 			librarian,
 			validator,
-			nil, // localStorage
-			nil, // remoteStorage
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
-		// Constructor should fail with nil dependencies
+		require.NoError(t, err)
+
+		err = updater.Run(nil)
 		assert.Error(t, err)
-		assert.Nil(t, updater)
+		assert.Contains(t, err.Error(), "context cannot be nil")
 	})
 }
 
 func TestNewInstanceUpdater(t *testing.T) {
 	t.Run("nil librarian returns error", func(t *testing.T) {
-		_, remoteStorage, _, validator, archive, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
+		_, _, _, validator, downloader, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
 		defer cleanup()
 
 		_, err := services.NewInstanceUpdater(
 			nil, // librarian
 			validator,
-			nil,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		assert.Error(t, err)
@@ -321,79 +339,44 @@ func TestNewInstanceUpdater(t *testing.T) {
 	})
 
 	t.Run("nil validator returns error", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, _, archive, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
+		_, _, librarian, _, downloader, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
 		defer cleanup()
 
 		_, err := services.NewInstanceUpdater(
 			librarian,
 			nil, // validator
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "validator")
 	})
 
-	t.Run("nil localStorage returns error", func(t *testing.T) {
-		_, remoteStorage, librarian, validator, archive, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
+	t.Run("nil downloader returns error", func(t *testing.T) {
+		_, _, librarian, validator, _, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
 		defer cleanup()
 
 		_, err := services.NewInstanceUpdater(
 			librarian,
 			validator,
-			nil, // localStorage
-			remoteStorage,
-			archive,
+			nil, // downloader
+			"test-bucket",
 			workRoot,
 		)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "storage")
-	})
-
-	t.Run("nil remoteStorage returns error", func(t *testing.T) {
-		localStorage, _, librarian, validator, archive, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
-		defer cleanup()
-
-		_, err := services.NewInstanceUpdater(
-			librarian,
-			validator,
-			localStorage,
-			nil, // remoteStorage
-			archive,
-			workRoot,
-		)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "storage")
-	})
-
-	t.Run("nil archive returns error", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, _, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
-		defer cleanup()
-
-		_, err := services.NewInstanceUpdater(
-			librarian,
-			validator,
-			localStorage,
-			remoteStorage,
-			nil, // archive
-			workRoot,
-		)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "archive")
+		assert.Contains(t, err.Error(), "downloader")
 	})
 
 	t.Run("nil workRoot returns error", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, archive, _, _, _, cleanup := setupInstanceUpdaterServices(t)
+		_, _, librarian, validator, downloader, _, _, _, cleanup := setupInstanceUpdaterServices(t)
 		defer cleanup()
 
 		_, err := services.NewInstanceUpdater(
 			librarian,
 			validator,
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			nil, // workRoot
 		)
 		assert.Error(t, err)
@@ -401,18 +384,20 @@ func TestNewInstanceUpdater(t *testing.T) {
 	})
 
 	t.Run("valid dependencies returns updater", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, archive, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
+		_, _, librarian, validator, downloader, _, _, workRoot, cleanup := setupInstanceUpdaterServices(t)
 		defer cleanup()
 
 		updater, err := services.NewInstanceUpdater(
 			librarian,
 			validator,
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		assert.NoError(t, err)
 		assert.NotNil(t, updater)
+
+		// Verify it implements the interface
+		var _ streamer.S3StreamDownloader = downloader
 	})
 }

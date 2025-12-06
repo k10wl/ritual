@@ -1,13 +1,16 @@
 package services_test
 
 import (
-	"archive/zip"
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"ritual/internal/adapters"
+	"ritual/internal/adapters/streamer"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/services"
@@ -22,15 +25,27 @@ import (
 
 // WorldsUpdater Tests
 //
-// TDD approach: Write tests first, then implement WorldsUpdater to make them pass.
-// Uses same patterns as molfar_test.go - real FS storage, testhelpers for setup.
+// Uses streamer.Pull for downloading and extracting world archives.
+// Uses mockWorldsDownloader to simulate R2 storage in tests.
+
+// mockWorldsDownloader implements streamer.S3StreamDownloader for testing
+type mockWorldsDownloader struct {
+	data map[string][]byte
+}
+
+func (m *mockWorldsDownloader) Download(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
+	if data, ok := m.data[key]; ok {
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}
+	return nil, io.EOF
+}
 
 func setupWorldsUpdaterServices(t *testing.T) (
 	*adapters.FSRepository,
 	*adapters.FSRepository,
 	*services.LibrarianService,
 	*services.ValidatorService,
-	*services.ArchiveService,
+	*mockWorldsDownloader,
 	string,
 	string,
 	*os.Root,
@@ -54,9 +69,10 @@ func setupWorldsUpdaterServices(t *testing.T) (
 	remoteStorage, err := adapters.NewFSRepository(remoteRoot)
 	require.NoError(t, err)
 
-	// Create archive service
-	archiveService, err := services.NewArchiveService(tempRoot)
-	require.NoError(t, err)
+	// Create mock downloader
+	downloader := &mockWorldsDownloader{
+		data: make(map[string][]byte),
+	}
 
 	// Create librarian service
 	librarianService, err := services.NewLibrarianService(localStorage, remoteStorage)
@@ -69,9 +85,10 @@ func setupWorldsUpdaterServices(t *testing.T) (
 	cleanup := func() {
 		localStorage.Close()
 		remoteStorage.Close()
+		tempRoot.Close()
 	}
 
-	return localStorage, remoteStorage, librarianService, validatorService, archiveService, tempDir, remoteTempDir, tempRoot, cleanup
+	return localStorage, remoteStorage, librarianService, validatorService, downloader, tempDir, remoteTempDir, tempRoot, cleanup
 }
 
 func createWorldsTestManifest(ritualVersion string, instanceVersion string, worlds []domain.World) *domain.Manifest {
@@ -100,9 +117,7 @@ func setupWorldsRemoteManifest(t *testing.T, remoteStorage *adapters.FSRepositor
 	require.NoError(t, err)
 }
 
-func setupWorldsRemoteWorldZip(t *testing.T, remoteStorage *adapters.FSRepository, remoteTempDir string, worldURI string) {
-	ctx := context.Background()
-
+func setupWorldsRemoteTarGz(t *testing.T, downloader *mockWorldsDownloader, remoteTempDir string, worldURI string) {
 	// Create world directory structure in remote temp dir
 	worldsDir := filepath.Join(remoteTempDir, config.RemoteBackups)
 	err := os.MkdirAll(worldsDir, 0755)
@@ -116,19 +131,12 @@ func setupWorldsRemoteWorldZip(t *testing.T, remoteStorage *adapters.FSRepositor
 	_, _, _, err = testhelpers.PaperMinecraftWorldSetup(worldsRoot)
 	require.NoError(t, err)
 
-	// Create zip file using standard zip package
-	zipPath := filepath.Join(remoteTempDir, worldURI)
-	err = os.MkdirAll(filepath.Dir(zipPath), 0755)
-	require.NoError(t, err)
+	// Create tar.gz archive in memory
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
 
-	zipFile, err := os.Create(zipPath)
-	require.NoError(t, err)
-	defer zipFile.Close()
-
-	zipWriter := zip.NewWriter(zipFile)
-	defer zipWriter.Close()
-
-	// Walk through worlds directory and add files to zip
+	// Walk through worlds directory and add files to tar
 	err = filepath.Walk(worldsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -138,56 +146,60 @@ func setupWorldsRemoteWorldZip(t *testing.T, remoteStorage *adapters.FSRepositor
 			return nil
 		}
 
-		if info.IsDir() {
-			return nil
-		}
-
 		relPath, err := filepath.Rel(worldsDir, path)
-		require.NoError(t, err)
+		if err != nil {
+			return err
+		}
 
 		// Only include world directories
 		if !strings.HasPrefix(relPath, "world") {
 			return nil
 		}
 
-		header, err := zip.FileInfoHeader(info)
-		require.NoError(t, err)
-		header.Name = relPath
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.ToSlash(relPath)
 
-		writer, err := zipWriter.CreateHeader(header)
-		require.NoError(t, err)
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
 
-		file, err := os.Open(path)
-		require.NoError(t, err)
-		defer file.Close()
+		if !info.IsDir() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
 
-		_, err = io.Copy(writer, file)
-		require.NoError(t, err)
+			_, err = io.Copy(tw, file)
+			if err != nil {
+				return err
+			}
+		}
 
 		return nil
 	})
 	require.NoError(t, err)
 
-	// Close zip writer to flush
-	zipWriter.Close()
+	// Close in correct order
+	require.NoError(t, tw.Close())
+	require.NoError(t, gw.Close())
 
-	// Read the zip file and store in remote storage
-	zipData, err := os.ReadFile(zipPath)
-	require.NoError(t, err)
-
-	err = remoteStorage.Put(ctx, worldURI, zipData)
-	require.NoError(t, err)
+	// Store in mock downloader with the world URI as key
+	downloader.data[worldURI] = buf.Bytes()
 }
 
 func TestWorldsUpdater_Run(t *testing.T) {
 	t.Run("no worlds - downloads and extracts worlds", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, archive, tempDir, remoteTempDir, workRoot, cleanup := setupWorldsUpdaterServices(t)
+		localStorage, remoteStorage, librarian, validator, downloader, tempDir, remoteTempDir, workRoot, cleanup := setupWorldsUpdaterServices(t)
 		defer cleanup()
 
 		// Setup remote data with world
-		worldURI := config.RemoteBackups + "/1234567890.zip"
+		worldURI := config.RemoteBackups + "/1234567890.tar.gz"
 		setupWorldsRemoteManifest(t, remoteStorage, "1.0.0", "1.20.1", worldURI)
-		setupWorldsRemoteWorldZip(t, remoteStorage, remoteTempDir, worldURI)
+		setupWorldsRemoteTarGz(t, downloader, remoteTempDir, worldURI)
 
 		// Create local manifest without worlds
 		ctx := context.Background()
@@ -206,9 +218,8 @@ func TestWorldsUpdater_Run(t *testing.T) {
 		updater, err := services.NewWorldsUpdater(
 			librarian,
 			validator,
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		require.NoError(t, err)
@@ -233,17 +244,17 @@ func TestWorldsUpdater_Run(t *testing.T) {
 	})
 
 	t.Run("outdated world - updates worlds", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, archive, tempDir, remoteTempDir, workRoot, cleanup := setupWorldsUpdaterServices(t)
+		localStorage, remoteStorage, librarian, validator, downloader, tempDir, remoteTempDir, workRoot, cleanup := setupWorldsUpdaterServices(t)
 		defer cleanup()
 
 		// Setup remote data with newer world
-		worldURI := config.RemoteBackups + "/9999999999.zip"
+		worldURI := config.RemoteBackups + "/9999999999.tar.gz"
 		setupWorldsRemoteManifest(t, remoteStorage, "1.0.0", "1.20.1", worldURI)
-		setupWorldsRemoteWorldZip(t, remoteStorage, remoteTempDir, worldURI)
+		setupWorldsRemoteTarGz(t, downloader, remoteTempDir, worldURI)
 
 		// Create local manifest with older world
 		ctx := context.Background()
-		oldWorld := createWorldsTestWorld(config.RemoteBackups + "/old.zip")
+		oldWorld := createWorldsTestWorld(config.RemoteBackups + "/old.tar.gz")
 		localManifest := createWorldsTestManifest("1.0.0", "1.20.1", []domain.World{oldWorld})
 		manifestData, err := json.Marshal(localManifest)
 		require.NoError(t, err)
@@ -259,9 +270,8 @@ func TestWorldsUpdater_Run(t *testing.T) {
 		updater, err := services.NewWorldsUpdater(
 			librarian,
 			validator,
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		require.NoError(t, err)
@@ -282,16 +292,16 @@ func TestWorldsUpdater_Run(t *testing.T) {
 		var manifestObj domain.Manifest
 		err = json.Unmarshal(updatedManifest, &manifestObj)
 		assert.NoError(t, err)
-		assert.Contains(t, manifestObj.GetLatestWorld().URI, "9999999999.zip")
+		assert.Contains(t, manifestObj.GetLatestWorld().URI, "9999999999.tar.gz")
 	})
 
 	t.Run("up-to-date worlds - no download", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, archive, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
+		localStorage, remoteStorage, librarian, validator, downloader, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
 		defer cleanup()
 
 		// Create a fixed timestamp for both local and remote
 		fixedTime := time.Now()
-		worldURI := config.RemoteBackups + "/1234567890.zip"
+		worldURI := config.RemoteBackups + "/1234567890.tar.gz"
 		world := domain.World{
 			URI:       worldURI,
 			CreatedAt: fixedTime,
@@ -326,9 +336,8 @@ func TestWorldsUpdater_Run(t *testing.T) {
 		updater, err := services.NewWorldsUpdater(
 			librarian,
 			validator,
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		require.NoError(t, err)
@@ -348,7 +357,7 @@ func TestWorldsUpdater_Run(t *testing.T) {
 	})
 
 	t.Run("empty remote worlds - skip download", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, archive, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
+		localStorage, remoteStorage, librarian, validator, downloader, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
 		defer cleanup()
 
 		// Setup remote manifest with NO worlds
@@ -370,9 +379,8 @@ func TestWorldsUpdater_Run(t *testing.T) {
 		updater, err := services.NewWorldsUpdater(
 			librarian,
 			validator,
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		require.NoError(t, err)
@@ -383,15 +391,14 @@ func TestWorldsUpdater_Run(t *testing.T) {
 	})
 
 	t.Run("nil context - returns error", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, archive, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
+		_, _, librarian, validator, downloader, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
 		defer cleanup()
 
 		updater, err := services.NewWorldsUpdater(
 			librarian,
 			validator,
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		require.NoError(t, err)
@@ -404,15 +411,14 @@ func TestWorldsUpdater_Run(t *testing.T) {
 
 func TestNewWorldsUpdater(t *testing.T) {
 	t.Run("nil librarian returns error", func(t *testing.T) {
-		_, remoteStorage, _, validator, archive, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
+		_, _, _, validator, downloader, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
 		defer cleanup()
 
 		_, err := services.NewWorldsUpdater(
 			nil, // librarian
 			validator,
-			nil,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		assert.Error(t, err)
@@ -420,79 +426,44 @@ func TestNewWorldsUpdater(t *testing.T) {
 	})
 
 	t.Run("nil validator returns error", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, _, archive, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
+		_, _, librarian, _, downloader, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
 		defer cleanup()
 
 		_, err := services.NewWorldsUpdater(
 			librarian,
 			nil, // validator
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "validator")
 	})
 
-	t.Run("nil localStorage returns error", func(t *testing.T) {
-		_, remoteStorage, librarian, validator, archive, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
+	t.Run("nil downloader returns error", func(t *testing.T) {
+		_, _, librarian, validator, _, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
 		defer cleanup()
 
 		_, err := services.NewWorldsUpdater(
 			librarian,
 			validator,
-			nil, // localStorage
-			remoteStorage,
-			archive,
+			nil, // downloader
+			"test-bucket",
 			workRoot,
 		)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "storage")
-	})
-
-	t.Run("nil remoteStorage returns error", func(t *testing.T) {
-		localStorage, _, librarian, validator, archive, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
-		defer cleanup()
-
-		_, err := services.NewWorldsUpdater(
-			librarian,
-			validator,
-			localStorage,
-			nil, // remoteStorage
-			archive,
-			workRoot,
-		)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "storage")
-	})
-
-	t.Run("nil archive returns error", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, _, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
-		defer cleanup()
-
-		_, err := services.NewWorldsUpdater(
-			librarian,
-			validator,
-			localStorage,
-			remoteStorage,
-			nil, // archive
-			workRoot,
-		)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "archive")
+		assert.Contains(t, err.Error(), "downloader")
 	})
 
 	t.Run("nil workRoot returns error", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, archive, _, _, _, cleanup := setupWorldsUpdaterServices(t)
+		_, _, librarian, validator, downloader, _, _, _, cleanup := setupWorldsUpdaterServices(t)
 		defer cleanup()
 
 		_, err := services.NewWorldsUpdater(
 			librarian,
 			validator,
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			nil, // workRoot
 		)
 		assert.Error(t, err)
@@ -500,18 +471,20 @@ func TestNewWorldsUpdater(t *testing.T) {
 	})
 
 	t.Run("valid dependencies returns updater", func(t *testing.T) {
-		localStorage, remoteStorage, librarian, validator, archive, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
+		_, _, librarian, validator, downloader, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
 		defer cleanup()
 
 		updater, err := services.NewWorldsUpdater(
 			librarian,
 			validator,
-			localStorage,
-			remoteStorage,
-			archive,
+			downloader,
+			"test-bucket",
 			workRoot,
 		)
 		assert.NoError(t, err)
 		assert.NotNil(t, updater)
+
+		// Verify downloader implements the interface
+		var _ streamer.S3StreamDownloader = downloader
 	})
 }

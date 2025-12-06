@@ -66,16 +66,6 @@ type ValidatorService interface {
 	CheckLock(local *domain.Manifest, remote *domain.Manifest) error
 }
 
-// ArchiveService defines the archive management interface
-// ArchiveService handles compression and extraction of data archives
-type ArchiveService interface {
-	// Archive compresses source to destination
-	Archive(ctx context.Context, source string, destination string) error
-
-	// Unarchive extracts archive to destination
-	Unarchive(ctx context.Context, archive string, destination string) error
-}
-
 // CommandExecutor defines the command execution interface
 // CommandExecutor abstracts command execution for testability
 type CommandExecutor interface {
