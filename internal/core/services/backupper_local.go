@@ -22,6 +22,7 @@ var (
 // LocalBackupper implements BackupperService for local backup storage with streaming
 type LocalBackupper struct {
 	workRoot *os.Root
+	events   chan<- ports.Event // Optional: channel for progress events
 }
 
 // Compile-time check to ensure LocalBackupper implements ports.BackupperService
@@ -29,13 +30,14 @@ var _ ports.BackupperService = (*LocalBackupper)(nil)
 
 // NewLocalBackupper creates a new local backupper with streaming support
 // Validates all dependencies are non-nil per NASA JPL defensive programming standards
-func NewLocalBackupper(workRoot *os.Root) (*LocalBackupper, error) {
+func NewLocalBackupper(workRoot *os.Root, events chan<- ports.Event) (*LocalBackupper, error) {
 	if workRoot == nil {
 		return nil, ErrLocalBackupperWorkRootNil
 	}
 
 	backupper := &LocalBackupper{
 		workRoot: workRoot,
+		events:   events,
 	}
 
 	// Postcondition assertion
@@ -91,6 +93,7 @@ func (b *LocalBackupper) Run(ctx context.Context) (string, error) {
 		Dirs:   existingDirs,
 		Bucket: "local", // Not used by LocalFileWriter but required by Push
 		Key:    backupName,
+		Events: b.events,
 	}
 
 	_, err = streamer.Push(ctx, cfg, localWriter)

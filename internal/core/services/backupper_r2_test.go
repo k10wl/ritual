@@ -114,6 +114,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			workRoot,
 			"",  // no local backup
 			nil, // no backup condition
+			nil, // no events
 		)
 		require.NoError(t, err)
 
@@ -138,6 +139,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			"test-bucket",
 			workRoot,
 			"",
+			nil,
 			nil,
 		)
 		require.NoError(t, err)
@@ -167,6 +169,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			workRoot,
 			"",
 			nil,
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -190,6 +193,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			workRoot,
 			"",
 			nil,
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -204,7 +208,7 @@ func TestNewR2Backupper(t *testing.T) {
 		_, _, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(nil, "bucket", workRoot, "", nil)
+		_, err := services.NewR2Backupper(nil, "bucket", workRoot, "", nil, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "uploader")
 	})
@@ -213,7 +217,7 @@ func TestNewR2Backupper(t *testing.T) {
 		uploader, _, _, _, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(uploader, "bucket", nil, "", nil)
+		_, err := services.NewR2Backupper(uploader, "bucket", nil, "", nil, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "workRoot")
 	})
@@ -222,7 +226,7 @@ func TestNewR2Backupper(t *testing.T) {
 		uploader, _, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		backupper, err := services.NewR2Backupper(uploader, "bucket", workRoot, "", nil)
+		backupper, err := services.NewR2Backupper(uploader, "bucket", workRoot, "", nil, nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, backupper)
 	})
@@ -246,6 +250,7 @@ func TestR2Backupper_LocalBackup(t *testing.T) {
 			workRoot,
 			localBackupDir,
 			func() bool { return true },
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -276,6 +281,7 @@ func TestR2Backupper_LocalBackup(t *testing.T) {
 			workRoot,
 			localBackupDir,
 			func() bool { return false },
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -310,6 +316,7 @@ func TestR2Backupper_StreamingVerification(t *testing.T) {
 			"test-bucket",
 			tempRoot,
 			"",
+			nil,
 			nil,
 		)
 		require.NoError(t, err)

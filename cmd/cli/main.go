@@ -34,20 +34,9 @@ func main() {
 		return
 	}
 
-	// Create event channel and start consumer
-	events := make(chan ports.Event, 100)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		consumeEvents(events)
-	}()
-
 	// Ensure root directory exists
 	if err := os.MkdirAll(config.RootPath, config.DirPermission); err != nil {
 		fmt.Printf("Failed to create root directory: %v\n", err)
-		close(events)
-		wg.Wait()
 		return
 	}
 
@@ -55,11 +44,28 @@ func main() {
 	workRoot, err := os.OpenRoot(config.RootPath)
 	if err != nil {
 		fmt.Printf("Failed to open work root: %v\n", err)
-		close(events)
-		wg.Wait()
 		return
 	}
 	defer workRoot.Close()
+
+	// Create log file
+	logFile, logCleanup, err := createLogFile(workRoot)
+	if err != nil {
+		fmt.Printf("Warning: failed to create log file: %v\n", err)
+		// Continue without logging to file
+	}
+	if logCleanup != nil {
+		defer logCleanup()
+	}
+
+	// Create event channel and start consumer
+	events := make(chan ports.Event, 100)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		consumeEvents(events, logFile)
+	}()
 
 	// Create local storage
 	localStorage, err := adapters.NewFSRepository(workRoot)
@@ -117,7 +123,7 @@ func main() {
 	updaters := []ports.UpdaterService{instanceUpdater, worldsUpdater}
 
 	// Create backuppers
-	localBackupper, err := services.NewLocalBackupper(workRoot)
+	localBackupper, err := services.NewLocalBackupper(workRoot, events)
 	if err != nil {
 		fmt.Printf("Failed to create local backupper: %v\n", err)
 		close(events)
@@ -125,7 +131,7 @@ func main() {
 		return
 	}
 
-	r2Backupper, err := services.NewR2Backupper(r2Uploader, envBucket, workRoot, "", nil)
+	r2Backupper, err := services.NewR2Backupper(r2Uploader, envBucket, workRoot, "", nil, events)
 	if err != nil {
 		fmt.Printf("Failed to create R2 backupper: %v\n", err)
 		close(events)
@@ -152,7 +158,15 @@ func main() {
 		return
 	}
 
-	retentions := []ports.RetentionService{localRetention, r2Retention}
+	logRetention, err := services.NewLogRetention(localStorage, events)
+	if err != nil {
+		fmt.Printf("Failed to create log retention: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	retentions := []ports.RetentionService{localRetention, r2Retention, logRetention}
 
 	// Create server runner
 	commandExecutor := adapters.NewCommandExecutorAdapter()

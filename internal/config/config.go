@@ -17,6 +17,7 @@ const (
 	RemoteBackups = "worlds"
 	InstanceDir   = "instance"
 	TmpDir        = "temp"
+	LogsDir       = "logs"
 )
 
 // File names and keys
@@ -33,9 +34,11 @@ const (
 	R2MaxBackups    = 2
 	LocalMaxBackups = 2
 	MaxFiles        = 1000
+	MaxLogFiles     = 10
 
 	TimestampFormat = "20060102150405"
 	BackupExtension = ".tar"
+	LogExtension    = ".log"
 )
 
 // World directories (relative to instance)

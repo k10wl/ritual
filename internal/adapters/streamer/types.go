@@ -3,6 +3,8 @@ package streamer
 import (
 	"context"
 	"io"
+
+	"ritual/internal/core/ports"
 )
 
 // ConflictStrategy defines how to handle existing files during Pull
@@ -17,11 +19,12 @@ const (
 
 // PushConfig configures the Push operation
 type PushConfig struct {
-	Dirs         []string    // Source directories to archive
-	Bucket       string      // R2 bucket name
-	Key          string      // R2 object key (path/filename.tar.gz)
-	LocalPath    string      // Optional: local backup path. Empty = no local backup
-	ShouldBackup func() bool // Condition for local backup. Evaluated once before streaming.
+	Dirs         []string           // Source directories to archive
+	Bucket       string             // R2 bucket name
+	Key          string             // R2 object key (path/filename.tar.gz)
+	LocalPath    string             // Optional: local backup path. Empty = no local backup
+	ShouldBackup func() bool        // Condition for local backup. Evaluated once before streaming.
+	Events       chan<- ports.Event // Optional: channel for progress events
 }
 
 // PullConfig configures the Pull operation

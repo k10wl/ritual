@@ -10,6 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
+	"time"
+
+	"ritual/internal/core/ports"
 )
 
 // Push error constants
@@ -76,6 +80,12 @@ func Push(ctx context.Context, cfg PushConfig, uploader S3StreamUploader) (Resul
 	var bytesWritten int64
 	countWriter := &countingWriter{w: hashWriter, n: &bytesWritten}
 
+	// Progress writer wraps countWriter to emit archive progress events
+	var tarWriter io.Writer = countWriter
+	if cfg.Events != nil {
+		tarWriter = newProgressWriter(countWriter, estimatedSize, cfg.Events)
+	}
+
 	var producerErr error
 	var consumerErr error
 	var wg sync.WaitGroup
@@ -91,7 +101,7 @@ func Push(ctx context.Context, cfg PushConfig, uploader S3StreamUploader) (Resul
 			}
 		}()
 
-		producerErr = runProducer(ctx, cfg.Dirs, countWriter, pipeWriter)
+		producerErr = runProducer(ctx, cfg.Dirs, tarWriter, pipeWriter)
 		if producerErr != nil {
 			pipeWriter.CloseWithError(producerErr)
 		}
@@ -302,6 +312,53 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	n, err := c.w.Write(p)
 	if c.n != nil {
 		*c.n += int64(n)
+	}
+	return n, err
+}
+
+// progressWriter wraps a writer and emits archive progress events
+type progressWriter struct {
+	w             io.Writer
+	bytesWritten  int64
+	estimatedSize int64
+	lastLogTime   time.Time
+	logInterval   time.Duration
+	events        chan<- ports.Event
+}
+
+func newProgressWriter(w io.Writer, estimatedSize int64, events chan<- ports.Event) *progressWriter {
+	return &progressWriter{
+		w:             w,
+		estimatedSize: estimatedSize,
+		lastLogTime:   time.Now(),
+		logInterval:   time.Second,
+		events:        events,
+	}
+}
+
+func (pw *progressWriter) Write(p []byte) (int, error) {
+	n, err := pw.w.Write(p)
+	if n > 0 {
+		atomic.AddInt64(&pw.bytesWritten, int64(n))
+		now := time.Now()
+		if now.Sub(pw.lastLogTime) >= pw.logInterval {
+			pw.lastLogTime = now
+			bytesWritten := atomic.LoadInt64(&pw.bytesWritten)
+			mb := float64(bytesWritten) / (1024 * 1024)
+			data := map[string]any{"archived_mb": fmt.Sprintf("%.2f", mb)}
+			if pw.estimatedSize > 0 {
+				pct := float64(bytesWritten) / float64(pw.estimatedSize) * 100
+				if pct > 100 {
+					pct = 99 // Cap at 99% until complete
+				}
+				data["percent"] = pct
+			}
+			ports.SendEvent(pw.events, ports.UpdateEvent{
+				Operation: "archive",
+				Message:   "Archiving progress",
+				Data:      data,
+			})
+		}
 	}
 	return n, err
 }

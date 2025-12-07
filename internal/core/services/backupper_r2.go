@@ -25,8 +25,9 @@ type R2Backupper struct {
 	uploader     streamer.S3StreamUploader
 	bucket       string
 	workRoot     *os.Root
-	localPath    string      // Optional local backup path
-	shouldBackup func() bool // Condition for local backup
+	localPath    string             // Optional local backup path
+	shouldBackup func() bool        // Condition for local backup
+	events       chan<- ports.Event // Optional: channel for progress events
 }
 
 // Compile-time check to ensure R2Backupper implements ports.BackupperService
@@ -40,6 +41,7 @@ func NewR2Backupper(
 	workRoot *os.Root,
 	localPath string,
 	shouldBackup func() bool,
+	events chan<- ports.Event,
 ) (*R2Backupper, error) {
 	if uploader == nil {
 		return nil, ErrR2BackupperUploaderNil
@@ -54,6 +56,7 @@ func NewR2Backupper(
 		workRoot:     workRoot,
 		localPath:    localPath,
 		shouldBackup: shouldBackup,
+		events:       events,
 	}
 
 	// Postcondition assertion
@@ -110,6 +113,7 @@ func (b *R2Backupper) Run(ctx context.Context) (string, error) {
 		Key:          key,
 		LocalPath:    localBackupPath,
 		ShouldBackup: b.shouldBackup,
+		Events:       b.events,
 	}
 
 	_, err := streamer.Push(ctx, cfg, b.uploader)

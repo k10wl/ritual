@@ -66,7 +66,7 @@ func TestLocalBackupper_Run(t *testing.T) {
 		setupLocalBackupperWorldData(t, tempDir)
 
 		// Create LocalBackupper
-		backupper, err := services.NewLocalBackupper(workRoot)
+		backupper, err := services.NewLocalBackupper(workRoot, nil)
 		require.NoError(t, err)
 
 		// Execute backup
@@ -85,7 +85,7 @@ func TestLocalBackupper_Run(t *testing.T) {
 		setupLocalBackupperWorldData(t, tempDir)
 
 		// Create LocalBackupper
-		backupper, err := services.NewLocalBackupper(workRoot)
+		backupper, err := services.NewLocalBackupper(workRoot, nil)
 		require.NoError(t, err)
 
 		// Execute backup
@@ -107,7 +107,7 @@ func TestLocalBackupper_Run(t *testing.T) {
 		setupLocalBackupperWorldData(t, tempDir)
 
 		// Create LocalBackupper
-		backupper, err := services.NewLocalBackupper(workRoot)
+		backupper, err := services.NewLocalBackupper(workRoot, nil)
 		require.NoError(t, err)
 
 		// Execute backup
@@ -123,7 +123,7 @@ func TestLocalBackupper_Run(t *testing.T) {
 		_, _, workRoot, cleanup := setupLocalBackupperServices(t)
 		defer cleanup()
 
-		backupper, err := services.NewLocalBackupper(workRoot)
+		backupper, err := services.NewLocalBackupper(workRoot, nil)
 		require.NoError(t, err)
 
 		_, err = backupper.Run(nil)
@@ -134,7 +134,7 @@ func TestLocalBackupper_Run(t *testing.T) {
 
 func TestNewLocalBackupper(t *testing.T) {
 	t.Run("nil workRoot returns error", func(t *testing.T) {
-		_, err := services.NewLocalBackupper(nil)
+		_, err := services.NewLocalBackupper(nil, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "workRoot")
 	})
@@ -143,7 +143,7 @@ func TestNewLocalBackupper(t *testing.T) {
 		_, _, workRoot, cleanup := setupLocalBackupperServices(t)
 		defer cleanup()
 
-		backupper, err := services.NewLocalBackupper(workRoot)
+		backupper, err := services.NewLocalBackupper(workRoot, nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, backupper)
 	})
