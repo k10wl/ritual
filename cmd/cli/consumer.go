@@ -6,9 +6,15 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"ritual/internal/core/ports"
 )
+
+// timestamp returns current time in HH:MM:SS format
+func timestamp() string {
+	return time.Now().Format("15:04:05")
+}
 
 // consumeEvents reads events from channel and prints to stdout and optional log file
 // Runs until channel is closed
@@ -24,21 +30,21 @@ func consumeEvents(events <-chan ports.Event, logFile io.Writer) {
 	for evt := range events {
 		switch e := evt.(type) {
 		case ports.StartEvent:
-			fmt.Fprintf(writer, "[%s] Starting...\n", e.Operation)
+			fmt.Fprintf(writer, "[%s] [%s] Starting...\n", timestamp(), e.Operation)
 		case ports.UpdateEvent:
 			if e.Data != nil {
 				if pct, ok := e.Data["percent"]; ok {
-					fmt.Fprintf(writer, "[%s] %s (%.1f%%)\n", e.Operation, e.Message, pct)
+					fmt.Fprintf(writer, "[%s] [%s] %s (%.1f%%)\n", timestamp(), e.Operation, e.Message, pct)
 				} else {
-					fmt.Fprintf(writer, "[%s] %s %v\n", e.Operation, e.Message, e.Data)
+					fmt.Fprintf(writer, "[%s] [%s] %s %v\n", timestamp(), e.Operation, e.Message, e.Data)
 				}
 			} else {
-				fmt.Fprintf(writer, "[%s] %s\n", e.Operation, e.Message)
+				fmt.Fprintf(writer, "[%s] [%s] %s\n", timestamp(), e.Operation, e.Message)
 			}
 		case ports.FinishEvent:
-			fmt.Fprintf(writer, "[%s] Completed\n", e.Operation)
+			fmt.Fprintf(writer, "[%s] [%s] Completed\n", timestamp(), e.Operation)
 		case ports.ErrorEvent:
-			fmt.Fprintf(writer, "[%s] ERROR: %v\n", e.Operation, e.Err)
+			fmt.Fprintf(writer, "[%s] [%s] ERROR: %v\n", timestamp(), e.Operation, e.Err)
 		case ports.PromptEvent:
 			handlePrompt(reader, e, writer)
 		}
