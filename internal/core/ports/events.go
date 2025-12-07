@@ -28,10 +28,19 @@ type ErrorEvent struct {
 	Err       error
 }
 
+// PromptEvent requests user input
+type PromptEvent struct {
+	ID           string
+	Prompt       string
+	DefaultValue string
+	ResponseChan chan<- any
+}
+
 func (StartEvent) sealed()  {}
 func (UpdateEvent) sealed() {}
 func (FinishEvent) sealed() {}
 func (ErrorEvent) sealed()  {}
+func (PromptEvent) sealed() {}
 
 // SendEvent safely sends an event to the channel if it's not nil
 func SendEvent(events chan<- Event, evt Event) {

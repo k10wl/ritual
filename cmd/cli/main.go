@@ -8,7 +8,6 @@ import (
 
 	"ritual/internal/adapters"
 	"ritual/internal/config"
-	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/services"
 )
@@ -174,8 +173,16 @@ func main() {
 		return
 	}
 
-	// Create server config
-	server, err := domain.NewServer("0.0.0.0:25565", 4096)
+	// Prompt for settings and create server config
+	settings, err := services.PromptSettings(events)
+	if err != nil {
+		fmt.Printf("Failed to get settings: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	server, err := settings.ToServer()
 	if err != nil {
 		fmt.Printf("Failed to create server config: %v\n", err)
 		close(events)

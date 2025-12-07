@@ -1,13 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"os"
+	"strings"
+
 	"ritual/internal/core/ports"
 )
 
 // consumeEvents reads events from channel and prints to stdout
 // Runs until channel is closed
 func consumeEvents(events <-chan ports.Event) {
+	reader := bufio.NewReader(os.Stdin)
+
 	for evt := range events {
 		switch e := evt.(type) {
 		case ports.StartEvent:
@@ -26,6 +32,30 @@ func consumeEvents(events <-chan ports.Event) {
 			fmt.Printf("[%s] Completed\n", e.Operation)
 		case ports.ErrorEvent:
 			fmt.Printf("[%s] ERROR: %v\n", e.Operation, e.Err)
+		case ports.PromptEvent:
+			handlePrompt(reader, e)
 		}
+	}
+}
+
+// handlePrompt displays prompt and sends user response back via channel
+func handlePrompt(reader *bufio.Reader, e ports.PromptEvent) {
+	if e.DefaultValue != "" {
+		fmt.Printf("%s [%s]: ", e.Prompt, e.DefaultValue)
+	} else {
+		fmt.Printf("%s: ", e.Prompt)
+	}
+
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		e.ResponseChan <- any(e.DefaultValue)
+		return
+	}
+
+	input = strings.TrimSpace(input)
+	if input == "" {
+		e.ResponseChan <- any(e.DefaultValue)
+	} else {
+		e.ResponseChan <- any(input)
 	}
 }
