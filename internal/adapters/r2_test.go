@@ -46,7 +46,7 @@ func (m *MockS3Client) CopyObject(ctx context.Context, params *s3.CopyObjectInpu
 
 func TestR2Repository_SuccessCases(t *testing.T) {
 	mockClient := new(MockS3Client)
-	repo := NewR2RepositoryWithClient(mockClient, "test-bucket")
+	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", NewNopLogger())
 
 	t.Run("get success", func(t *testing.T) {
 		key := "test-key"
@@ -120,7 +120,7 @@ func TestR2Repository_SuccessCases(t *testing.T) {
 
 func TestR2Repository_ErrorConditions(t *testing.T) {
 	mockClient := new(MockS3Client)
-	repo := NewR2RepositoryWithClient(mockClient, "test-bucket")
+	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", NewNopLogger())
 
 	t.Run("get error", func(t *testing.T) {
 		key := "test-key"
@@ -190,7 +190,7 @@ func TestR2Repository_ErrorConditions(t *testing.T) {
 func TestR2Repository_EdgeCases(t *testing.T) {
 	t.Run("empty key", func(t *testing.T) {
 		mockClient := new(MockS3Client)
-		repo := NewR2RepositoryWithClient(mockClient, "test-bucket")
+		repo := NewR2RepositoryWithClient(mockClient, "test-bucket", NewNopLogger())
 		key := ""
 		expectedData := []byte("test data")
 		body := io.NopCloser(bytes.NewReader(expectedData))
@@ -208,7 +208,7 @@ func TestR2Repository_EdgeCases(t *testing.T) {
 
 	t.Run("empty data", func(t *testing.T) {
 		mockClient := new(MockS3Client)
-		repo := NewR2RepositoryWithClient(mockClient, "test-bucket")
+		repo := NewR2RepositoryWithClient(mockClient, "test-bucket", NewNopLogger())
 		key := "test-key"
 		data := []byte{}
 
@@ -222,7 +222,7 @@ func TestR2Repository_EdgeCases(t *testing.T) {
 
 	t.Run("nil data", func(t *testing.T) {
 		mockClient := new(MockS3Client)
-		repo := NewR2RepositoryWithClient(mockClient, "test-bucket")
+		repo := NewR2RepositoryWithClient(mockClient, "test-bucket", NewNopLogger())
 		key := "test-key"
 		data := []byte(nil)
 
@@ -236,7 +236,7 @@ func TestR2Repository_EdgeCases(t *testing.T) {
 
 	t.Run("empty prefix", func(t *testing.T) {
 		mockClient := new(MockS3Client)
-		repo := NewR2RepositoryWithClient(mockClient, "test-bucket")
+		repo := NewR2RepositoryWithClient(mockClient, "test-bucket", NewNopLogger())
 		prefix := ""
 		expectedKeys := []string{"file1", "file2"}
 
@@ -256,7 +256,7 @@ func TestR2Repository_EdgeCases(t *testing.T) {
 
 	t.Run("list with nil keys", func(t *testing.T) {
 		mockClient := new(MockS3Client)
-		repo := NewR2RepositoryWithClient(mockClient, "test-bucket")
+		repo := NewR2RepositoryWithClient(mockClient, "test-bucket", NewNopLogger())
 		prefix := "test-prefix"
 		validKey := "valid-key"
 

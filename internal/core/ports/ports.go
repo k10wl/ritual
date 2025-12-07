@@ -5,6 +5,23 @@ import (
 	"ritual/internal/core/domain"
 )
 
+// Logger defines the interface for logging operations
+// This abstraction allows switching between different logging implementations
+// including console loggers, TUI loggers, or any other output mechanism
+type Logger interface {
+	// Info logs informational messages with structured key-value pairs
+	Info(msg string, args ...any)
+
+	// Warn logs warning messages with structured key-value pairs
+	Warn(msg string, args ...any)
+
+	// Error logs error messages with structured key-value pairs
+	Error(msg string, args ...any)
+
+	// Debug logs debug messages with structured key-value pairs
+	Debug(msg string, args ...any)
+}
+
 // StorageRepository defines the interface for storage operations
 // This abstraction allows switching between local filesystem and cloud storage
 type StorageRepository interface {

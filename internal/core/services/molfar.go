@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
@@ -29,7 +28,7 @@ type MolfarService struct {
 	retentions    []ports.RetentionService
 	serverRunner  ports.ServerRunner
 	librarian     ports.LibrarianService
-	logger        *slog.Logger
+	logger        ports.Logger
 	workRoot      *os.Root
 	currentLockID string // Tracks the current lock ID for ownership validation (internal use only)
 }
@@ -42,7 +41,7 @@ func NewMolfarService(
 	retentions []ports.RetentionService,
 	serverRunner ports.ServerRunner,
 	librarian ports.LibrarianService,
-	logger *slog.Logger,
+	logger ports.Logger,
 	workRoot *os.Root,
 ) (*MolfarService, error) {
 	if updaters == nil {

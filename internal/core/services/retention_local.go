@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 
@@ -22,19 +21,24 @@ var (
 // LocalRetention implements RetentionService for local backup storage
 type LocalRetention struct {
 	localStorage ports.StorageRepository
+	logger       ports.Logger
 }
 
 // Compile-time check to ensure LocalRetention implements ports.RetentionService
 var _ ports.RetentionService = (*LocalRetention)(nil)
 
 // NewLocalRetention creates a new local retention service
-func NewLocalRetention(localStorage ports.StorageRepository) (*LocalRetention, error) {
+func NewLocalRetention(localStorage ports.StorageRepository, logger ports.Logger) (*LocalRetention, error) {
 	if localStorage == nil {
 		return nil, ErrLocalRetentionStorageNil
+	}
+	if logger == nil {
+		return nil, errors.New("logger cannot be nil")
 	}
 
 	return &LocalRetention{
 		localStorage: localStorage,
+		logger:       logger,
 	}, nil
 }
 
@@ -95,7 +99,7 @@ func (r *LocalRetention) Apply(ctx context.Context, manifest *domain.Manifest) e
 	for _, key := range backups {
 		if !validURIs[key] {
 			// Dangling backup - not in manifest
-			slog.Info("Found dangling local backup", "key", key)
+			r.logger.Info("Found dangling local backup", "key", key)
 			toDelete = append(toDelete, key)
 		} else {
 			validBackups = append(validBackups, key)
@@ -104,7 +108,7 @@ func (r *LocalRetention) Apply(ctx context.Context, manifest *domain.Manifest) e
 
 	// Second pass: apply retention limit to valid backups
 	if len(validBackups) > config.LocalMaxBackups {
-		slog.Info("Applying local retention policy",
+		r.logger.Info("Applying local retention policy",
 			"total_valid", len(validBackups),
 			"max_allowed", config.LocalMaxBackups,
 			"to_delete", len(validBackups)-config.LocalMaxBackups)
@@ -113,7 +117,7 @@ func (r *LocalRetention) Apply(ctx context.Context, manifest *domain.Manifest) e
 
 	// Delete identified backups
 	for _, key := range toDelete {
-		slog.Info("Deleting local backup", "key", key)
+		r.logger.Info("Deleting local backup", "key", key)
 		if err := r.localStorage.Delete(ctx, key); err != nil {
 			return fmt.Errorf("failed to delete local backup %s: %w", key, err)
 		}

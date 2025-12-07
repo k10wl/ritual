@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 
@@ -22,19 +21,24 @@ var (
 // R2Retention implements RetentionService for R2 backup storage
 type R2Retention struct {
 	remoteStorage ports.StorageRepository
+	logger        ports.Logger
 }
 
 // Compile-time check to ensure R2Retention implements ports.RetentionService
 var _ ports.RetentionService = (*R2Retention)(nil)
 
 // NewR2Retention creates a new R2 retention service
-func NewR2Retention(remoteStorage ports.StorageRepository) (*R2Retention, error) {
+func NewR2Retention(remoteStorage ports.StorageRepository, logger ports.Logger) (*R2Retention, error) {
 	if remoteStorage == nil {
 		return nil, ErrR2RetentionStorageNil
+	}
+	if logger == nil {
+		return nil, errors.New("logger cannot be nil")
 	}
 
 	return &R2Retention{
 		remoteStorage: remoteStorage,
+		logger:        logger,
 	}, nil
 }
 
@@ -95,7 +99,7 @@ func (r *R2Retention) Apply(ctx context.Context, manifest *domain.Manifest) erro
 	for _, key := range backups {
 		if !validURIs[key] {
 			// Dangling backup - not in manifest
-			slog.Info("Found dangling R2 backup", "key", key)
+			r.logger.Info("Found dangling R2 backup", "key", key)
 			toDelete = append(toDelete, key)
 		} else {
 			validBackups = append(validBackups, key)
@@ -104,7 +108,7 @@ func (r *R2Retention) Apply(ctx context.Context, manifest *domain.Manifest) erro
 
 	// Second pass: apply retention limit to valid backups
 	if len(validBackups) > config.R2MaxBackups {
-		slog.Info("Applying R2 retention policy",
+		r.logger.Info("Applying R2 retention policy",
 			"total_valid", len(validBackups),
 			"max_allowed", config.R2MaxBackups,
 			"to_delete", len(validBackups)-config.R2MaxBackups)
@@ -113,7 +117,7 @@ func (r *R2Retention) Apply(ctx context.Context, manifest *domain.Manifest) erro
 
 	// Delete identified backups
 	for _, key := range toDelete {
-		slog.Info("Deleting R2 backup", "key", key)
+		r.logger.Info("Deleting R2 backup", "key", key)
 		if err := r.remoteStorage.Delete(ctx, key); err != nil {
 			return fmt.Errorf("failed to delete R2 backup %s: %w", key, err)
 		}

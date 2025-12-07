@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"log/slog"
 	"os"
 
 	"ritual/internal/adapters"
@@ -34,7 +33,7 @@ func main() {
 		return
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := adapters.NewSlogLogger()
 
 	// Ensure root directory exists
 	if err := os.MkdirAll(config.RootPath, config.DirPermission); err != nil {
@@ -58,7 +57,7 @@ func main() {
 	}
 
 	// Create remote storage (R2) and uploader
-	remoteStorage, r2Uploader, err := adapters.NewR2RepositoryWithUploader(envBucket, envAccountID, envAccessKeyID, envSecretAccessKey)
+	remoteStorage, r2Uploader, err := adapters.NewR2RepositoryWithUploader(envBucket, envAccountID, envAccessKeyID, envSecretAccessKey, logger)
 	if err != nil {
 		logger.Error("Failed to create remote storage", "error", err)
 		return
@@ -85,7 +84,7 @@ func main() {
 		return
 	}
 
-	worldsUpdater, err := services.NewWorldsUpdater(librarian, validator, remoteStorage, envBucket, workRoot)
+	worldsUpdater, err := services.NewWorldsUpdater(librarian, validator, remoteStorage, envBucket, workRoot, logger)
 	if err != nil {
 		logger.Error("Failed to create worlds updater", "error", err)
 		return
@@ -109,13 +108,13 @@ func main() {
 	backuppers := []ports.BackupperService{localBackupper, r2Backupper}
 
 	// Create retention services
-	localRetention, err := services.NewLocalRetention(localStorage)
+	localRetention, err := services.NewLocalRetention(localStorage, logger)
 	if err != nil {
 		logger.Error("Failed to create local retention", "error", err)
 		return
 	}
 
-	r2Retention, err := services.NewR2Retention(remoteStorage)
+	r2Retention, err := services.NewR2Retention(remoteStorage, logger)
 	if err != nil {
 		logger.Error("Failed to create R2 retention", "error", err)
 		return

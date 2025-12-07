@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"ritual/internal/adapters"
@@ -124,12 +123,15 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 	)
 	assert.NoError(t, err)
 
+	logger := adapters.NewNopLogger()
+
 	worldsUpdater, err := services.NewWorldsUpdater(
 		librarianService,
 		validatorService,
 		mockDownloader,
 		"test-bucket",
 		tempRoot,
+		logger,
 	)
 	assert.NoError(t, err)
 
@@ -142,7 +144,7 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 	backuppers := []ports.BackupperService{localBackupper}
 
 	// Create local retention service
-	localRetention, err := services.NewLocalRetention(localStorage)
+	localRetention, err := services.NewLocalRetention(localStorage, logger)
 	assert.NoError(t, err)
 
 	retentions := []ports.RetentionService{localRetention}
@@ -154,7 +156,7 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 		retentions,
 		mockServerRunner,
 		librarianService,
-		slog.Default(),
+		logger,
 		tempRoot,
 	)
 	assert.NoError(t, err)
@@ -635,7 +637,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 			retentions,
 			&MockServerRunner{},
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.NoError(t, err)
@@ -1084,7 +1086,7 @@ func TestMolfarService_Exit(t *testing.T) {
 			retentions,
 			&MockServerRunner{},
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.NoError(t, err)
@@ -1405,7 +1407,7 @@ func TestNewMolfarService(t *testing.T) {
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
 			&MockServerRunner{},
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.Error(t, err)
@@ -1431,7 +1433,7 @@ func TestNewMolfarService(t *testing.T) {
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
 			&MockServerRunner{},
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.Error(t, err)
@@ -1457,7 +1459,7 @@ func TestNewMolfarService(t *testing.T) {
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
 			&MockServerRunner{},
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.Error(t, err)
@@ -1483,7 +1485,7 @@ func TestNewMolfarService(t *testing.T) {
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
 			&MockServerRunner{},
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.Error(t, err)
@@ -1509,7 +1511,7 @@ func TestNewMolfarService(t *testing.T) {
 			nil,
 			&MockServerRunner{},
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.Error(t, err)
@@ -1535,7 +1537,7 @@ func TestNewMolfarService(t *testing.T) {
 			[]ports.RetentionService{nil},
 			&MockServerRunner{},
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.Error(t, err)
@@ -1561,7 +1563,7 @@ func TestNewMolfarService(t *testing.T) {
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
 			nil,
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.Error(t, err)
@@ -1580,7 +1582,7 @@ func TestNewMolfarService(t *testing.T) {
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
 			&MockServerRunner{},
 			nil,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.Error(t, err)
@@ -1632,7 +1634,7 @@ func TestNewMolfarService(t *testing.T) {
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
 			&MockServerRunner{},
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			nil,
 		)
 		assert.Error(t, err)
@@ -1658,7 +1660,7 @@ func TestNewMolfarService(t *testing.T) {
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
 			&MockServerRunner{},
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.NoError(t, err)
@@ -1684,7 +1686,7 @@ func TestNewMolfarService(t *testing.T) {
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
 			&MockServerRunner{},
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.NoError(t, err)
@@ -1710,7 +1712,7 @@ func TestNewMolfarService(t *testing.T) {
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
 			&MockServerRunner{},
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.NoError(t, err)
@@ -1736,7 +1738,7 @@ func TestNewMolfarService(t *testing.T) {
 			[]ports.RetentionService{},
 			&MockServerRunner{},
 			librarianService,
-			slog.Default(),
+			adapters.NewNopLogger(),
 			tempRoot,
 		)
 		assert.NoError(t, err)

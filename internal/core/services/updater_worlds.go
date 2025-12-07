@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"ritual/internal/adapters/streamer"
@@ -31,7 +30,7 @@ type WorldsUpdater struct {
 	downloader streamer.S3StreamDownloader
 	bucket     string
 	workRoot   *os.Root
-	logger     *slog.Logger
+	logger     ports.Logger
 }
 
 // Compile-time check to ensure WorldsUpdater implements ports.UpdaterService
@@ -45,6 +44,7 @@ func NewWorldsUpdater(
 	downloader streamer.S3StreamDownloader,
 	bucket string,
 	workRoot *os.Root,
+	logger ports.Logger,
 ) (*WorldsUpdater, error) {
 	if librarian == nil {
 		return nil, ErrWorldsUpdaterLibrarianNil
@@ -58,6 +58,9 @@ func NewWorldsUpdater(
 	if workRoot == nil {
 		return nil, ErrWorldsUpdaterWorkRootNil
 	}
+	if logger == nil {
+		return nil, errors.New("logger cannot be nil")
+	}
 
 	updater := &WorldsUpdater{
 		librarian:  librarian,
@@ -65,7 +68,7 @@ func NewWorldsUpdater(
 		downloader: downloader,
 		bucket:     bucket,
 		workRoot:   workRoot,
-		logger:     slog.Default(),
+		logger:     logger,
 	}
 
 	// Postcondition assertion
