@@ -13,11 +13,6 @@ import (
 	"ritual/internal/core/services"
 )
 
-func waitForEnter() {
-	fmt.Println("\nPress Enter to exit...")
-	bufio.NewReader(os.Stdin).ReadBytes('\n')
-}
-
 // Injected at build time via ldflags
 var (
 	envAccountID       string
@@ -27,7 +22,13 @@ var (
 )
 
 func main() {
-	defer waitForEnter()
+	success := false
+	defer func() {
+		if !success {
+			fmt.Println("\nPress Enter to exit...")
+			bufio.NewReader(os.Stdin).ReadBytes('\n')
+		}
+	}()
 
 	if envAccountID == "" || envAccessKeyID == "" || envSecretAccessKey == "" || envBucket == "" {
 		fmt.Println("Build error: R2 credentials not injected")
@@ -214,4 +215,5 @@ func main() {
 	}
 
 	fmt.Println("Ritual completed successfully")
+	success = true
 }
