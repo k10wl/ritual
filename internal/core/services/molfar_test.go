@@ -691,7 +691,7 @@ func TestMolfarService_Run(t *testing.T) {
 					}
 
 		// Execute Run
-		err = molfar.Run(server, "test-session")
+		err = molfar.Run(server)
 		assert.NoError(t, err)
 
 		// Verify manifests are locked after Run execution
@@ -712,7 +712,7 @@ func TestMolfarService_Run(t *testing.T) {
 		// Verify lock IDs match between local and remote manifests
 		assert.Equal(t, localManifestObj.LockedBy, remoteManifestObj.LockedBy, "Lock IDs should match between local and remote manifests")
 		assert.NotEmpty(t, localManifestObj.LockedBy, "Lock ID should not be empty")
-		assert.Contains(t, localManifestObj.LockedBy, "__", "Lock ID should contain hostname and timestamp separator")
+		assert.Contains(t, localManifestObj.LockedBy, "::", "Lock ID should contain hostname and timestamp separator")
 	})
 
 	t.Run("manifest update during run execution", func(t *testing.T) {
@@ -760,7 +760,7 @@ func TestMolfarService_Run(t *testing.T) {
 					}
 
 		// Execute Run - should succeed and lock manifests (Run doesn't update versions)
-		err = molfar.Run(server, "test-session")
+		err = molfar.Run(server)
 		assert.NoError(t, err)
 
 		// Verify manifests are locked after Run execution (versions remain unchanged)
@@ -831,7 +831,7 @@ func TestMolfarService_Run(t *testing.T) {
 					}
 
 		// Execute Run
-		err = molfar.Run(server, "test-session")
+		err = molfar.Run(server)
 		assert.NoError(t, err)
 
 		// Verify remote manifest was fetched and used for lock acquisition
@@ -857,7 +857,7 @@ func TestMolfarService_Run(t *testing.T) {
 		molfar, _, _, _, _, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
-		err := molfar.Run(nil, "test-session")
+		err := molfar.Run(nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "server cannot be nil")
 	})
@@ -866,7 +866,7 @@ func TestMolfarService_Run(t *testing.T) {
 		var molfar *services.MolfarService
 		server := &domain.Server{Address: "127.0.0.1:25565", Memory: 2048}
 
-		err := molfar.Run(server, "test-session")
+		err := molfar.Run(server)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "molfar service cannot be nil")
 	})
@@ -900,7 +900,7 @@ func TestMolfarService_Run(t *testing.T) {
 					}
 
 		// Execute Run - should succeed with mock runner
-		err = molfar.Run(server, "test-session")
+		err = molfar.Run(server)
 		assert.NoError(t, err)
 	})
 }
@@ -929,7 +929,7 @@ func TestMolfarService_Exit(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Setup manifests with locks to simulate running state
-		lockID := "test-host__1234567890"
+		lockID := "test-host::1234567890"
 		localManifest := createTestManifest("1.0.0", "1.20.1", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
 		localManifest.Lock(lockID)
 		manifestData, err := json.Marshal(localManifest)
@@ -1132,7 +1132,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 					}
 
 		// This should succeed since hostname resolution works in normal test environment
-		err = molfar.Run(server, "test-session")
+		err = molfar.Run(server)
 		assert.NoError(t, err, "Lock acquisition should succeed with valid hostname")
 
 		// Verify manifests are locked after successful run
@@ -1174,7 +1174,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 			Port:    25565,
 					}
 
-		err = molfar.Run(server, "test-session")
+		err = molfar.Run(server)
 		assert.Error(t, err)
 
 		// Verify local manifest was not locked due to remote failure
@@ -1211,14 +1211,14 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 
 		// Setup manifests with locks by another process
 		localManifest := createTestManifest("1.0.0", "1.20.1", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
-		localManifest.Lock("other-process__1234567890")
+		localManifest.Lock("other-process::1234567890")
 		manifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
 		remoteManifest := createTestManifest("1.0.0", "1.20.1", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
-		remoteManifest.Lock("other-process__1234567890")
+		remoteManifest.Lock("other-process::1234567890")
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
@@ -1226,7 +1226,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 
 		// Set a different lock ID to simulate trying to exit when we think we own a lock
 		// but the manifest has a different lock (simulating another process took over)
-		molfar.SetLockIDForTesting("my-process__9876543210")
+		molfar.SetLockIDForTesting("my-process::9876543210")
 
 		// Try to exit - should fail because manifest lock doesn't match our lock
 		err = molfar.Exit()
@@ -1264,7 +1264,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 					}
 
 		// Run should succeed
-		err = molfar.Run(server, "test-session")
+		err = molfar.Run(server)
 		assert.NoError(t, err, "Run should succeed")
 
 		// Verify manifests are locked
@@ -1281,7 +1281,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 		defer cleanup()
 
 		// Test with nil server
-		err := molfar.Run(nil, "test-session")
+		err := molfar.Run(nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "server cannot be nil")
 	})
@@ -1307,7 +1307,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Simulate another process locking the manifest after Prepare
-		localManifest.Lock("race-process__1234567890")
+		localManifest.Lock("race-process::1234567890")
 		localManifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", localManifestData)
@@ -1321,7 +1321,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 					}
 
 		// Run should fail due to lock acquired between Prepare and Run
-		err = molfar1.Run(server, "test-session")
+		err = molfar1.Run(server)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "local manifest already locked")
 	})
@@ -1345,7 +1345,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Setup manifests with locks to simulate running state
-		lockID := "test-host__1234567890"
+		lockID := "test-host::1234567890"
 		localManifest := createTestManifest("1.0.0", "1.20.1", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
 		localManifest.Lock(lockID)
 		manifestData, err := json.Marshal(localManifest)

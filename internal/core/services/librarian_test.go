@@ -110,7 +110,7 @@ func TestLibrarianService_GetRemoteManifest(t *testing.T) {
 			name: "successful retrieval",
 			storageData: []byte(`{
 				"ritual_version": "1.0.0",
-				"locked_by": "user__1234567890",
+				"locked_by": "user::1234567890",
 				"instance_version": "test-instance",
 				"worlds": [],
 				"updated_at": "2023-01-01T00:00:00Z"
@@ -118,7 +118,7 @@ func TestLibrarianService_GetRemoteManifest(t *testing.T) {
 			storageError: nil,
 			expectedResult: &domain.Manifest{
 				RitualVersion:   "1.0.0",
-				LockedBy:        "user__1234567890",
+				LockedBy:        "user::1234567890",
 				InstanceVersion: "test-instance",
 				StoredWorlds:    []domain.World{},
 			},
@@ -258,7 +258,7 @@ func TestLibrarianService_SaveRemoteManifest(t *testing.T) {
 			name: "successful save",
 			manifest: &domain.Manifest{
 				RitualVersion:   "1.0.0",
-				LockedBy:        "user__1234567890",
+				LockedBy:        "user::1234567890",
 				InstanceVersion: "test-instance",
 			},
 			storageError:  nil,
@@ -364,7 +364,7 @@ func TestLibrarianService_Integration(t *testing.T) {
 
 	manifest := &domain.Manifest{
 		RitualVersion:   "1.0.0",
-		LockedBy:        "user__1234567890",
+		LockedBy:        "user::1234567890",
 		InstanceVersion: "test-instance",
 		StoredWorlds: []domain.World{
 			{URI: "world1", CreatedAt: time.Now()},

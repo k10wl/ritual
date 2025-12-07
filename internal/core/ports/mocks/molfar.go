@@ -8,7 +8,7 @@ import (
 // MockMolfarService is a mock implementation of MolfarService for testing
 type MockMolfarService struct {
 	PrepareFunc func() error
-	RunFunc     func(server *domain.Server, sessionID string) error
+	RunFunc     func(server *domain.Server) error
 	ExitFunc    func() error
 }
 
@@ -26,9 +26,9 @@ func (m *MockMolfarService) Prepare() error {
 }
 
 // Run executes the main server orchestration process
-func (m *MockMolfarService) Run(server *domain.Server, sessionID string) error {
+func (m *MockMolfarService) Run(server *domain.Server) error {
 	if m.RunFunc != nil {
-		return m.RunFunc(server, sessionID)
+		return m.RunFunc(server)
 	}
 	return nil
 }

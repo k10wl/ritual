@@ -121,15 +121,12 @@ func (m *MolfarService) Prepare() error {
 
 // Run executes the main server orchestration process
 // Already in Running state, coordinates server execution
-func (m *MolfarService) Run(server *domain.Server, sessionID string) error {
+func (m *MolfarService) Run(server *domain.Server) error {
 	if m == nil {
 		return ErrMolfarNil
 	}
 	if server == nil {
 		return errors.New("server cannot be nil")
-	}
-	if sessionID == "" {
-		return errors.New("sessionID cannot be empty")
 	}
 	if m.serverRunner == nil {
 		return ErrServerRunnerNil
@@ -152,7 +149,7 @@ func (m *MolfarService) Run(server *domain.Server, sessionID string) error {
 		return err
 	}
 
-	if err := m.acquireManifestLocks(ctx, localManifest, remoteManifest, sessionID); err != nil {
+	if err := m.acquireManifestLocks(ctx, localManifest, remoteManifest); err != nil {
 		return err
 	}
 
@@ -191,7 +188,7 @@ func (m *MolfarService) validateAndRetrieveManifest(ctx context.Context) (*domai
 }
 
 // acquireManifestLocks generates lock ID and acquires locks on both manifests
-func (m *MolfarService) acquireManifestLocks(ctx context.Context, localManifest, remoteManifest *domain.Manifest, sessionID string) error {
+func (m *MolfarService) acquireManifestLocks(ctx context.Context, localManifest, remoteManifest *domain.Manifest) error {
 	if ctx == nil {
 		return errors.New("context cannot be nil")
 	}
@@ -222,7 +219,7 @@ func (m *MolfarService) acquireManifestLocks(ctx context.Context, localManifest,
 		return err
 	}
 
-	lockID := fmt.Sprintf("%s"+config.LockIDSeparator+"%d"+config.LockIDSeparator+"%s", hostname, time.Now().Unix(), sessionID)
+	lockID := fmt.Sprintf("%s"+config.LockIDSeparator+"%d", hostname, time.Now().UnixNano())
 	m.logger.Info("Generated lock ID", "lock_id", lockID)
 	localManifest.LockedBy = lockID
 	remoteManifest.LockedBy = lockID

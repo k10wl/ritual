@@ -62,9 +62,9 @@ const (
 	UpdateFileGlob    = "ritual_update_*.exe"
 )
 
-// Lock ID separator
+// Lock ID format
 const (
-	LockIDSeparator = "__"
+	LockIDSeparator = "::"
 )
 
 // S3/R2 configuration

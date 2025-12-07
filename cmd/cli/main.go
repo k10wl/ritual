@@ -4,9 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"os"
-	"strconv"
 
 	"ritual/internal/adapters"
 	"ritual/internal/config"
@@ -43,10 +41,6 @@ func main() {
 		logger.Error("Failed to create root directory", "path", config.RootPath, "error", err)
 		return
 	}
-
-	// Generate session ID for this instance
-	sessionID := strconv.FormatInt(rand.Int63(), 10)
-	logger.Info("Session started", "session_id", sessionID)
 
 	// Open work root
 	workRoot, err := os.OpenRoot(config.RootPath)
@@ -159,7 +153,7 @@ func main() {
 		return
 	}
 
-	runErr := molfar.Run(server, sessionID)
+	runErr := molfar.Run(server)
 	if runErr != nil {
 		logger.Error("Run phase failed", "error", runErr)
 	}

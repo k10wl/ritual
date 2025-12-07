@@ -321,10 +321,10 @@ func TestValidatorService_CheckLock(t *testing.T) {
 		{
 			name: "both_locked_by_same_entity",
 			local: &domain.Manifest{
-				LockedBy: "user1__1234567890",
+				LockedBy: "user1::1234567890",
 			},
 			remote: &domain.Manifest{
-				LockedBy: "user1__1234567890",
+				LockedBy: "user1::1234567890",
 			},
 			expectedErr: ErrLockConflict,
 		},
@@ -343,10 +343,10 @@ func TestValidatorService_CheckLock(t *testing.T) {
 		{
 			name: "lock_conflict",
 			local: &domain.Manifest{
-				LockedBy: "user1__1234567890",
+				LockedBy: "user1::1234567890",
 			},
 			remote: &domain.Manifest{
-				LockedBy: "user2__1234567890",
+				LockedBy: "user2::1234567890",
 			},
 			expectedErr: ErrLockConflict,
 		},
@@ -356,14 +356,14 @@ func TestValidatorService_CheckLock(t *testing.T) {
 				LockedBy: "",
 			},
 			remote: &domain.Manifest{
-				LockedBy: "user1__1234567890",
+				LockedBy: "user1::1234567890",
 			},
 			expectedErr: ErrLockConflict,
 		},
 		{
 			name: "local_locked_remote_unlocked",
 			local: &domain.Manifest{
-				LockedBy: "user1__1234567890",
+				LockedBy: "user1::1234567890",
 			},
 			remote: &domain.Manifest{
 				LockedBy: "",
