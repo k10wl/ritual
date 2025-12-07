@@ -218,7 +218,7 @@ func TestWorldsUpdater_Run(t *testing.T) {
 			downloader,
 			"test-bucket",
 			workRoot,
-			adapters.NewNopLogger(),
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -271,7 +271,7 @@ func TestWorldsUpdater_Run(t *testing.T) {
 			downloader,
 			"test-bucket",
 			workRoot,
-			adapters.NewNopLogger(),
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -338,7 +338,7 @@ func TestWorldsUpdater_Run(t *testing.T) {
 			downloader,
 			"test-bucket",
 			workRoot,
-			adapters.NewNopLogger(),
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -382,7 +382,7 @@ func TestWorldsUpdater_Run(t *testing.T) {
 			downloader,
 			"test-bucket",
 			workRoot,
-			adapters.NewNopLogger(),
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -401,7 +401,7 @@ func TestWorldsUpdater_Run(t *testing.T) {
 			downloader,
 			"test-bucket",
 			workRoot,
-			adapters.NewNopLogger(),
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -422,7 +422,7 @@ func TestNewWorldsUpdater(t *testing.T) {
 			downloader,
 			"test-bucket",
 			workRoot,
-			adapters.NewNopLogger(),
+			nil,
 		)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "librarian")
@@ -438,7 +438,7 @@ func TestNewWorldsUpdater(t *testing.T) {
 			downloader,
 			"test-bucket",
 			workRoot,
-			adapters.NewNopLogger(),
+			nil,
 		)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "validator")
@@ -454,7 +454,7 @@ func TestNewWorldsUpdater(t *testing.T) {
 			nil, // downloader
 			"test-bucket",
 			workRoot,
-			adapters.NewNopLogger(),
+			nil,
 		)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "downloader")
@@ -470,26 +470,10 @@ func TestNewWorldsUpdater(t *testing.T) {
 			downloader,
 			"test-bucket",
 			nil, // workRoot
-			adapters.NewNopLogger(),
+			nil,
 		)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "workRoot")
-	})
-
-	t.Run("nil logger returns error", func(t *testing.T) {
-		_, _, librarian, validator, downloader, _, _, workRoot, cleanup := setupWorldsUpdaterServices(t)
-		defer cleanup()
-
-		_, err := services.NewWorldsUpdater(
-			librarian,
-			validator,
-			downloader,
-			"test-bucket",
-			workRoot,
-			nil, // logger
-		)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "logger")
 	})
 
 	t.Run("valid dependencies returns updater", func(t *testing.T) {
@@ -502,7 +486,7 @@ func TestNewWorldsUpdater(t *testing.T) {
 			downloader,
 			"test-bucket",
 			workRoot,
-			adapters.NewNopLogger(),
+			nil,
 		)
 		assert.NoError(t, err)
 		assert.NotNil(t, updater)

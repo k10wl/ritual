@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"sync"
 
 	"ritual/internal/adapters"
 	"ritual/internal/config"
@@ -33,18 +34,29 @@ func main() {
 		return
 	}
 
-	logger := adapters.NewSlogLogger()
+	// Create event channel and start consumer
+	events := make(chan ports.Event, 100)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		consumeEvents(events)
+	}()
 
 	// Ensure root directory exists
 	if err := os.MkdirAll(config.RootPath, config.DirPermission); err != nil {
-		logger.Error("Failed to create root directory", "path", config.RootPath, "error", err)
+		fmt.Printf("Failed to create root directory: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
 	// Open work root
 	workRoot, err := os.OpenRoot(config.RootPath)
 	if err != nil {
-		logger.Error("Failed to open work root", "path", config.RootPath, "error", err)
+		fmt.Printf("Failed to open work root: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 	defer workRoot.Close()
@@ -52,41 +64,53 @@ func main() {
 	// Create local storage
 	localStorage, err := adapters.NewFSRepository(workRoot)
 	if err != nil {
-		logger.Error("Failed to create local storage", "error", err)
+		fmt.Printf("Failed to create local storage: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
 	// Create remote storage (R2) and uploader
-	remoteStorage, r2Uploader, err := adapters.NewR2RepositoryWithUploader(envBucket, envAccountID, envAccessKeyID, envSecretAccessKey, logger)
+	remoteStorage, r2Uploader, err := adapters.NewR2RepositoryWithUploader(envBucket, envAccountID, envAccessKeyID, envSecretAccessKey, events)
 	if err != nil {
-		logger.Error("Failed to create remote storage", "error", err)
+		fmt.Printf("Failed to create remote storage: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
 	// Create librarian service
 	librarian, err := services.NewLibrarianService(localStorage, remoteStorage)
 	if err != nil {
-		logger.Error("Failed to create librarian service", "error", err)
+		fmt.Printf("Failed to create librarian service: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
 	// Create validator service
 	validator, err := services.NewValidatorService()
 	if err != nil {
-		logger.Error("Failed to create validator service", "error", err)
+		fmt.Printf("Failed to create validator service: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
 	// Create updaters
 	instanceUpdater, err := services.NewInstanceUpdater(librarian, validator, remoteStorage, envBucket, workRoot)
 	if err != nil {
-		logger.Error("Failed to create instance updater", "error", err)
+		fmt.Printf("Failed to create instance updater: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
-	worldsUpdater, err := services.NewWorldsUpdater(librarian, validator, remoteStorage, envBucket, workRoot, logger)
+	worldsUpdater, err := services.NewWorldsUpdater(librarian, validator, remoteStorage, envBucket, workRoot, events)
 	if err != nil {
-		logger.Error("Failed to create worlds updater", "error", err)
+		fmt.Printf("Failed to create worlds updater: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
@@ -95,28 +119,36 @@ func main() {
 	// Create backuppers
 	localBackupper, err := services.NewLocalBackupper(workRoot)
 	if err != nil {
-		logger.Error("Failed to create local backupper", "error", err)
+		fmt.Printf("Failed to create local backupper: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
 	r2Backupper, err := services.NewR2Backupper(r2Uploader, envBucket, workRoot, "", nil)
 	if err != nil {
-		logger.Error("Failed to create R2 backupper", "error", err)
+		fmt.Printf("Failed to create R2 backupper: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
 	backuppers := []ports.BackupperService{localBackupper, r2Backupper}
 
 	// Create retention services
-	localRetention, err := services.NewLocalRetention(localStorage, logger)
+	localRetention, err := services.NewLocalRetention(localStorage, events)
 	if err != nil {
-		logger.Error("Failed to create local retention", "error", err)
+		fmt.Printf("Failed to create local retention: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
-	r2Retention, err := services.NewR2Retention(remoteStorage, logger)
+	r2Retention, err := services.NewR2Retention(remoteStorage, events)
 	if err != nil {
-		logger.Error("Failed to create R2 retention", "error", err)
+		fmt.Printf("Failed to create R2 retention: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
@@ -126,46 +158,60 @@ func main() {
 	commandExecutor := adapters.NewCommandExecutorAdapter()
 	serverRunner, err := adapters.NewServerRunner(config.RootPath, commandExecutor)
 	if err != nil {
-		logger.Error("Failed to create server runner", "error", err)
+		fmt.Printf("Failed to create server runner: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
 	// Create Molfar service
-	molfar, err := services.NewMolfarService(updaters, backuppers, retentions, serverRunner, librarian, logger, workRoot)
+	molfar, err := services.NewMolfarService(updaters, backuppers, retentions, serverRunner, librarian, events, workRoot)
 	if err != nil {
-		logger.Error("Failed to create molfar service", "error", err)
+		fmt.Printf("Failed to create molfar service: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
 	// Create server config
 	server, err := domain.NewServer("0.0.0.0:25565", 4096)
 	if err != nil {
-		logger.Error("Failed to create server config", "error", err)
+		fmt.Printf("Failed to create server config: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
 	// Run lifecycle
-	logger.Info("Starting Ritual")
+	fmt.Println("Starting Ritual")
 
 	if err := molfar.Prepare(); err != nil {
-		logger.Error("Prepare phase failed", "error", err)
+		fmt.Printf("Prepare phase failed: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
 
 	runErr := molfar.Run(server)
 	if runErr != nil {
-		logger.Error("Run phase failed", "error", runErr)
+		fmt.Printf("Run phase failed: %v\n", runErr)
 	}
 
 	// Always attempt Exit to unlock manifests, even if Run failed
 	if err := molfar.Exit(); err != nil {
-		logger.Error("Exit phase failed", "error", err)
+		fmt.Printf("Exit phase failed: %v\n", err)
+		close(events)
+		wg.Wait()
 		return
 	}
+
+	// Close event channel and wait for consumer to finish
+	close(events)
+	wg.Wait()
 
 	if runErr != nil {
 		return
 	}
 
-	logger.Info("Ritual completed successfully")
+	fmt.Println("Ritual completed successfully")
 }

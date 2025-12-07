@@ -30,7 +30,7 @@ type WorldsUpdater struct {
 	downloader streamer.S3StreamDownloader
 	bucket     string
 	workRoot   *os.Root
-	logger     ports.Logger
+	events     chan<- ports.Event
 }
 
 // Compile-time check to ensure WorldsUpdater implements ports.UpdaterService
@@ -44,7 +44,7 @@ func NewWorldsUpdater(
 	downloader streamer.S3StreamDownloader,
 	bucket string,
 	workRoot *os.Root,
-	logger ports.Logger,
+	events chan<- ports.Event,
 ) (*WorldsUpdater, error) {
 	if librarian == nil {
 		return nil, ErrWorldsUpdaterLibrarianNil
@@ -58,9 +58,6 @@ func NewWorldsUpdater(
 	if workRoot == nil {
 		return nil, ErrWorldsUpdaterWorkRootNil
 	}
-	if logger == nil {
-		return nil, errors.New("logger cannot be nil")
-	}
 
 	updater := &WorldsUpdater{
 		librarian:  librarian,
@@ -68,7 +65,7 @@ func NewWorldsUpdater(
 		downloader: downloader,
 		bucket:     bucket,
 		workRoot:   workRoot,
-		logger:     logger,
+		events:     events,
 	}
 
 	// Postcondition assertion
@@ -77,6 +74,11 @@ func NewWorldsUpdater(
 	}
 
 	return updater, nil
+}
+
+// send safely sends an event to the channel
+func (u *WorldsUpdater) send(evt ports.Event) {
+	ports.SendEvent(u.events, evt)
 }
 
 // Run executes the worlds update process
@@ -141,7 +143,7 @@ func (u *WorldsUpdater) updateWorlds(ctx context.Context, remoteManifest *domain
 	// Sanitize world URI
 	sanitizedURI, valid := u.sanitizeWorldURI(latestWorld.URI)
 	if !valid {
-		u.logger.Warn("Invalid world URI, skipping world update", "uri", latestWorld.URI)
+		u.send(ports.UpdateEvent{Operation: "worlds", Message: "Invalid world URI, skipping world update", Data: map[string]any{"uri": latestWorld.URI}})
 		return nil
 	}
 
@@ -183,6 +185,9 @@ func (u *WorldsUpdater) downloadAndExtractWorld(ctx context.Context, key string)
 	// Destination is the instance directory
 	destPath := filepath.Join(u.workRoot.Name(), config.InstanceDir)
 
+	u.send(ports.StartEvent{Operation: "download"})
+	u.send(ports.UpdateEvent{Operation: "download", Message: "Downloading world archive", Data: map[string]any{"key": key}})
+
 	// Use streamer.Pull to download and extract
 	err := streamer.Pull(ctx, streamer.PullConfig{
 		Bucket:   u.bucket,
@@ -191,8 +196,12 @@ func (u *WorldsUpdater) downloadAndExtractWorld(ctx context.Context, key string)
 		Conflict: streamer.Replace,
 	}, u.downloader)
 	if err != nil {
+		u.send(ports.ErrorEvent{Operation: "download", Err: err})
 		return fmt.Errorf("failed to download and extract world: %w", err)
 	}
+
+	u.send(ports.UpdateEvent{Operation: "download", Message: "World archive extracted successfully"})
+	u.send(ports.FinishEvent{Operation: "download"})
 
 	return nil
 }

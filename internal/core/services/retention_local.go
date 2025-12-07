@@ -21,25 +21,27 @@ var (
 // LocalRetention implements RetentionService for local backup storage
 type LocalRetention struct {
 	localStorage ports.StorageRepository
-	logger       ports.Logger
+	events       chan<- ports.Event
 }
 
 // Compile-time check to ensure LocalRetention implements ports.RetentionService
 var _ ports.RetentionService = (*LocalRetention)(nil)
 
 // NewLocalRetention creates a new local retention service
-func NewLocalRetention(localStorage ports.StorageRepository, logger ports.Logger) (*LocalRetention, error) {
+func NewLocalRetention(localStorage ports.StorageRepository, events chan<- ports.Event) (*LocalRetention, error) {
 	if localStorage == nil {
 		return nil, ErrLocalRetentionStorageNil
-	}
-	if logger == nil {
-		return nil, errors.New("logger cannot be nil")
 	}
 
 	return &LocalRetention{
 		localStorage: localStorage,
-		logger:       logger,
+		events:       events,
 	}, nil
+}
+
+// send safely sends an event to the channel
+func (r *LocalRetention) send(evt ports.Event) {
+	ports.SendEvent(r.events, evt)
 }
 
 // Apply removes old local backups exceeding the retention limit
@@ -99,7 +101,7 @@ func (r *LocalRetention) Apply(ctx context.Context, manifest *domain.Manifest) e
 	for _, key := range backups {
 		if !validURIs[key] {
 			// Dangling backup - not in manifest
-			r.logger.Info("Found dangling local backup", "key", key)
+			r.send(ports.UpdateEvent{Operation: "retention", Message: "Found dangling local backup", Data: map[string]any{"key": key}})
 			toDelete = append(toDelete, key)
 		} else {
 			validBackups = append(validBackups, key)
@@ -108,16 +110,17 @@ func (r *LocalRetention) Apply(ctx context.Context, manifest *domain.Manifest) e
 
 	// Second pass: apply retention limit to valid backups
 	if len(validBackups) > config.LocalMaxBackups {
-		r.logger.Info("Applying local retention policy",
-			"total_valid", len(validBackups),
-			"max_allowed", config.LocalMaxBackups,
-			"to_delete", len(validBackups)-config.LocalMaxBackups)
+		r.send(ports.UpdateEvent{Operation: "retention", Message: "Applying local retention policy", Data: map[string]any{
+			"total_valid": len(validBackups),
+			"max_allowed": config.LocalMaxBackups,
+			"to_delete":   len(validBackups) - config.LocalMaxBackups,
+		}})
 		toDelete = append(toDelete, validBackups[config.LocalMaxBackups:]...)
 	}
 
 	// Delete identified backups
 	for _, key := range toDelete {
-		r.logger.Info("Deleting local backup", "key", key)
+		r.send(ports.UpdateEvent{Operation: "retention", Message: "Deleting local backup", Data: map[string]any{"key": key}})
 		if err := r.localStorage.Delete(ctx, key); err != nil {
 			return fmt.Errorf("failed to delete local backup %s: %w", key, err)
 		}
