@@ -35,7 +35,8 @@ func NewLocalFileWriter(basePath string) (*LocalFileWriter, error) {
 // Upload writes the streamed content to a local file
 // The key parameter is used as the relative path from basePath
 // bucket parameter is ignored for local writes
-func (w *LocalFileWriter) Upload(ctx context.Context, bucket, key string, body io.Reader) (int64, error) {
+// estimatedSize is ignored for local writes
+func (w *LocalFileWriter) Upload(ctx context.Context, bucket, key string, body io.Reader, estimatedSize int64) (int64, error) {
 	if ctx == nil {
 		return 0, errors.New("context cannot be nil")
 	}

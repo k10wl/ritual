@@ -3,7 +3,6 @@ package streamer
 import (
 	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"io"
 	"os"
@@ -27,13 +26,12 @@ func (m *mockDownloader) Download(ctx context.Context, bucket, key string) (io.R
 	return io.NopCloser(bytes.NewReader(m.data)), nil
 }
 
-// createTestArchive creates a tar.gz archive for testing
+// createTestArchive creates a plain tar archive for testing
 func createTestArchive(t *testing.T, files map[string][]byte) []byte {
 	t.Helper()
 
 	buf := &bytes.Buffer{}
-	gzWriter := gzip.NewWriter(buf)
-	tarWriter := tar.NewWriter(gzWriter)
+	tarWriter := tar.NewWriter(buf)
 
 	for name, content := range files {
 		header := &tar.Header{
@@ -58,7 +56,6 @@ func createTestArchive(t *testing.T, files map[string][]byte) []byte {
 	}
 
 	require.NoError(t, tarWriter.Close())
-	require.NoError(t, gzWriter.Close())
 
 	return buf.Bytes()
 }
@@ -110,7 +107,7 @@ func TestPull_ExtractsFiles(t *testing.T) {
 	downloader := &mockDownloader{data: archive}
 	cfg := PullConfig{
 		Bucket:   "test-bucket",
-		Key:      "test.tar.gz",
+		Key:      "test.tar",
 		Dest:     tempDir,
 		Conflict: Replace,
 	}
@@ -139,7 +136,7 @@ func TestPull_PathTraversal(t *testing.T) {
 		downloader := &mockDownloader{data: archive}
 		cfg := PullConfig{
 			Bucket: "test-bucket",
-			Key:    "test.tar.gz",
+			Key:    "test.tar",
 			Dest:   tempDir,
 		}
 
@@ -155,7 +152,7 @@ func TestPull_PathTraversal(t *testing.T) {
 		downloader := &mockDownloader{data: archive}
 		cfg := PullConfig{
 			Bucket: "test-bucket",
-			Key:    "test.tar.gz",
+			Key:    "test.tar",
 			Dest:   tempDir,
 		}
 
@@ -171,7 +168,7 @@ func TestPull_PathTraversal(t *testing.T) {
 		downloader := &mockDownloader{data: archive}
 		cfg := PullConfig{
 			Bucket: "test-bucket",
-			Key:    "test.tar.gz",
+			Key:    "test.tar",
 			Dest:   tempDir,
 		}
 
@@ -196,7 +193,7 @@ func TestPull_ConflictStrategies(t *testing.T) {
 		downloader := &mockDownloader{data: archive}
 		cfg := PullConfig{
 			Bucket:   "test-bucket",
-			Key:      "test.tar.gz",
+			Key:      "test.tar",
 			Dest:     tempDir,
 			Conflict: Replace,
 		}
@@ -224,7 +221,7 @@ func TestPull_ConflictStrategies(t *testing.T) {
 		downloader := &mockDownloader{data: archive}
 		cfg := PullConfig{
 			Bucket:   "test-bucket",
-			Key:      "test.tar.gz",
+			Key:      "test.tar",
 			Dest:     tempDir,
 			Conflict: Skip,
 		}
@@ -252,7 +249,7 @@ func TestPull_ConflictStrategies(t *testing.T) {
 		downloader := &mockDownloader{data: archive}
 		cfg := PullConfig{
 			Bucket:   "test-bucket",
-			Key:      "test.tar.gz",
+			Key:      "test.tar",
 			Dest:     tempDir,
 			Conflict: Backup,
 		}
@@ -286,7 +283,7 @@ func TestPull_ConflictStrategies(t *testing.T) {
 		downloader := &mockDownloader{data: archive}
 		cfg := PullConfig{
 			Bucket:   "test-bucket",
-			Key:      "test.tar.gz",
+			Key:      "test.tar",
 			Dest:     tempDir,
 			Conflict: Fail,
 		}
@@ -310,7 +307,7 @@ func TestPull_Filter(t *testing.T) {
 		downloader := &mockDownloader{data: archive}
 		cfg := PullConfig{
 			Bucket:   "test-bucket",
-			Key:      "test.tar.gz",
+			Key:      "test.tar",
 			Dest:     tempDir,
 			Conflict: Replace,
 			Filter: func(name string) bool {
@@ -340,7 +337,7 @@ func TestPull_Filter(t *testing.T) {
 		downloader := &mockDownloader{data: archive}
 		cfg := PullConfig{
 			Bucket:   "test-bucket",
-			Key:      "test.tar.gz",
+			Key:      "test.tar",
 			Dest:     destDir,
 			Conflict: Replace,
 			Filter:   nil,
@@ -376,7 +373,7 @@ func TestPull_ContextCancellation(t *testing.T) {
 	downloader := &mockDownloader{data: archive}
 	cfg := PullConfig{
 		Bucket: "test-bucket",
-		Key:    "test.tar.gz",
+		Key:    "test.tar",
 		Dest:   tempDir,
 	}
 
@@ -389,7 +386,7 @@ func TestPull_DownloadFailure(t *testing.T) {
 	downloader := &mockDownloader{downloadErr: assert.AnError}
 	cfg := PullConfig{
 		Bucket: "test-bucket",
-		Key:    "test.tar.gz",
+		Key:    "test.tar",
 		Dest:   tempDir,
 	}
 

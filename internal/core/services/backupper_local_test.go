@@ -10,7 +10,6 @@ import (
 	"ritual/internal/testhelpers"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,17 +59,14 @@ func setupLocalBackupperWorldData(t *testing.T, tempDir string) {
 
 func TestLocalBackupper_Run(t *testing.T) {
 	t.Run("creates archive from world directories", func(t *testing.T) {
-		localStorage, tempDir, workRoot, cleanup := setupLocalBackupperServices(t)
+		_, tempDir, workRoot, cleanup := setupLocalBackupperServices(t)
 		defer cleanup()
 
 		// Setup world data
 		setupLocalBackupperWorldData(t, tempDir)
 
 		// Create LocalBackupper
-		backupper, err := services.NewLocalBackupper(
-			localStorage,
-			workRoot,
-		)
+		backupper, err := services.NewLocalBackupper(workRoot)
 		require.NoError(t, err)
 
 		// Execute backup
@@ -78,7 +74,7 @@ func TestLocalBackupper_Run(t *testing.T) {
 		archiveName, err := backupper.Run(ctx)
 		require.NoError(t, err)
 		assert.NotEmpty(t, archiveName)
-		assert.True(t, strings.HasSuffix(archiveName, ".tar.gz"))
+		assert.True(t, strings.HasSuffix(archiveName, ".tar"))
 	})
 
 	t.Run("stores archive in local backup directory", func(t *testing.T) {
@@ -89,10 +85,7 @@ func TestLocalBackupper_Run(t *testing.T) {
 		setupLocalBackupperWorldData(t, tempDir)
 
 		// Create LocalBackupper
-		backupper, err := services.NewLocalBackupper(
-			localStorage,
-			workRoot,
-		)
+		backupper, err := services.NewLocalBackupper(workRoot)
 		require.NoError(t, err)
 
 		// Execute backup
@@ -107,17 +100,14 @@ func TestLocalBackupper_Run(t *testing.T) {
 	})
 
 	t.Run("returns archive name for manifest", func(t *testing.T) {
-		localStorage, tempDir, workRoot, cleanup := setupLocalBackupperServices(t)
+		_, tempDir, workRoot, cleanup := setupLocalBackupperServices(t)
 		defer cleanup()
 
 		// Setup world data
 		setupLocalBackupperWorldData(t, tempDir)
 
 		// Create LocalBackupper
-		backupper, err := services.NewLocalBackupper(
-			localStorage,
-			workRoot,
-		)
+		backupper, err := services.NewLocalBackupper(workRoot)
 		require.NoError(t, err)
 
 		// Execute backup
@@ -129,60 +119,11 @@ func TestLocalBackupper_Run(t *testing.T) {
 		assert.NotEmpty(t, archiveName)
 	})
 
-	t.Run("applies retention policy - max 10 backups", func(t *testing.T) {
-		localStorage, tempDir, workRoot, cleanup := setupLocalBackupperServices(t)
-		defer cleanup()
-
-		// Setup world data
-		setupLocalBackupperWorldData(t, tempDir)
-
-		ctx := context.Background()
-
-		// Create 12 fake backup files (exceeds max of 10)
-		backupDir := filepath.Join(tempDir, config.LocalBackups)
-		err := os.MkdirAll(backupDir, 0755)
-		require.NoError(t, err)
-
-		for i := 0; i < 12; i++ {
-			// Create fake backup files with different timestamps
-			timestamp := time.Now().Add(time.Duration(-i*24) * time.Hour).Format("20060102150405")
-			filename := filepath.Join(config.LocalBackups, timestamp+".tar.gz")
-			err := localStorage.Put(ctx, filename, []byte("fake tar.gz data"))
-			require.NoError(t, err)
-		}
-
-		// Create LocalBackupper
-		backupper, err := services.NewLocalBackupper(
-			localStorage,
-			workRoot,
-		)
-		require.NoError(t, err)
-
-		// Execute backup - this should apply retention
-		_, err = backupper.Run(ctx)
-		require.NoError(t, err)
-
-		// Verify retention was applied - should have at most 10 backups
-		backupFiles, err := localStorage.List(ctx, config.LocalBackups)
-		assert.NoError(t, err)
-		// Filter only .tar.gz files
-		tarGzCount := 0
-		for _, f := range backupFiles {
-			if strings.HasSuffix(f, ".tar.gz") {
-				tarGzCount++
-			}
-		}
-		assert.LessOrEqual(t, tarGzCount, 10, "Should have at most 10 backup files after retention")
-	})
-
 	t.Run("nil context returns error", func(t *testing.T) {
-		localStorage, _, workRoot, cleanup := setupLocalBackupperServices(t)
+		_, _, workRoot, cleanup := setupLocalBackupperServices(t)
 		defer cleanup()
 
-		backupper, err := services.NewLocalBackupper(
-			localStorage,
-			workRoot,
-		)
+		backupper, err := services.NewLocalBackupper(workRoot)
 		require.NoError(t, err)
 
 		_, err = backupper.Run(nil)
@@ -192,29 +133,17 @@ func TestLocalBackupper_Run(t *testing.T) {
 }
 
 func TestNewLocalBackupper(t *testing.T) {
-	t.Run("nil localStorage returns error", func(t *testing.T) {
-		_, _, workRoot, cleanup := setupLocalBackupperServices(t)
-		defer cleanup()
-
-		_, err := services.NewLocalBackupper(nil, workRoot)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "storage")
-	})
-
 	t.Run("nil workRoot returns error", func(t *testing.T) {
-		localStorage, _, _, cleanup := setupLocalBackupperServices(t)
-		defer cleanup()
-
-		_, err := services.NewLocalBackupper(localStorage, nil)
+		_, err := services.NewLocalBackupper(nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "workRoot")
 	})
 
 	t.Run("valid dependencies returns backupper", func(t *testing.T) {
-		localStorage, _, workRoot, cleanup := setupLocalBackupperServices(t)
+		_, _, workRoot, cleanup := setupLocalBackupperServices(t)
 		defer cleanup()
 
-		backupper, err := services.NewLocalBackupper(localStorage, workRoot)
+		backupper, err := services.NewLocalBackupper(workRoot)
 		assert.NoError(t, err)
 		assert.NotNil(t, backupper)
 	})

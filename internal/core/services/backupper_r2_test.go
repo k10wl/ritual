@@ -13,7 +13,6 @@ import (
 	"ritual/internal/testhelpers"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,7 +30,7 @@ type mockStreamUploader struct {
 	uploadErr error
 }
 
-func (m *mockStreamUploader) Upload(ctx context.Context, bucket, key string, body io.Reader) (int64, error) {
+func (m *mockStreamUploader) Upload(ctx context.Context, bucket, key string, body io.Reader, _ int64) (int64, error) {
 	if m.uploadErr != nil {
 		return 0, m.uploadErr
 	}
@@ -102,7 +101,7 @@ func setupR2BackupperWorldData(t *testing.T, tempDir string) {
 
 func TestR2Backupper_Run(t *testing.T) {
 	t.Run("creates archive from world directories", func(t *testing.T) {
-		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+		uploader, _, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
 		// Setup world data
@@ -111,11 +110,10 @@ func TestR2Backupper_Run(t *testing.T) {
 		// Create R2Backupper
 		backupper, err := services.NewR2Backupper(
 			uploader,
-			remoteStorage,
 			"test-bucket",
 			workRoot,
-			"",   // no local backup
-			nil,  // no backup condition
+			"",  // no local backup
+			nil, // no backup condition
 		)
 		require.NoError(t, err)
 
@@ -124,7 +122,7 @@ func TestR2Backupper_Run(t *testing.T) {
 		archiveName, err := backupper.Run(ctx)
 		require.NoError(t, err)
 		assert.NotEmpty(t, archiveName)
-		assert.True(t, strings.HasSuffix(archiveName, ".tar.gz"))
+		assert.True(t, strings.HasSuffix(archiveName, ".tar"))
 	})
 
 	t.Run("uploads archive to R2 storage", func(t *testing.T) {
@@ -137,7 +135,6 @@ func TestR2Backupper_Run(t *testing.T) {
 		// Create R2Backupper
 		backupper, err := services.NewR2Backupper(
 			uploader,
-			remoteStorage,
 			"test-bucket",
 			workRoot,
 			"",
@@ -157,7 +154,7 @@ func TestR2Backupper_Run(t *testing.T) {
 	})
 
 	t.Run("returns archive key for manifest", func(t *testing.T) {
-		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+		uploader, _, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
 		// Setup world data
@@ -166,7 +163,6 @@ func TestR2Backupper_Run(t *testing.T) {
 		// Create R2Backupper
 		backupper, err := services.NewR2Backupper(
 			uploader,
-			remoteStorage,
 			"test-bucket",
 			workRoot,
 			"",
@@ -184,59 +180,12 @@ func TestR2Backupper_Run(t *testing.T) {
 		assert.True(t, strings.HasPrefix(archiveKey, config.RemoteBackups+"/"))
 	})
 
-	t.Run("applies retention policy - max 5 backups", func(t *testing.T) {
-		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
-		defer cleanup()
-
-		// Setup world data
-		setupR2BackupperWorldData(t, tempDir)
-
-		ctx := context.Background()
-
-		// Create 7 fake backup files in remote storage (exceeds max of 5)
-		for i := 0; i < 7; i++ {
-			// Create fake backup files with different timestamps
-			timestamp := time.Now().Add(time.Duration(-i*24) * time.Hour).Format("20060102150405")
-			filename := config.RemoteBackups + "/" + timestamp + ".tar.gz"
-			err := remoteStorage.Put(ctx, filename, []byte("fake tar.gz backup data"))
-			require.NoError(t, err)
-		}
-
-		// Create R2Backupper
-		backupper, err := services.NewR2Backupper(
-			uploader,
-			remoteStorage,
-			"test-bucket",
-			workRoot,
-			"",
-			nil,
-		)
-		require.NoError(t, err)
-
-		// Execute backup - this should apply retention
-		_, err = backupper.Run(ctx)
-		require.NoError(t, err)
-
-		// Verify retention was applied - should have at most 5 backups
-		backupFiles, err := remoteStorage.List(ctx, config.RemoteBackups)
-		assert.NoError(t, err)
-		// Filter only .tar.gz files
-		tarGzCount := 0
-		for _, f := range backupFiles {
-			if strings.HasSuffix(f, ".tar.gz") {
-				tarGzCount++
-			}
-		}
-		assert.LessOrEqual(t, tarGzCount, 5, "Should have at most 5 backup files after retention")
-	})
-
 	t.Run("nil context returns error", func(t *testing.T) {
-		uploader, remoteStorage, _, workRoot, cleanup := setupR2BackupperServices(t)
+		uploader, _, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
 		backupper, err := services.NewR2Backupper(
 			uploader,
-			remoteStorage,
 			"test-bucket",
 			workRoot,
 			"",
@@ -252,37 +201,28 @@ func TestR2Backupper_Run(t *testing.T) {
 
 func TestNewR2Backupper(t *testing.T) {
 	t.Run("nil uploader returns error", func(t *testing.T) {
-		_, remoteStorage, _, workRoot, cleanup := setupR2BackupperServices(t)
+		_, _, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(nil, remoteStorage, "bucket", workRoot, "", nil)
+		_, err := services.NewR2Backupper(nil, "bucket", workRoot, "", nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "uploader")
 	})
 
-	t.Run("nil remoteStorage returns error", func(t *testing.T) {
-		uploader, _, _, workRoot, cleanup := setupR2BackupperServices(t)
-		defer cleanup()
-
-		_, err := services.NewR2Backupper(uploader, nil, "bucket", workRoot, "", nil)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "storage")
-	})
-
 	t.Run("nil workRoot returns error", func(t *testing.T) {
-		uploader, remoteStorage, _, _, cleanup := setupR2BackupperServices(t)
+		uploader, _, _, _, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(uploader, remoteStorage, "bucket", nil, "", nil)
+		_, err := services.NewR2Backupper(uploader, "bucket", nil, "", nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "workRoot")
 	})
 
 	t.Run("valid dependencies returns backupper", func(t *testing.T) {
-		uploader, remoteStorage, _, workRoot, cleanup := setupR2BackupperServices(t)
+		uploader, _, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		backupper, err := services.NewR2Backupper(uploader, remoteStorage, "bucket", workRoot, "", nil)
+		backupper, err := services.NewR2Backupper(uploader, "bucket", workRoot, "", nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, backupper)
 	})
@@ -291,7 +231,7 @@ func TestNewR2Backupper(t *testing.T) {
 // TestR2Backupper_LocalBackup tests the optional local backup feature
 func TestR2Backupper_LocalBackup(t *testing.T) {
 	t.Run("creates local backup when condition true", func(t *testing.T) {
-		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+		uploader, _, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
 		// Setup world data
@@ -302,7 +242,6 @@ func TestR2Backupper_LocalBackup(t *testing.T) {
 		// Create R2Backupper with local backup enabled
 		backupper, err := services.NewR2Backupper(
 			uploader,
-			remoteStorage,
 			"test-bucket",
 			workRoot,
 			localBackupDir,
@@ -322,7 +261,7 @@ func TestR2Backupper_LocalBackup(t *testing.T) {
 	})
 
 	t.Run("skips local backup when condition false", func(t *testing.T) {
-		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+		uploader, _, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
 		// Setup world data
@@ -333,7 +272,6 @@ func TestR2Backupper_LocalBackup(t *testing.T) {
 		// Create R2Backupper with local backup disabled
 		backupper, err := services.NewR2Backupper(
 			uploader,
-			remoteStorage,
 			"test-bucket",
 			workRoot,
 			localBackupDir,
@@ -360,24 +298,15 @@ func TestR2Backupper_StreamingVerification(t *testing.T) {
 		capturingUploader := &capturingStreamUploader{buf: &capturedData}
 
 		tempDir := t.TempDir()
-		remoteTempDir := t.TempDir()
 
 		tempRoot, err := os.OpenRoot(tempDir)
 		require.NoError(t, err)
-
-		remoteRoot, err := os.OpenRoot(remoteTempDir)
-		require.NoError(t, err)
-
-		remoteStorage, err := adapters.NewFSRepository(remoteRoot)
-		require.NoError(t, err)
-		defer remoteStorage.Close()
 
 		// Setup world data
 		setupR2BackupperWorldData(t, tempDir)
 
 		backupper, err := services.NewR2Backupper(
 			capturingUploader,
-			remoteStorage,
 			"test-bucket",
 			tempRoot,
 			"",
@@ -395,7 +324,7 @@ func TestR2Backupper_StreamingVerification(t *testing.T) {
 
 		err = streamer.Pull(ctx, streamer.PullConfig{
 			Bucket:   "test",
-			Key:      "test.tar.gz",
+			Key:      "test.tar",
 			Dest:     extractDir,
 			Conflict: streamer.Replace,
 		}, mockDownloader)
@@ -412,7 +341,7 @@ type capturingStreamUploader struct {
 	buf *bytes.Buffer
 }
 
-func (c *capturingStreamUploader) Upload(ctx context.Context, bucket, key string, body io.Reader) (int64, error) {
+func (c *capturingStreamUploader) Upload(ctx context.Context, bucket, key string, body io.Reader, estimatedSize int64) (int64, error) {
 	n, err := io.Copy(c.buf, body)
 	return n, err
 }

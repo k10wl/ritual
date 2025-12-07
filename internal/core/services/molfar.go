@@ -26,6 +26,7 @@ var (
 type MolfarService struct {
 	updaters      []ports.UpdaterService
 	backuppers    []ports.BackupperService
+	retentions    []ports.RetentionService
 	serverRunner  ports.ServerRunner
 	librarian     ports.LibrarianService
 	logger        *slog.Logger
@@ -38,6 +39,7 @@ type MolfarService struct {
 func NewMolfarService(
 	updaters []ports.UpdaterService,
 	backuppers []ports.BackupperService,
+	retentions []ports.RetentionService,
 	serverRunner ports.ServerRunner,
 	librarian ports.LibrarianService,
 	logger *slog.Logger,
@@ -59,6 +61,14 @@ func NewMolfarService(
 			return nil, fmt.Errorf("backupper at index %d cannot be nil", i)
 		}
 	}
+	if retentions == nil {
+		return nil, errors.New("retentions slice cannot be nil")
+	}
+	for i, r := range retentions {
+		if r == nil {
+			return nil, fmt.Errorf("retention at index %d cannot be nil", i)
+		}
+	}
 	if serverRunner == nil {
 		return nil, ErrServerRunnerNil
 	}
@@ -75,6 +85,7 @@ func NewMolfarService(
 	molfar := &MolfarService{
 		updaters:     updaters,
 		backuppers:   backuppers,
+		retentions:   retentions,
 		serverRunner: serverRunner,
 		librarian:    librarian,
 		logger:       logger,
@@ -110,12 +121,15 @@ func (m *MolfarService) Prepare() error {
 
 // Run executes the main server orchestration process
 // Already in Running state, coordinates server execution
-func (m *MolfarService) Run(server *domain.Server) error {
+func (m *MolfarService) Run(server *domain.Server, sessionID string) error {
 	if m == nil {
 		return ErrMolfarNil
 	}
 	if server == nil {
 		return errors.New("server cannot be nil")
+	}
+	if sessionID == "" {
+		return errors.New("sessionID cannot be empty")
 	}
 	if m.serverRunner == nil {
 		return ErrServerRunnerNil
@@ -138,7 +152,7 @@ func (m *MolfarService) Run(server *domain.Server) error {
 		return err
 	}
 
-	if err := m.acquireManifestLocks(ctx, localManifest, remoteManifest); err != nil {
+	if err := m.acquireManifestLocks(ctx, localManifest, remoteManifest, sessionID); err != nil {
 		return err
 	}
 
@@ -177,7 +191,7 @@ func (m *MolfarService) validateAndRetrieveManifest(ctx context.Context) (*domai
 }
 
 // acquireManifestLocks generates lock ID and acquires locks on both manifests
-func (m *MolfarService) acquireManifestLocks(ctx context.Context, localManifest, remoteManifest *domain.Manifest) error {
+func (m *MolfarService) acquireManifestLocks(ctx context.Context, localManifest, remoteManifest *domain.Manifest, sessionID string) error {
 	if ctx == nil {
 		return errors.New("context cannot be nil")
 	}
@@ -207,9 +221,8 @@ func (m *MolfarService) acquireManifestLocks(ctx context.Context, localManifest,
 		m.logger.Error("Failed to get hostname", "error", err)
 		return err
 	}
-	m.logger.Info("Retrieved hostname", "hostname", hostname)
 
-	lockID := fmt.Sprintf("%s"+config.LockIDSeparator+"%d", hostname, time.Now().Unix())
+	lockID := fmt.Sprintf("%s"+config.LockIDSeparator+"%d"+config.LockIDSeparator+"%s", hostname, time.Now().Unix(), sessionID)
 	m.logger.Info("Generated lock ID", "lock_id", lockID)
 	localManifest.LockedBy = lockID
 	remoteManifest.LockedBy = lockID
@@ -263,7 +276,7 @@ func (m *MolfarService) executeServer(ctx context.Context, server *domain.Server
 		return ErrServerRunnerNil
 	}
 
-	m.logger.Info("Starting server execution", "server_address", server.Address, "bat_path", server.BatPath)
+	m.logger.Info("Starting server execution", "server_address", server.Address)
 	err := m.serverRunner.Run(server)
 	if err != nil {
 		m.logger.Error("Server execution failed", "error", err)
@@ -275,7 +288,7 @@ func (m *MolfarService) executeServer(ctx context.Context, server *domain.Server
 }
 
 // Exit gracefully shuts down the server and cleans up resources
-// Runs all backuppers in sequence
+// Runs all backuppers in sequence only if we own the lock
 func (m *MolfarService) Exit() error {
 	if m == nil {
 		return ErrMolfarNil
@@ -286,6 +299,12 @@ func (m *MolfarService) Exit() error {
 
 	m.logger.Info("Starting exit phase")
 	ctx := context.Background()
+
+	// Skip backup and unlock if we don't own the lock
+	if m.currentLockID == "" {
+		m.logger.Info("No lock owned, skipping backup and unlock")
+		return nil
+	}
 
 	// Run all backuppers and collect archive names
 	var lastArchiveName string
@@ -301,10 +320,25 @@ func (m *MolfarService) Exit() error {
 	}
 
 	// Update manifests with last archive name (from any backupper)
+	var updatedManifest *domain.Manifest
 	if lastArchiveName != "" {
-		if err := m.updateManifestsWithArchive(ctx, lastArchiveName); err != nil {
+		manifest, err := m.updateManifestsWithArchive(ctx, lastArchiveName)
+		if err != nil {
 			m.logger.Error("Failed to update manifests with archive", "error", err)
 			return err
+		}
+		updatedManifest = manifest
+	}
+
+	// Apply retention policies after manifest is updated
+	if updatedManifest != nil {
+		for i, retention := range m.retentions {
+			m.logger.Info("Running retention", "index", i)
+			if err := retention.Apply(ctx, updatedManifest); err != nil {
+				m.logger.Error("Retention failed", "index", i, "error", err)
+				return fmt.Errorf("retention %d failed: %w", i, err)
+			}
+			m.logger.Info("Retention completed", "index", i)
 		}
 	}
 
@@ -319,15 +353,16 @@ func (m *MolfarService) Exit() error {
 }
 
 // updateManifestsWithArchive updates both local and remote manifests with the new archive name
-func (m *MolfarService) updateManifestsWithArchive(ctx context.Context, archiveName string) error {
+// Returns the updated manifest for use in retention policies
+func (m *MolfarService) updateManifestsWithArchive(ctx context.Context, archiveName string) (*domain.Manifest, error) {
 	if ctx == nil {
-		return errors.New("context cannot be nil")
+		return nil, errors.New("context cannot be nil")
 	}
 	if archiveName == "" {
-		return errors.New("archive name cannot be empty")
+		return nil, errors.New("archive name cannot be empty")
 	}
 	if m.librarian == nil {
-		return ErrLibrarianNil
+		return nil, ErrLibrarianNil
 	}
 
 	m.logger.Info("Updating manifests with new archive", "archive_name", archiveName)
@@ -336,14 +371,14 @@ func (m *MolfarService) updateManifestsWithArchive(ctx context.Context, archiveN
 	localManifest, err := m.librarian.GetLocalManifest(ctx)
 	if err != nil {
 		m.logger.Error("Failed to get local manifest for archive update", "error", err)
-		return err
+		return nil, err
 	}
 
 	// Create new world entry with archive name
 	world, err := domain.NewWorld(archiveName)
 	if err != nil {
 		m.logger.Error("Failed to create world entry", "archive_name", archiveName, "error", err)
-		return err
+		return nil, err
 	}
 
 	// Add world to manifest
@@ -352,17 +387,17 @@ func (m *MolfarService) updateManifestsWithArchive(ctx context.Context, archiveN
 	// Save updated local manifest
 	if err := m.librarian.SaveLocalManifest(ctx, localManifest); err != nil {
 		m.logger.Error("Failed to save local manifest with archive", "error", err)
-		return err
+		return nil, err
 	}
 
 	// Save updated remote manifest
 	if err := m.librarian.SaveRemoteManifest(ctx, localManifest); err != nil {
 		m.logger.Error("Failed to save remote manifest with archive", "error", err)
-		return err
+		return nil, err
 	}
 
 	m.logger.Info("Successfully updated manifests with archive", "archive_name", archiveName)
-	return nil
+	return localManifest, nil
 }
 
 // unlockManifests removes locks from both local and remote manifests

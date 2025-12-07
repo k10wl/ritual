@@ -2,7 +2,6 @@ package streamer
 
 import (
 	"archive/tar"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -22,7 +21,24 @@ var (
 	ErrPushUploaderNil = errors.New("uploader cannot be nil")
 )
 
-// Push streams directories to R2 as tar.gz, optionally saving local copy
+// calculateDirSize calculates total size of directories
+func calculateDirSize(dirs []string) int64 {
+	var totalSize int64
+	for _, dir := range dirs {
+		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil // Skip errors
+			}
+			if !info.IsDir() {
+				totalSize += info.Size()
+			}
+			return nil
+		})
+	}
+	return totalSize
+}
+
+// Push streams directories to R2 as tar, optionally saving local copy
 func Push(ctx context.Context, cfg PushConfig, uploader S3StreamUploader) (Result, error) {
 	if ctx == nil {
 		return Result{}, ErrPushContextNil
@@ -39,6 +55,9 @@ func Push(ctx context.Context, cfg PushConfig, uploader S3StreamUploader) (Resul
 	if uploader == nil {
 		return Result{}, ErrPushUploaderNil
 	}
+
+	// Calculate estimated size for progress reporting (no compression, so ~100% of source)
+	estimatedSize := calculateDirSize(cfg.Dirs)
 
 	// Evaluate local backup condition BEFORE streaming starts
 	doLocalBackup := cfg.LocalPath != "" && (cfg.ShouldBackup == nil || cfg.ShouldBackup())
@@ -61,7 +80,7 @@ func Push(ctx context.Context, cfg PushConfig, uploader S3StreamUploader) (Resul
 	var consumerErr error
 	var wg sync.WaitGroup
 
-	// Producer goroutine: walks dirs -> tar -> gzip -> pipe
+	// Producer goroutine: walks dirs -> tar -> pipe
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -83,7 +102,7 @@ func Push(ctx context.Context, cfg PushConfig, uploader S3StreamUploader) (Resul
 	go func() {
 		defer wg.Done()
 		var localPath string
-		localPath, consumerErr = runConsumer(ctx, cfg, pipeReader, uploader, doLocalBackup)
+		localPath, consumerErr = runConsumer(ctx, cfg, pipeReader, uploader, doLocalBackup, estimatedSize)
 		if consumerErr == nil {
 			result.LocalPath = localPath
 		}
@@ -115,36 +134,23 @@ func runProducer(ctx context.Context, dirs []string, countWriter io.Writer, pipe
 		return errors.New("pipeWriter cannot be nil")
 	}
 
-	// Chain: tarWriter -> gzipWriter -> multiWriter(countWriter, pipeWriter)
+	// Chain: tarWriter -> multiWriter(countWriter, pipeWriter)
 	multiW := io.MultiWriter(countWriter, pipeWriter)
-	gzipWriter, err := gzip.NewWriterLevel(multiW, gzip.BestSpeed)
-	if err != nil {
-		pipeWriter.Close()
-		return fmt.Errorf("failed to create gzip writer: %w", err)
-	}
-
-	tarWriter := tar.NewWriter(gzipWriter)
+	tarWriter := tar.NewWriter(multiW)
 
 	// Walk all directories and write to tar
 	for _, dir := range dirs {
 		if err := addDirToTar(ctx, tarWriter, dir); err != nil {
 			tarWriter.Close()
-			gzipWriter.Close()
 			pipeWriter.Close()
 			return fmt.Errorf("failed to add %s to tar: %w", dir, err)
 		}
 	}
 
-	// CRITICAL: Close order matters
+	// Close tar writer
 	if err := tarWriter.Close(); err != nil {
-		gzipWriter.Close()
 		pipeWriter.Close()
 		return fmt.Errorf("failed to close tar writer: %w", err)
-	}
-
-	if err := gzipWriter.Close(); err != nil {
-		pipeWriter.Close()
-		return fmt.Errorf("failed to close gzip writer: %w", err)
 	}
 
 	pipeWriter.Close()
@@ -152,7 +158,7 @@ func runProducer(ctx context.Context, dirs []string, countWriter io.Writer, pipe
 }
 
 // runConsumer handles the consumer goroutine logic
-func runConsumer(ctx context.Context, cfg PushConfig, pipeReader *io.PipeReader, uploader S3StreamUploader, doLocalBackup bool) (string, error) {
+func runConsumer(ctx context.Context, cfg PushConfig, pipeReader *io.PipeReader, uploader S3StreamUploader, doLocalBackup bool, estimatedSize int64) (string, error) {
 	if ctx == nil {
 		return "", ErrPushContextNil
 	}
@@ -177,7 +183,7 @@ func runConsumer(ctx context.Context, cfg PushConfig, pipeReader *io.PipeReader,
 	}
 
 	// Upload to R2
-	_, err := uploader.Upload(ctx, cfg.Bucket, cfg.Key, uploadReader)
+	_, err := uploader.Upload(ctx, cfg.Bucket, cfg.Key, uploadReader, estimatedSize)
 	if err != nil {
 		// Cleanup partial local file on upload failure
 		if localFile != nil {

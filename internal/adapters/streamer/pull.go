@@ -2,7 +2,6 @@ package streamer
 
 import (
 	"archive/tar"
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -25,7 +24,7 @@ var (
 // errSkipFile is a sentinel error for skipping files
 var errSkipFile = errors.New("skip file")
 
-// Pull downloads and extracts a tar.gz archive from R2
+// Pull downloads and extracts a tar archive from R2
 func Pull(ctx context.Context, cfg PullConfig, downloader S3StreamDownloader) error {
 	if ctx == nil {
 		return ErrPullContextNil
@@ -61,15 +60,8 @@ func Pull(ctx context.Context, cfg PullConfig, downloader S3StreamDownloader) er
 	}
 	defer body.Close()
 
-	// Create gzip reader
-	gzReader, err := gzip.NewReader(body)
-	if err != nil {
-		return fmt.Errorf("failed to create gzip reader: %w", err)
-	}
-	defer gzReader.Close()
-
-	// Create tar reader
-	tarReader := tar.NewReader(gzReader)
+	// Create tar reader directly (no gzip)
+	tarReader := tar.NewReader(body)
 
 	// Extract files sequentially (tar.Reader is inherently sequential)
 	for {

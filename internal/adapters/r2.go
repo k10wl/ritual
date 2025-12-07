@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"path/filepath"
+	"sync/atomic"
+	"time"
 
 	"ritual/internal/adapters/streamer"
 	appconfig "ritual/internal/config"
@@ -65,6 +68,26 @@ func NewR2RepositoryWithClient(client S3Client, bucket string) *R2Repository {
 		client: client,
 		bucket: bucket,
 	}
+}
+
+// NewR2RepositoryWithUploader creates both R2Repository and S3Uploader sharing the same client
+func NewR2RepositoryWithUploader(bucket string, accountID string, accessKeyID string, secretAccessKey string) (*R2Repository, *S3Uploader, error) {
+	client, err := setupS3Client(accountID, accessKeyID, secretAccessKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	repo := &R2Repository{
+		client: client,
+		bucket: bucket,
+	}
+
+	uploader, err := NewS3Uploader(client, bucket)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return repo, uploader, nil
 }
 
 func (r *R2Repository) Get(ctx context.Context, key string) ([]byte, error) {
@@ -170,6 +193,55 @@ func (r *R2Repository) Copy(ctx context.Context, sourceKey string, destKey strin
 
 var _ ports.StorageRepository = (*R2Repository)(nil)
 
+// progressReadCloser wraps a ReadCloser and logs download progress
+type progressReadCloser struct {
+	reader      io.ReadCloser
+	key         string
+	bytesRead   int64
+	totalSize   int64
+	lastLogTime time.Time
+	logInterval time.Duration
+}
+
+func newProgressReadCloser(r io.ReadCloser, key string, totalSize int64) *progressReadCloser {
+	slog.Info("Starting download", "key", key, "size_mb", fmt.Sprintf("%.2f", float64(totalSize)/(1024*1024)))
+	return &progressReadCloser{
+		reader:      r,
+		key:         key,
+		totalSize:   totalSize,
+		lastLogTime: time.Now(),
+		logInterval: 5 * time.Second,
+	}
+}
+
+func (pr *progressReadCloser) Read(p []byte) (int, error) {
+	n, err := pr.reader.Read(p)
+	if n > 0 {
+		atomic.AddInt64(&pr.bytesRead, int64(n))
+		now := time.Now()
+		if now.Sub(pr.lastLogTime) >= pr.logInterval {
+			pr.lastLogTime = now
+			bytesRead := atomic.LoadInt64(&pr.bytesRead)
+			mb := float64(bytesRead) / (1024 * 1024)
+			if pr.totalSize > 0 {
+				pct := float64(bytesRead) / float64(pr.totalSize) * 100
+				slog.Info("Download progress", "key", pr.key, "downloaded_mb", fmt.Sprintf("%.2f", mb), "percent", fmt.Sprintf("%.1f%%", pct))
+			} else {
+				slog.Info("Download progress", "key", pr.key, "downloaded_mb", fmt.Sprintf("%.2f", mb))
+			}
+		}
+	}
+	if err == io.EOF {
+		totalMB := float64(atomic.LoadInt64(&pr.bytesRead)) / (1024 * 1024)
+		slog.Info("Download completed", "key", pr.key, "total_mb", fmt.Sprintf("%.2f", totalMB))
+	}
+	return n, err
+}
+
+func (pr *progressReadCloser) Close() error {
+	return pr.reader.Close()
+}
+
 // Download streams content from R2 as an io.ReadCloser
 // Implements streamer.S3StreamDownloader interface
 func (r *R2Repository) Download(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
@@ -194,7 +266,12 @@ func (r *R2Repository) Download(ctx context.Context, bucket, key string) (io.Rea
 		return nil, fmt.Errorf("failed to download %s: %w", key, err)
 	}
 
-	return result.Body, nil
+	var contentLength int64
+	if result.ContentLength != nil {
+		contentLength = *result.ContentLength
+	}
+
+	return newProgressReadCloser(result.Body, key, contentLength), nil
 }
 
 var _ streamer.S3StreamDownloader = (*R2Repository)(nil)
@@ -241,9 +318,52 @@ func NewS3Uploader(client S3Client, bucket string) (*S3Uploader, error) {
 	}, nil
 }
 
+// progressReader wraps a reader and logs upload progress
+type progressReader struct {
+	reader        io.Reader
+	key           string
+	bytesRead     int64
+	estimatedSize int64
+	lastLogTime   time.Time
+	logInterval   time.Duration
+}
+
+func newProgressReader(r io.Reader, key string, estimatedSize int64) *progressReader {
+	return &progressReader{
+		reader:        r,
+		key:           key,
+		estimatedSize: estimatedSize,
+		lastLogTime:   time.Now(),
+		logInterval:   5 * time.Second,
+	}
+}
+
+func (pr *progressReader) Read(p []byte) (int, error) {
+	n, err := pr.reader.Read(p)
+	if n > 0 {
+		atomic.AddInt64(&pr.bytesRead, int64(n))
+		now := time.Now()
+		if now.Sub(pr.lastLogTime) >= pr.logInterval {
+			pr.lastLogTime = now
+			bytesRead := atomic.LoadInt64(&pr.bytesRead)
+			mb := float64(bytesRead) / (1024 * 1024)
+			if pr.estimatedSize > 0 {
+				pct := float64(bytesRead) / float64(pr.estimatedSize) * 100
+				if pct > 100 {
+					pct = 99 // Cap at 99% until complete
+				}
+				slog.Info("Upload progress", "key", pr.key, "uploaded_mb", fmt.Sprintf("%.2f", mb), "percent", fmt.Sprintf("%.1f%%", pct))
+			} else {
+				slog.Info("Upload progress", "key", pr.key, "uploaded_mb", fmt.Sprintf("%.2f", mb))
+			}
+		}
+	}
+	return n, err
+}
+
 // Upload streams content to S3/R2 using multipart upload
 // Implements streamer.S3StreamUploader interface
-func (u *S3Uploader) Upload(ctx context.Context, bucket, key string, body io.Reader) (int64, error) {
+func (u *S3Uploader) Upload(ctx context.Context, bucket, key string, body io.Reader, estimatedSize int64) (int64, error) {
 	if ctx == nil {
 		return 0, ErrS3UploaderContextNil
 	}
@@ -257,18 +377,22 @@ func (u *S3Uploader) Upload(ctx context.Context, bucket, key string, body io.Rea
 
 	key = filepath.ToSlash(key)
 
+	slog.Info("Starting upload", "key", key)
+	pr := newProgressReader(body, key, estimatedSize)
+
 	_, err := u.uploader.Upload(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
-		Body:   body,
+		Body:   pr,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to upload %s: %w", key, err)
 	}
 
-	// Note: Upload Manager doesn't return size directly
-	// Size tracking is done via countingWriter in Push function
-	return 0, nil
+	totalMB := float64(atomic.LoadInt64(&pr.bytesRead)) / (1024 * 1024)
+	slog.Info("Upload completed", "key", key, "total_mb", fmt.Sprintf("%.2f", totalMB))
+
+	return pr.bytesRead, nil
 }
 
 var _ streamer.S3StreamUploader = (*S3Uploader)(nil)

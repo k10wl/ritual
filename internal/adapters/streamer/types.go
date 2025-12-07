@@ -43,7 +43,8 @@ type Result struct {
 
 // S3StreamUploader interface for R2 streaming uploads
 type S3StreamUploader interface {
-	Upload(ctx context.Context, bucket, key string, body io.Reader) (int64, error)
+	// Upload streams content to storage. estimatedSize is optional hint for progress (0 = unknown)
+	Upload(ctx context.Context, bucket, key string, body io.Reader, estimatedSize int64) (int64, error)
 }
 
 // S3StreamDownloader interface for R2 streaming downloads

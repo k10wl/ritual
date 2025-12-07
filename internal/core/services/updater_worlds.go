@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"ritual/internal/adapters/streamer"
@@ -30,6 +31,7 @@ type WorldsUpdater struct {
 	downloader streamer.S3StreamDownloader
 	bucket     string
 	workRoot   *os.Root
+	logger     *slog.Logger
 }
 
 // Compile-time check to ensure WorldsUpdater implements ports.UpdaterService
@@ -63,6 +65,7 @@ func NewWorldsUpdater(
 		downloader: downloader,
 		bucket:     bucket,
 		workRoot:   workRoot,
+		logger:     slog.Default(),
 	}
 
 	// Postcondition assertion
@@ -133,9 +136,10 @@ func (u *WorldsUpdater) updateWorlds(ctx context.Context, remoteManifest *domain
 	}
 
 	// Sanitize world URI
-	sanitizedURI, err := u.sanitizeWorldURI(latestWorld.URI)
-	if err != nil {
-		return err
+	sanitizedURI, valid := u.sanitizeWorldURI(latestWorld.URI)
+	if !valid {
+		u.logger.Warn("Invalid world URI, skipping world update", "uri", latestWorld.URI)
+		return nil
 	}
 
 	// Download and extract world archive using streamer.Pull
@@ -152,12 +156,16 @@ func (u *WorldsUpdater) updateWorlds(ctx context.Context, remoteManifest *domain
 }
 
 // sanitizeWorldURI validates and sanitizes the world URI
-func (u *WorldsUpdater) sanitizeWorldURI(uri string) (string, error) {
+func (u *WorldsUpdater) sanitizeWorldURI(uri string) (string, bool) {
 	sanitizedURI := filepath.ToSlash(filepath.Clean(uri))
-	if !strings.HasPrefix(sanitizedURI, config.RemoteBackups+"/") {
-		return "", fmt.Errorf("invalid world URI: %s", sanitizedURI)
+	// Allow manual.tar.gz without worlds/ prefix as special case
+	if sanitizedURI == config.ManualWorldFilename {
+		return sanitizedURI, true
 	}
-	return sanitizedURI, nil
+	if !strings.HasPrefix(sanitizedURI, config.RemoteBackups+"/") {
+		return sanitizedURI, false
+	}
+	return sanitizedURI, true
 }
 
 // downloadAndExtractWorld downloads and extracts the world archive from remote storage

@@ -3,7 +3,6 @@ package streamer
 import (
 	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"io"
 	"os"
@@ -20,7 +19,7 @@ type mockUploader struct {
 	uploadErr error
 }
 
-func (m *mockUploader) Upload(ctx context.Context, bucket, key string, body io.Reader) (int64, error) {
+func (m *mockUploader) Upload(ctx context.Context, bucket, key string, body io.Reader, estimatedSize int64) (int64, error) {
 	if m.uploadErr != nil {
 		return 0, m.uploadErr
 	}
@@ -62,7 +61,7 @@ func TestPush_ValidatesInputs(t *testing.T) {
 	})
 }
 
-func TestPush_CreatesValidTarGz(t *testing.T) {
+func TestPush_CreatesValidTar(t *testing.T) {
 	// Create test directory structure
 	tempDir := t.TempDir()
 	worldDir := filepath.Join(tempDir, "world")
@@ -78,7 +77,7 @@ func TestPush_CreatesValidTarGz(t *testing.T) {
 	uploader := &mockUploader{buf: buf}
 	cfg := PushConfig{
 		Bucket: "test-bucket",
-		Key:    "backups/test.tar.gz",
+		Key:    "backups/test.tar",
 		Dirs:   []string{worldDir},
 	}
 
@@ -86,17 +85,13 @@ func TestPush_CreatesValidTarGz(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify result
-	assert.Equal(t, "backups/test.tar.gz", result.Key)
+	assert.Equal(t, "backups/test.tar", result.Key)
 	assert.Greater(t, result.Size, int64(0))
 	assert.NotEmpty(t, result.Checksum)
 	assert.Len(t, result.Checksum, 64) // SHA-256 hex
 
-	// Verify archive contents
-	gzReader, err := gzip.NewReader(buf)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	tarReader := tar.NewReader(gzReader)
+	// Verify archive contents (plain tar, no gzip)
+	tarReader := tar.NewReader(buf)
 	files := make(map[string][]byte)
 
 	for {
@@ -133,7 +128,7 @@ func TestPush_MultipleDirs(t *testing.T) {
 	uploader := &mockUploader{buf: buf}
 	cfg := PushConfig{
 		Bucket: "test-bucket",
-		Key:    "test.tar.gz",
+		Key:    "test.tar",
 		Dirs: []string{
 			filepath.Join(tempDir, "world"),
 			filepath.Join(tempDir, "world_nether"),
@@ -144,12 +139,8 @@ func TestPush_MultipleDirs(t *testing.T) {
 	_, err := Push(context.Background(), cfg, uploader)
 	require.NoError(t, err)
 
-	// Verify all directories are in archive
-	gzReader, err := gzip.NewReader(buf)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	tarReader := tar.NewReader(gzReader)
+	// Verify all directories are in archive (plain tar)
+	tarReader := tar.NewReader(buf)
 	foundDirs := make(map[string]bool)
 
 	for {
@@ -177,12 +168,12 @@ func TestPush_LocalBackup(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(worldDir, "level.dat"), []byte("data"), 0644))
 
 	t.Run("writes local copy when condition true", func(t *testing.T) {
-		localPath := filepath.Join(tempDir, "backup", "test.tar.gz")
+		localPath := filepath.Join(tempDir, "backup", "test.tar")
 		buf := &bytes.Buffer{}
 		uploader := &mockUploader{buf: buf}
 		cfg := PushConfig{
 			Bucket:       "test-bucket",
-			Key:          "test.tar.gz",
+			Key:          "test.tar",
 			Dirs:         []string{worldDir},
 			LocalPath:    localPath,
 			ShouldBackup: func() bool { return true },
@@ -199,12 +190,12 @@ func TestPush_LocalBackup(t *testing.T) {
 	})
 
 	t.Run("skips local copy when condition false", func(t *testing.T) {
-		localPath := filepath.Join(tempDir, "backup2", "test.tar.gz")
+		localPath := filepath.Join(tempDir, "backup2", "test.tar")
 		buf := &bytes.Buffer{}
 		uploader := &mockUploader{buf: buf}
 		cfg := PushConfig{
 			Bucket:       "test-bucket",
-			Key:          "test.tar.gz",
+			Key:          "test.tar",
 			Dirs:         []string{worldDir},
 			LocalPath:    localPath,
 			ShouldBackup: func() bool { return false },
@@ -220,12 +211,12 @@ func TestPush_LocalBackup(t *testing.T) {
 	})
 
 	t.Run("writes local copy when ShouldBackup is nil", func(t *testing.T) {
-		localPath := filepath.Join(tempDir, "backup3", "test.tar.gz")
+		localPath := filepath.Join(tempDir, "backup3", "test.tar")
 		buf := &bytes.Buffer{}
 		uploader := &mockUploader{buf: buf}
 		cfg := PushConfig{
 			Bucket:       "test-bucket",
-			Key:          "test.tar.gz",
+			Key:          "test.tar",
 			Dirs:         []string{worldDir},
 			LocalPath:    localPath,
 			ShouldBackup: nil, // nil means always backup
@@ -241,7 +232,7 @@ func TestPush_LocalBackup(t *testing.T) {
 		uploader := &mockUploader{buf: buf}
 		cfg := PushConfig{
 			Bucket:       "test-bucket",
-			Key:          "test.tar.gz",
+			Key:          "test.tar",
 			Dirs:         []string{worldDir},
 			LocalPath:    "",
 			ShouldBackup: func() bool { return true },
@@ -274,7 +265,7 @@ func TestPush_ContextCancellation(t *testing.T) {
 	uploader := &mockUploader{buf: buf}
 	cfg := PushConfig{
 		Bucket: "test-bucket",
-		Key:    "test.tar.gz",
+		Key:    "test.tar",
 		Dirs:   []string{worldDir},
 	}
 
@@ -288,14 +279,14 @@ func TestPush_UploadFailure(t *testing.T) {
 	require.NoError(t, os.MkdirAll(worldDir, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(worldDir, "level.dat"), []byte("data"), 0644))
 
-	localPath := filepath.Join(tempDir, "backup", "test.tar.gz")
+	localPath := filepath.Join(tempDir, "backup", "test.tar")
 	uploader := &mockUploader{
 		buf:       &bytes.Buffer{},
 		uploadErr: assert.AnError,
 	}
 	cfg := PushConfig{
 		Bucket:       "test-bucket",
-		Key:          "test.tar.gz",
+		Key:          "test.tar",
 		Dirs:         []string{worldDir},
 		LocalPath:    localPath,
 		ShouldBackup: func() bool { return true },
@@ -319,7 +310,7 @@ func TestPush_Checksum(t *testing.T) {
 	uploader := &mockUploader{buf: buf}
 	cfg := PushConfig{
 		Bucket: "test-bucket",
-		Key:    "test.tar.gz",
+		Key:    "test.tar",
 		Dirs:   []string{worldDir},
 	}
 
@@ -344,19 +335,15 @@ func TestAddDirToTar_PreservesStructure(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(worldDir, "data", "map.dat"), []byte("map"), 0644))
 
 	buf := &bytes.Buffer{}
-	gzWriter := gzip.NewWriter(buf)
-	tarWriter := tar.NewWriter(gzWriter)
+	tarWriter := tar.NewWriter(buf)
 
 	err := addDirToTar(context.Background(), tarWriter, worldDir)
 	require.NoError(t, err)
 
 	tarWriter.Close()
-	gzWriter.Close()
 
-	// Read back and verify
-	gzReader, err := gzip.NewReader(buf)
-	require.NoError(t, err)
-	tarReader := tar.NewReader(gzReader)
+	// Read back and verify (plain tar)
+	tarReader := tar.NewReader(buf)
 
 	entries := make(map[string]bool)
 	for {

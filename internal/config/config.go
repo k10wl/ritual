@@ -21,19 +21,21 @@ const (
 
 // File names and keys
 const (
-	ManifestFilename   = "manifest.json"
-	InstanceArchiveKey = "instance.tar.gz"
-	RemoteBinaryKey    = "ritual.exe"
+	ManifestFilename    = "manifest.json"
+	InstanceArchiveKey  = "instance.tar"
+	RemoteBinaryKey     = "ritual.exe"
+	ManualWorldFilename = "manual.tar"
+	ServerJarFilename   = "paper.jar"
 )
 
 // Backup configuration
 const (
-	R2MaxBackups    = 5
-	LocalMaxBackups = 10
+	R2MaxBackups    = 2
+	LocalMaxBackups = 2
 	MaxFiles        = 1000
 
 	TimestampFormat = "20060102150405"
-	BackupExtension = ".tar.gz"
+	BackupExtension = ".tar"
 )
 
 // World directories (relative to instance)

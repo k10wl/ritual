@@ -3,7 +3,6 @@ package services_test
 import (
 	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
@@ -108,7 +107,7 @@ func setupInstanceRemoteManifest(t *testing.T, remoteStorage *adapters.FSReposit
 	require.NoError(t, err)
 }
 
-func setupInstanceRemoteTarGz(t *testing.T, downloader *mockInstanceDownloader, remoteTempDir string) {
+func setupInstanceRemoteTar(t *testing.T, downloader *mockInstanceDownloader, remoteTempDir string) {
 	// Create instance directory structure in remote temp dir
 	instanceDir := filepath.Join(remoteTempDir, config.InstanceDir)
 	err := os.MkdirAll(instanceDir, 0755)
@@ -122,10 +121,9 @@ func setupInstanceRemoteTarGz(t *testing.T, downloader *mockInstanceDownloader, 
 	_, _, _, err = testhelpers.PaperInstanceSetup(instanceRoot, "1.20.1")
 	require.NoError(t, err)
 
-	// Create tar.gz archive in memory
+	// Create tar archive in memory
 	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gw)
+	tw := tar.NewWriter(&buf)
 
 	// Walk through instance directory and add files to tar
 	err = filepath.Walk(instanceDir, func(path string, info os.FileInfo, err error) error {
@@ -170,12 +168,11 @@ func setupInstanceRemoteTarGz(t *testing.T, downloader *mockInstanceDownloader, 
 	})
 	require.NoError(t, err)
 
-	// Close in correct order
+	// Close tar writer
 	require.NoError(t, tw.Close())
-	require.NoError(t, gw.Close())
 
 	// Store in mock downloader
-	downloader.data["instance.tar.gz"] = buf.Bytes()
+	downloader.data[config.InstanceArchiveKey] = buf.Bytes()
 }
 
 func TestInstanceUpdater_Run(t *testing.T) {
@@ -185,7 +182,7 @@ func TestInstanceUpdater_Run(t *testing.T) {
 
 		// Setup remote data
 		setupInstanceRemoteManifest(t, remoteStorage, "1.0.0", "1.20.1")
-		setupInstanceRemoteTarGz(t, downloader, remoteTempDir)
+		setupInstanceRemoteTar(t, downloader, remoteTempDir)
 
 		// Create InstanceUpdater
 		updater, err := services.NewInstanceUpdater(
@@ -225,7 +222,7 @@ func TestInstanceUpdater_Run(t *testing.T) {
 
 		// Setup remote data with newer version
 		setupInstanceRemoteManifest(t, remoteStorage, "1.0.0", "1.20.2")
-		setupInstanceRemoteTarGz(t, downloader, remoteTempDir)
+		setupInstanceRemoteTar(t, downloader, remoteTempDir)
 
 		// Create local manifest with older version
 		ctx := context.Background()

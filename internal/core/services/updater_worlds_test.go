@@ -3,7 +3,6 @@ package services_test
 import (
 	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
@@ -117,7 +116,7 @@ func setupWorldsRemoteManifest(t *testing.T, remoteStorage *adapters.FSRepositor
 	require.NoError(t, err)
 }
 
-func setupWorldsRemoteTarGz(t *testing.T, downloader *mockWorldsDownloader, remoteTempDir string, worldURI string) {
+func setupWorldsRemoteTar(t *testing.T, downloader *mockWorldsDownloader, remoteTempDir string, worldURI string) {
 	// Create world directory structure in remote temp dir
 	worldsDir := filepath.Join(remoteTempDir, config.RemoteBackups)
 	err := os.MkdirAll(worldsDir, 0755)
@@ -131,10 +130,9 @@ func setupWorldsRemoteTarGz(t *testing.T, downloader *mockWorldsDownloader, remo
 	_, _, _, err = testhelpers.PaperMinecraftWorldSetup(worldsRoot)
 	require.NoError(t, err)
 
-	// Create tar.gz archive in memory
+	// Create tar archive in memory
 	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gw)
+	tw := tar.NewWriter(&buf)
 
 	// Walk through worlds directory and add files to tar
 	err = filepath.Walk(worldsDir, func(path string, info os.FileInfo, err error) error {
@@ -183,9 +181,8 @@ func setupWorldsRemoteTarGz(t *testing.T, downloader *mockWorldsDownloader, remo
 	})
 	require.NoError(t, err)
 
-	// Close in correct order
+	// Close tar writer
 	require.NoError(t, tw.Close())
-	require.NoError(t, gw.Close())
 
 	// Store in mock downloader with the world URI as key
 	downloader.data[worldURI] = buf.Bytes()
@@ -197,9 +194,9 @@ func TestWorldsUpdater_Run(t *testing.T) {
 		defer cleanup()
 
 		// Setup remote data with world
-		worldURI := config.RemoteBackups + "/1234567890.tar.gz"
+		worldURI := config.RemoteBackups + "/1234567890.tar"
 		setupWorldsRemoteManifest(t, remoteStorage, "1.0.0", "1.20.1", worldURI)
-		setupWorldsRemoteTarGz(t, downloader, remoteTempDir, worldURI)
+		setupWorldsRemoteTar(t, downloader, remoteTempDir, worldURI)
 
 		// Create local manifest without worlds
 		ctx := context.Background()
@@ -248,13 +245,13 @@ func TestWorldsUpdater_Run(t *testing.T) {
 		defer cleanup()
 
 		// Setup remote data with newer world
-		worldURI := config.RemoteBackups + "/9999999999.tar.gz"
+		worldURI := config.RemoteBackups + "/9999999999.tar"
 		setupWorldsRemoteManifest(t, remoteStorage, "1.0.0", "1.20.1", worldURI)
-		setupWorldsRemoteTarGz(t, downloader, remoteTempDir, worldURI)
+		setupWorldsRemoteTar(t, downloader, remoteTempDir, worldURI)
 
 		// Create local manifest with older world
 		ctx := context.Background()
-		oldWorld := createWorldsTestWorld(config.RemoteBackups + "/old.tar.gz")
+		oldWorld := createWorldsTestWorld(config.RemoteBackups + "/old.tar")
 		localManifest := createWorldsTestManifest("1.0.0", "1.20.1", []domain.World{oldWorld})
 		manifestData, err := json.Marshal(localManifest)
 		require.NoError(t, err)
@@ -292,7 +289,7 @@ func TestWorldsUpdater_Run(t *testing.T) {
 		var manifestObj domain.Manifest
 		err = json.Unmarshal(updatedManifest, &manifestObj)
 		assert.NoError(t, err)
-		assert.Contains(t, manifestObj.GetLatestWorld().URI, "9999999999.tar.gz")
+		assert.Contains(t, manifestObj.GetLatestWorld().URI, "9999999999.tar")
 	})
 
 	t.Run("up-to-date worlds - no download", func(t *testing.T) {
@@ -301,7 +298,7 @@ func TestWorldsUpdater_Run(t *testing.T) {
 
 		// Create a fixed timestamp for both local and remote
 		fixedTime := time.Now()
-		worldURI := config.RemoteBackups + "/1234567890.tar.gz"
+		worldURI := config.RemoteBackups + "/1234567890.tar"
 		world := domain.World{
 			URI:       worldURI,
 			CreatedAt: fixedTime,

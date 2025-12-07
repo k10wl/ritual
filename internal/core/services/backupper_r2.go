@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"time"
 
 	"ritual/internal/adapters/streamer"
@@ -17,20 +15,18 @@ import (
 
 // R2Backupper error constants
 var (
-	ErrR2BackupperUploaderNil      = errors.New("uploader cannot be nil")
-	ErrR2BackupperRemoteStorageNil = errors.New("remote storage repository cannot be nil")
-	ErrR2BackupperWorkRootNil      = errors.New("workRoot cannot be nil")
-	ErrR2BackupperNil              = errors.New("R2 backupper cannot be nil")
+	ErrR2BackupperUploaderNil = errors.New("uploader cannot be nil")
+	ErrR2BackupperWorkRootNil = errors.New("workRoot cannot be nil")
+	ErrR2BackupperNil         = errors.New("R2 backupper cannot be nil")
 )
 
 // R2Backupper implements BackupperService for R2 backup storage with streaming
 type R2Backupper struct {
-	uploader      streamer.S3StreamUploader
-	remoteStorage ports.StorageRepository
-	bucket        string
-	workRoot      *os.Root
-	localPath     string      // Optional local backup path
-	shouldBackup  func() bool // Condition for local backup
+	uploader     streamer.S3StreamUploader
+	bucket       string
+	workRoot     *os.Root
+	localPath    string      // Optional local backup path
+	shouldBackup func() bool // Condition for local backup
 }
 
 // Compile-time check to ensure R2Backupper implements ports.BackupperService
@@ -40,7 +36,6 @@ var _ ports.BackupperService = (*R2Backupper)(nil)
 // Validates all dependencies are non-nil per NASA JPL defensive programming standards
 func NewR2Backupper(
 	uploader streamer.S3StreamUploader,
-	remoteStorage ports.StorageRepository,
 	bucket string,
 	workRoot *os.Root,
 	localPath string,
@@ -49,20 +44,16 @@ func NewR2Backupper(
 	if uploader == nil {
 		return nil, ErrR2BackupperUploaderNil
 	}
-	if remoteStorage == nil {
-		return nil, ErrR2BackupperRemoteStorageNil
-	}
 	if workRoot == nil {
 		return nil, ErrR2BackupperWorkRootNil
 	}
 
 	backupper := &R2Backupper{
-		uploader:      uploader,
-		remoteStorage: remoteStorage,
-		bucket:        bucket,
-		workRoot:      workRoot,
-		localPath:     localPath,
-		shouldBackup:  shouldBackup,
+		uploader:     uploader,
+		bucket:       bucket,
+		workRoot:     workRoot,
+		localPath:    localPath,
+		shouldBackup: shouldBackup,
 	}
 
 	// Postcondition assertion
@@ -126,52 +117,5 @@ func (b *R2Backupper) Run(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("streaming backup failed: %w", err)
 	}
 
-	// Apply retention policy
-	if err := b.applyRetention(ctx); err != nil {
-		return "", fmt.Errorf("retention policy failed: %w", err)
-	}
-
 	return key, nil
-}
-
-// applyRetention removes old backups exceeding the limit
-func (b *R2Backupper) applyRetention(ctx context.Context) error {
-	if ctx == nil {
-		return errors.New("context cannot be nil")
-	}
-
-	// List all backups
-	keys, err := b.remoteStorage.List(ctx, config.RemoteBackups)
-	if err != nil {
-		return fmt.Errorf("failed to list backups: %w", err)
-	}
-
-	// Static bounds check
-	if len(keys) > config.MaxFiles {
-		return fmt.Errorf("too many backup files: %d exceeds limit %d", len(keys), config.MaxFiles)
-	}
-
-	// Filter valid backup files
-	var backups []string
-	for _, key := range keys {
-		if strings.HasSuffix(key, config.BackupExtension) {
-			backups = append(backups, key)
-		}
-	}
-
-	// Sort by key (timestamp in name, newest first)
-	sort.Slice(backups, func(i, j int) bool {
-		return backups[i] > backups[j]
-	})
-
-	// Delete excess backups
-	if len(backups) > config.R2MaxBackups {
-		for _, key := range backups[config.R2MaxBackups:] {
-			if err := b.remoteStorage.Delete(ctx, key); err != nil {
-				return fmt.Errorf("failed to delete old backup %s: %w", key, err)
-			}
-		}
-	}
-
-	return nil
 }

@@ -31,7 +31,7 @@ type MolfarService interface {
 	Prepare() error
 
 	// Run executes the main server orchestration process
-	Run(server *domain.Server) error
+	Run(server *domain.Server, sessionID string) error
 
 	// Exit gracefully shuts down the server and cleans up resources
 	Exit() error
@@ -94,4 +94,12 @@ type UpdaterService interface {
 	// Run executes the update process
 	// Returns nil if no update needed or update succeeded, error if update failed
 	Run(ctx context.Context) error
+}
+
+// RetentionService defines the interface for backup retention operations
+// Retentions clean up old backups after manifest is updated
+type RetentionService interface {
+	// Apply removes old backups exceeding the retention limit
+	// Uses manifest's StoredWorlds to identify valid backups
+	Apply(ctx context.Context, manifest *domain.Manifest) error
 }

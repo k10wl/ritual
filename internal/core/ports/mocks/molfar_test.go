@@ -24,7 +24,7 @@ func TestMockMolfarService(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	mockMolfar.RunFunc = func(server *domain.Server) error {
+	mockMolfar.RunFunc = func(server *domain.Server, sessionID string) error {
 		return nil
 	}
 
@@ -33,7 +33,7 @@ func TestMockMolfarService(t *testing.T) {
 		t.Errorf("Failed to create server: %v", err)
 	}
 
-	err = molfar.Run(server)
+	err = molfar.Run(server, "test-session")
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
