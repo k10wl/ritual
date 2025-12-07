@@ -122,16 +122,8 @@ func main() {
 
 	updaters := []ports.UpdaterService{instanceUpdater, worldsUpdater}
 
-	// Create backuppers
-	localBackupper, err := services.NewLocalBackupper(workRoot, events)
-	if err != nil {
-		fmt.Printf("Failed to create local backupper: %v\n", err)
-		close(events)
-		wg.Wait()
-		return
-	}
-
-	r2Backupper, err := services.NewR2Backupper(r2Uploader, envBucket, workRoot, "", nil, events)
+	// Create backupper (R2 with local tee - single archive stream to both destinations)
+	r2Backupper, err := services.NewR2Backupper(r2Uploader, envBucket, workRoot, true, nil, events)
 	if err != nil {
 		fmt.Printf("Failed to create R2 backupper: %v\n", err)
 		close(events)
@@ -139,7 +131,7 @@ func main() {
 		return
 	}
 
-	backuppers := []ports.BackupperService{localBackupper, r2Backupper}
+	backuppers := []ports.BackupperService{r2Backupper}
 
 	// Create retention services
 	localRetention, err := services.NewLocalRetention(localStorage, events)

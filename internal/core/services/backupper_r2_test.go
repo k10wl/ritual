@@ -112,9 +112,9 @@ func TestR2Backupper_Run(t *testing.T) {
 			uploader,
 			"test-bucket",
 			workRoot,
-			"",  // no local backup
-			nil, // no backup condition
-			nil, // no events
+			false, // no local backup
+			nil,   // no backup condition
+			nil,   // no events
 		)
 		require.NoError(t, err)
 
@@ -138,7 +138,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			uploader,
 			"test-bucket",
 			workRoot,
-			"",
+			false,
 			nil,
 			nil,
 		)
@@ -167,7 +167,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			uploader,
 			"test-bucket",
 			workRoot,
-			"",
+			false,
 			nil,
 			nil,
 		)
@@ -191,7 +191,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			uploader,
 			"test-bucket",
 			workRoot,
-			"",
+			false,
 			nil,
 			nil,
 		)
@@ -208,7 +208,7 @@ func TestNewR2Backupper(t *testing.T) {
 		_, _, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(nil, "bucket", workRoot, "", nil, nil)
+		_, err := services.NewR2Backupper(nil, "bucket", workRoot, false, nil, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "uploader")
 	})
@@ -217,7 +217,7 @@ func TestNewR2Backupper(t *testing.T) {
 		uploader, _, _, _, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(uploader, "bucket", nil, "", nil, nil)
+		_, err := services.NewR2Backupper(uploader, "bucket", nil, false, nil, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "workRoot")
 	})
@@ -226,7 +226,7 @@ func TestNewR2Backupper(t *testing.T) {
 		uploader, _, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		backupper, err := services.NewR2Backupper(uploader, "bucket", workRoot, "", nil, nil)
+		backupper, err := services.NewR2Backupper(uploader, "bucket", workRoot, false, nil, nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, backupper)
 	})
@@ -234,22 +234,20 @@ func TestNewR2Backupper(t *testing.T) {
 
 // TestR2Backupper_LocalBackup tests the optional local backup feature
 func TestR2Backupper_LocalBackup(t *testing.T) {
-	t.Run("creates local backup when condition true", func(t *testing.T) {
+	t.Run("creates local backup when enabled", func(t *testing.T) {
 		uploader, _, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
 		// Setup world data
 		setupR2BackupperWorldData(t, tempDir)
 
-		localBackupDir := filepath.Join(tempDir, "local_backups")
-
 		// Create R2Backupper with local backup enabled
 		backupper, err := services.NewR2Backupper(
 			uploader,
 			"test-bucket",
 			workRoot,
-			localBackupDir,
-			func() bool { return true },
+			true, // saveLocalBackup
+			nil,
 			nil,
 		)
 		require.NoError(t, err)
@@ -259,28 +257,27 @@ func TestR2Backupper_LocalBackup(t *testing.T) {
 		_, err = backupper.Run(ctx)
 		require.NoError(t, err)
 
-		// Verify local backup was created
+		// Verify local backup was created in config.LocalBackups directory
+		localBackupDir := filepath.Join(tempDir, config.LocalBackups)
 		files, err := os.ReadDir(localBackupDir)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, files, "Local backup should be created")
 	})
 
-	t.Run("skips local backup when condition false", func(t *testing.T) {
+	t.Run("skips local backup when disabled", func(t *testing.T) {
 		uploader, _, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
 		// Setup world data
 		setupR2BackupperWorldData(t, tempDir)
 
-		localBackupDir := filepath.Join(tempDir, "local_backups_skip")
-
 		// Create R2Backupper with local backup disabled
 		backupper, err := services.NewR2Backupper(
 			uploader,
 			"test-bucket",
 			workRoot,
-			localBackupDir,
-			func() bool { return false },
+			false, // saveLocalBackup
+			nil,
 			nil,
 		)
 		require.NoError(t, err)
@@ -291,8 +288,38 @@ func TestR2Backupper_LocalBackup(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify local backup was NOT created
+		localBackupDir := filepath.Join(tempDir, config.LocalBackups)
 		_, err = os.ReadDir(localBackupDir)
 		assert.True(t, os.IsNotExist(err), "Local backup directory should not exist")
+	})
+
+	t.Run("skips local backup when condition false", func(t *testing.T) {
+		uploader, _, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+		defer cleanup()
+
+		// Setup world data
+		setupR2BackupperWorldData(t, tempDir)
+
+		// Create R2Backupper with local backup enabled but condition false
+		backupper, err := services.NewR2Backupper(
+			uploader,
+			"test-bucket",
+			workRoot,
+			true,
+			func() bool { return false }, // condition returns false
+			nil,
+		)
+		require.NoError(t, err)
+
+		// Execute backup
+		ctx := context.Background()
+		_, err = backupper.Run(ctx)
+		require.NoError(t, err)
+
+		// Verify local backup was NOT created (condition prevented it)
+		localBackupDir := filepath.Join(tempDir, config.LocalBackups)
+		_, err = os.ReadDir(localBackupDir)
+		assert.True(t, os.IsNotExist(err), "Local backup directory should not exist when condition is false")
 	})
 }
 
@@ -315,7 +342,7 @@ func TestR2Backupper_StreamingVerification(t *testing.T) {
 			capturingUploader,
 			"test-bucket",
 			tempRoot,
-			"",
+			false,
 			nil,
 			nil,
 		)
