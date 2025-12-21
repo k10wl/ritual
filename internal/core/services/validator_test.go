@@ -386,10 +386,121 @@ func TestValidatorService_CheckLock(t *testing.T) {
 	}
 }
 
+func TestValidatorService_CheckManifestVersion(t *testing.T) {
+	validator, err := NewValidatorService()
+	assert.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		local       *domain.Manifest
+		remote      *domain.Manifest
+		expectedErr error
+	}{
+		{
+			name:        "matching_versions",
+			local:       &domain.Manifest{ManifestVersion: "1.0.0"},
+			remote:      &domain.Manifest{ManifestVersion: "1.0.0"},
+			expectedErr: nil,
+		},
+		{
+			name:        "local_newer_than_remote",
+			local:       &domain.Manifest{ManifestVersion: "2.0.0"},
+			remote:      &domain.Manifest{ManifestVersion: "1.0.0"},
+			expectedErr: nil,
+		},
+		{
+			name:        "local_older_than_remote_major",
+			local:       &domain.Manifest{ManifestVersion: "1.0.0"},
+			remote:      &domain.Manifest{ManifestVersion: "2.0.0"},
+			expectedErr: ErrOutdatedManifest,
+		},
+		{
+			name:        "local_older_than_remote_minor",
+			local:       &domain.Manifest{ManifestVersion: "1.0.0"},
+			remote:      &domain.Manifest{ManifestVersion: "1.1.0"},
+			expectedErr: ErrOutdatedManifest,
+		},
+		{
+			name:        "local_older_than_remote_patch",
+			local:       &domain.Manifest{ManifestVersion: "1.0.0"},
+			remote:      &domain.Manifest{ManifestVersion: "1.0.1"},
+			expectedErr: ErrOutdatedManifest,
+		},
+		{
+			name:        "empty_local_with_remote_version",
+			local:       &domain.Manifest{ManifestVersion: ""},
+			remote:      &domain.Manifest{ManifestVersion: "1.0.0"},
+			expectedErr: ErrOutdatedManifest,
+		},
+		{
+			name:        "whitespace_local_with_remote_version",
+			local:       &domain.Manifest{ManifestVersion: "   "},
+			remote:      &domain.Manifest{ManifestVersion: "1.0.0"},
+			expectedErr: ErrOutdatedManifest,
+		},
+		{
+			name:        "empty_remote_version_is_error",
+			local:       &domain.Manifest{ManifestVersion: "1.0.0"},
+			remote:      &domain.Manifest{ManifestVersion: ""},
+			expectedErr: ErrRemoteManifestVersionEmpty,
+		},
+		{
+			name:        "whitespace_remote_version_is_error",
+			local:       &domain.Manifest{ManifestVersion: "1.0.0"},
+			remote:      &domain.Manifest{ManifestVersion: "   "},
+			expectedErr: ErrRemoteManifestVersionEmpty,
+		},
+		{
+			name:        "nil_local_manifest",
+			local:       nil,
+			remote:      &domain.Manifest{ManifestVersion: "1.0.0"},
+			expectedErr: ErrLocalManifestNil,
+		},
+		{
+			name:        "nil_remote_manifest",
+			local:       &domain.Manifest{ManifestVersion: "1.0.0"},
+			remote:      nil,
+			expectedErr: ErrRemoteManifestNil,
+		},
+		{
+			name:        "complex_version_local_older",
+			local:       &domain.Manifest{ManifestVersion: "1.9.9"},
+			remote:      &domain.Manifest{ManifestVersion: "2.0.0"},
+			expectedErr: ErrOutdatedManifest,
+		},
+		{
+			name:        "complex_version_local_newer",
+			local:       &domain.Manifest{ManifestVersion: "2.0.0"},
+			remote:      &domain.Manifest{ManifestVersion: "1.9.9"},
+			expectedErr: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validator.CheckManifestVersion(tt.local, tt.remote)
+
+			if tt.expectedErr == nil {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+				assert.Equal(t, tt.expectedErr, err)
+			}
+		})
+	}
+}
+
 func TestValidatorService_DefensiveValidation(t *testing.T) {
 
 	_, err := NewValidatorService()
 	assert.NoError(t, err)
+
+	t.Run("nil_validator_check_manifest_version", func(t *testing.T) {
+		var nilValidator *ValidatorService
+
+		err := nilValidator.CheckManifestVersion(&domain.Manifest{}, &domain.Manifest{})
+		assert.Error(t, err)
+	})
 
 	t.Run("nil_validator_check_instance", func(t *testing.T) {
 		var nilValidator *ValidatorService

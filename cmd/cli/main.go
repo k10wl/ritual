@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -160,9 +161,18 @@ func main() {
 
 	retentions := []ports.RetentionService{localRetention, r2Retention, logRetention}
 
+	// Fetch remote manifest to get start script path
+	remoteManifest, err := librarian.GetRemoteManifest(context.Background())
+	if err != nil {
+		fmt.Printf("Failed to get remote manifest: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
 	// Create server runner
 	commandExecutor := adapters.NewCommandExecutorAdapter()
-	serverRunner, err := adapters.NewServerRunner(config.RootPath, commandExecutor)
+	serverRunner, err := adapters.NewServerRunner(config.RootPath, remoteManifest.StartScript, commandExecutor)
 	if err != nil {
 		fmt.Printf("Failed to create server runner: %v\n", err)
 		close(events)

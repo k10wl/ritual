@@ -4,10 +4,12 @@ import "time"
 
 // Manifest represents the central manifest tracking instance/worlds versions, locks, and metadata
 type Manifest struct {
+	ManifestVersion string    `json:"manifest_version"`
 	RitualVersion   string    `json:"ritual_version"`
 	LockedBy        string    `json:"locked_by"` // {hostname}::{nanosecond timestamp}, or empty string if not locked
 	InstanceVersion string    `json:"instance_version"`
-	StoredWorlds    []World   `json:"worlds"` // queue of latest worlds
+	StartScript     string    `json:"start_script"` // path to bat file that starts the server (relative to ritual root)
+	StoredWorlds    []World   `json:"worlds"`       // queue of latest worlds
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
@@ -56,9 +58,11 @@ func (m *Manifest) Clone() *Manifest {
 	}
 
 	clone := &Manifest{
+		ManifestVersion: m.ManifestVersion,
 		RitualVersion:   m.RitualVersion,
 		LockedBy:        m.LockedBy,
 		InstanceVersion: m.InstanceVersion,
+		StartScript:     m.StartScript,
 		StoredWorlds:    make([]World, len(m.StoredWorlds)),
 		UpdatedAt:       time.Now(),
 	}

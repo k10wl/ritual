@@ -8,7 +8,7 @@ import (
 // Application identity
 const (
 	GroupName = "k10wl"
-	AppName   = "ritual"
+	AppName   = "ritualdev"
 )
 
 // Directory names
