@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(go test:*)",
+      "Bash(go build:*)",
+      "Bash(powershell -Command \"Get-Content internal\\core\\domain\\manifest.go\")",
+      "Bash(powershell -Command \"Get-Content internal\\core\\domain\\server.go\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

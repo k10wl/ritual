@@ -1,0 +1,2 @@
+- target platform and running platform is windows only. therefore we ignore any other platfors. also commands must be for windows, not unix
+- all project information in @docs\
