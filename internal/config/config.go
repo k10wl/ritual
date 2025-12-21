@@ -41,13 +41,6 @@ const (
 	LogExtension    = ".log"
 )
 
-// World directories (relative to instance)
-var WorldDirs = []string{
-	"world",
-	"world_nether",
-	"world_the_end",
-}
-
 // Update process flags
 const (
 	ReplaceFlag = "--replace-old"

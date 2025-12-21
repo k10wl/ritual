@@ -119,11 +119,24 @@ func (r *R2Retention) Apply(ctx context.Context, manifest *domain.Manifest) erro
 	}
 
 	// Delete identified backups
+	deletedSet := make(map[string]bool)
 	for _, key := range toDelete {
 		r.send(ports.UpdateEvent{Operation: "retention", Message: "Deleting R2 backup", Data: map[string]any{"key": key}})
 		if err := r.remoteStorage.Delete(ctx, key); err != nil {
 			return fmt.Errorf("failed to delete R2 backup %s: %w", key, err)
 		}
+		deletedSet[key] = true
+	}
+
+	// Update manifest to remove deleted worlds
+	if len(deletedSet) > 0 {
+		var remainingWorlds []domain.World
+		for _, world := range manifest.StoredWorlds {
+			if !deletedSet[world.URI] {
+				remainingWorlds = append(remainingWorlds, world)
+			}
+		}
+		manifest.StoredWorlds = remainingWorlds
 	}
 
 	return nil

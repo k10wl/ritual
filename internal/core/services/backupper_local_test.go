@@ -58,6 +58,8 @@ func setupLocalBackupperWorldData(t *testing.T, tempDir string) {
 }
 
 func TestLocalBackupper_Run(t *testing.T) {
+	worldDirs := []string{"world", "world_nether", "world_the_end"}
+
 	t.Run("creates archive from world directories", func(t *testing.T) {
 		_, tempDir, workRoot, cleanup := setupLocalBackupperServices(t)
 		defer cleanup()
@@ -66,7 +68,7 @@ func TestLocalBackupper_Run(t *testing.T) {
 		setupLocalBackupperWorldData(t, tempDir)
 
 		// Create LocalBackupper
-		backupper, err := services.NewLocalBackupper(workRoot, nil)
+		backupper, err := services.NewLocalBackupper(workRoot, worldDirs, nil)
 		require.NoError(t, err)
 
 		// Execute backup
@@ -85,7 +87,7 @@ func TestLocalBackupper_Run(t *testing.T) {
 		setupLocalBackupperWorldData(t, tempDir)
 
 		// Create LocalBackupper
-		backupper, err := services.NewLocalBackupper(workRoot, nil)
+		backupper, err := services.NewLocalBackupper(workRoot, worldDirs, nil)
 		require.NoError(t, err)
 
 		// Execute backup
@@ -107,7 +109,7 @@ func TestLocalBackupper_Run(t *testing.T) {
 		setupLocalBackupperWorldData(t, tempDir)
 
 		// Create LocalBackupper
-		backupper, err := services.NewLocalBackupper(workRoot, nil)
+		backupper, err := services.NewLocalBackupper(workRoot, worldDirs, nil)
 		require.NoError(t, err)
 
 		// Execute backup
@@ -123,7 +125,7 @@ func TestLocalBackupper_Run(t *testing.T) {
 		_, _, workRoot, cleanup := setupLocalBackupperServices(t)
 		defer cleanup()
 
-		backupper, err := services.NewLocalBackupper(workRoot, nil)
+		backupper, err := services.NewLocalBackupper(workRoot, worldDirs, nil)
 		require.NoError(t, err)
 
 		_, err = backupper.Run(nil)
@@ -133,17 +135,28 @@ func TestLocalBackupper_Run(t *testing.T) {
 }
 
 func TestNewLocalBackupper(t *testing.T) {
+	worldDirs := []string{"world", "world_nether", "world_the_end"}
+
 	t.Run("nil workRoot returns error", func(t *testing.T) {
-		_, err := services.NewLocalBackupper(nil, nil)
+		_, err := services.NewLocalBackupper(nil, worldDirs, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "workRoot")
+	})
+
+	t.Run("empty worldDirs returns error", func(t *testing.T) {
+		_, _, workRoot, cleanup := setupLocalBackupperServices(t)
+		defer cleanup()
+
+		_, err := services.NewLocalBackupper(workRoot, []string{}, nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "worldDirs")
 	})
 
 	t.Run("valid dependencies returns backupper", func(t *testing.T) {
 		_, _, workRoot, cleanup := setupLocalBackupperServices(t)
 		defer cleanup()
 
-		backupper, err := services.NewLocalBackupper(workRoot, nil)
+		backupper, err := services.NewLocalBackupper(workRoot, worldDirs, nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, backupper)
 	})

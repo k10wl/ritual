@@ -9,6 +9,7 @@ type Manifest struct {
 	LockedBy        string    `json:"locked_by"` // {hostname}::{nanosecond timestamp}, or empty string if not locked
 	InstanceVersion string    `json:"instance_version"`
 	StartScript     string    `json:"start_script"` // path to bat file that starts the server (relative to ritual root)
+	WorldDirs       []string  `json:"world_dirs"`   // directories to archive (relative to instance dir)
 	StoredWorlds    []World   `json:"worlds"`       // queue of latest worlds
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -63,10 +64,12 @@ func (m *Manifest) Clone() *Manifest {
 		LockedBy:        m.LockedBy,
 		InstanceVersion: m.InstanceVersion,
 		StartScript:     m.StartScript,
+		WorldDirs:       make([]string, len(m.WorldDirs)),
 		StoredWorlds:    make([]World, len(m.StoredWorlds)),
 		UpdatedAt:       time.Now(),
 	}
 
+	copy(clone.WorldDirs, m.WorldDirs)
 	copy(clone.StoredWorlds, m.StoredWorlds)
 	return clone
 }

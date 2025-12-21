@@ -112,6 +112,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			uploader,
 			"test-bucket",
 			workRoot,
+			[]string{"world", "world_nether", "world_the_end"},
 			false, // no local backup
 			nil,   // no backup condition
 			nil,   // no events
@@ -138,6 +139,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			uploader,
 			"test-bucket",
 			workRoot,
+			[]string{"world", "world_nether", "world_the_end"},
 			false,
 			nil,
 			nil,
@@ -167,6 +169,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			uploader,
 			"test-bucket",
 			workRoot,
+			[]string{"world", "world_nether", "world_the_end"},
 			false,
 			nil,
 			nil,
@@ -191,6 +194,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			uploader,
 			"test-bucket",
 			workRoot,
+			[]string{"world", "world_nether", "world_the_end"},
 			false,
 			nil,
 			nil,
@@ -204,11 +208,13 @@ func TestR2Backupper_Run(t *testing.T) {
 }
 
 func TestNewR2Backupper(t *testing.T) {
+	worldDirs := []string{"world", "world_nether", "world_the_end"}
+
 	t.Run("nil uploader returns error", func(t *testing.T) {
 		_, _, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(nil, "bucket", workRoot, false, nil, nil)
+		_, err := services.NewR2Backupper(nil, "bucket", workRoot, worldDirs, false, nil, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "uploader")
 	})
@@ -217,16 +223,25 @@ func TestNewR2Backupper(t *testing.T) {
 		uploader, _, _, _, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(uploader, "bucket", nil, false, nil, nil)
+		_, err := services.NewR2Backupper(uploader, "bucket", nil, worldDirs, false, nil, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "workRoot")
+	})
+
+	t.Run("empty worldDirs returns error", func(t *testing.T) {
+		uploader, _, _, workRoot, cleanup := setupR2BackupperServices(t)
+		defer cleanup()
+
+		_, err := services.NewR2Backupper(uploader, "bucket", workRoot, []string{}, false, nil, nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "worldDirs")
 	})
 
 	t.Run("valid dependencies returns backupper", func(t *testing.T) {
 		uploader, _, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		backupper, err := services.NewR2Backupper(uploader, "bucket", workRoot, false, nil, nil)
+		backupper, err := services.NewR2Backupper(uploader, "bucket", workRoot, worldDirs, false, nil, nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, backupper)
 	})
@@ -246,6 +261,7 @@ func TestR2Backupper_LocalBackup(t *testing.T) {
 			uploader,
 			"test-bucket",
 			workRoot,
+			[]string{"world", "world_nether", "world_the_end"},
 			true, // saveLocalBackup
 			nil,
 			nil,
@@ -276,6 +292,7 @@ func TestR2Backupper_LocalBackup(t *testing.T) {
 			uploader,
 			"test-bucket",
 			workRoot,
+			[]string{"world", "world_nether", "world_the_end"},
 			false, // saveLocalBackup
 			nil,
 			nil,
@@ -305,6 +322,7 @@ func TestR2Backupper_LocalBackup(t *testing.T) {
 			uploader,
 			"test-bucket",
 			workRoot,
+			[]string{"world", "world_nether", "world_the_end"},
 			true,
 			func() bool { return false }, // condition returns false
 			nil,
@@ -334,6 +352,7 @@ func TestR2Backupper_StreamingVerification(t *testing.T) {
 
 		tempRoot, err := os.OpenRoot(tempDir)
 		require.NoError(t, err)
+		defer tempRoot.Close()
 
 		// Setup world data
 		setupR2BackupperWorldData(t, tempDir)
@@ -342,6 +361,7 @@ func TestR2Backupper_StreamingVerification(t *testing.T) {
 			capturingUploader,
 			"test-bucket",
 			tempRoot,
+			[]string{"world", "world_nether", "world_the_end"},
 			false,
 			nil,
 			nil,

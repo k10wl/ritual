@@ -21,8 +21,9 @@ var (
 
 // LocalBackupper implements BackupperService for local backup storage with streaming
 type LocalBackupper struct {
-	workRoot *os.Root
-	events   chan<- ports.Event // Optional: channel for progress events
+	workRoot  *os.Root
+	worldDirs []string           // Directories to archive (relative to instance dir)
+	events    chan<- ports.Event // Optional: channel for progress events
 }
 
 // Compile-time check to ensure LocalBackupper implements ports.BackupperService
@@ -30,14 +31,18 @@ var _ ports.BackupperService = (*LocalBackupper)(nil)
 
 // NewLocalBackupper creates a new local backupper with streaming support
 // Validates all dependencies are non-nil per NASA JPL defensive programming standards
-func NewLocalBackupper(workRoot *os.Root, events chan<- ports.Event) (*LocalBackupper, error) {
+func NewLocalBackupper(workRoot *os.Root, worldDirs []string, events chan<- ports.Event) (*LocalBackupper, error) {
 	if workRoot == nil {
 		return nil, ErrLocalBackupperWorkRootNil
 	}
+	if len(worldDirs) == 0 {
+		return nil, errors.New("worldDirs cannot be empty")
+	}
 
 	backupper := &LocalBackupper{
-		workRoot: workRoot,
-		events:   events,
+		workRoot:  workRoot,
+		worldDirs: worldDirs,
+		events:    events,
 	}
 
 	// Postcondition assertion
@@ -64,16 +69,11 @@ func (b *LocalBackupper) Run(ctx context.Context) (string, error) {
 
 	// World directories to backup (relative to workRoot)
 	rootPath := b.workRoot.Name()
-	worldDirs := make([]string, len(config.WorldDirs))
-	for i, dir := range config.WorldDirs {
-		worldDirs[i] = filepath.Join(rootPath, config.InstanceDir, dir)
-	}
-
-	// Filter to only existing directories
 	var existingDirs []string
-	for _, dir := range worldDirs {
-		if _, err := os.Stat(dir); err == nil {
-			existingDirs = append(existingDirs, dir)
+	for _, dir := range b.worldDirs {
+		fullPath := filepath.Join(rootPath, config.InstanceDir, dir)
+		if _, err := os.Stat(fullPath); err == nil {
+			existingDirs = append(existingDirs, fullPath)
 		}
 	}
 
