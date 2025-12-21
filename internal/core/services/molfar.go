@@ -107,6 +107,18 @@ func (m *MolfarService) Prepare() error {
 	m.send(ports.UpdateEvent{Operation: "prepare", Message: "Starting preparation phase", Data: map[string]any{"workRoot": m.workRoot.Name()}})
 	ctx := context.Background()
 
+	// Check if remote manifest is locked before running updates
+	remoteManifest, err := m.librarian.GetRemoteManifest(ctx)
+	if err != nil {
+		m.send(ports.ErrorEvent{Operation: "prepare", Err: err})
+		return fmt.Errorf("failed to get remote manifest: %w", err)
+	}
+	if remoteManifest.IsLocked() {
+		err := fmt.Errorf("remote manifest is locked by %s", remoteManifest.LockedBy)
+		m.send(ports.ErrorEvent{Operation: "prepare", Err: err})
+		return err
+	}
+
 	// Run all updaters
 	for i, updater := range m.updaters {
 		m.send(ports.StartEvent{Operation: "updater"})

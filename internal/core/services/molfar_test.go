@@ -627,6 +627,14 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		assert.NoError(t, err)
 		defer localStorage.Close()
 
+		// Create unlocked remote manifest so Prepare can proceed to updaters
+		ctx := context.Background()
+		manifest := createTestManifest("1.0.0", "1.0.0", []domain.World{})
+		manifestData, err := json.Marshal(manifest)
+		assert.NoError(t, err)
+		err = localStorage.Put(ctx, "manifest.json", manifestData)
+		assert.NoError(t, err)
+
 		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
 		assert.NoError(t, err)
 
