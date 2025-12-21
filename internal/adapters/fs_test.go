@@ -16,7 +16,9 @@ import (
 func TestFSRepository_Get(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	repo, err := NewFSRepository(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	assert.NoError(t, err)
+	repo, err := NewFSRepository(root)
 	assert.NoError(t, err)
 	defer repo.Close()
 
@@ -41,7 +43,9 @@ func TestFSRepository_Get(t *testing.T) {
 func TestFSRepository_Put(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	repo, err := NewFSRepository(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	assert.NoError(t, err)
+	repo, err := NewFSRepository(root)
 	assert.NoError(t, err)
 	defer repo.Close()
 
@@ -73,7 +77,9 @@ func TestFSRepository_Put(t *testing.T) {
 func TestFSRepository_Delete(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	repo, err := NewFSRepository(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	assert.NoError(t, err)
+	repo, err := NewFSRepository(root)
 	assert.NoError(t, err)
 	defer repo.Close()
 
@@ -123,7 +129,9 @@ func TestFSRepository_Delete(t *testing.T) {
 func TestFSRepository_List(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	repo, err := NewFSRepository(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	assert.NoError(t, err)
+	repo, err := NewFSRepository(root)
 	assert.NoError(t, err)
 	defer repo.Close()
 
@@ -172,7 +180,9 @@ func TestFSRepository_List(t *testing.T) {
 func TestFSRepository_Copy(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	repo, err := NewFSRepository(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	assert.NoError(t, err)
+	repo, err := NewFSRepository(root)
 	assert.NoError(t, err)
 	defer repo.Close()
 
@@ -302,7 +312,9 @@ func TestFSRepository_Copy(t *testing.T) {
 func TestFSRepository_ManifestOperations(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	repo, err := NewFSRepository(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	assert.NoError(t, err)
+	repo, err := NewFSRepository(root)
 	assert.NoError(t, err)
 	defer repo.Close()
 
@@ -322,7 +334,9 @@ func TestFSRepository_ManifestOperations(t *testing.T) {
 func TestFSRepository_ErrorConditions(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	repo, err := NewFSRepository(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	assert.NoError(t, err)
+	repo, err := NewFSRepository(root)
 	assert.NoError(t, err)
 	defer repo.Close()
 
@@ -336,7 +350,9 @@ func TestFSRepository_ErrorConditions(t *testing.T) {
 		assert.NoError(t, err)
 		defer os.Chmod(readOnlyDir, 0755)
 
-		readOnlyRepo, err := NewFSRepository(readOnlyDir)
+		readOnlyRoot, err := os.OpenRoot(readOnlyDir)
+		assert.NoError(t, err)
+		readOnlyRepo, err := NewFSRepository(readOnlyRoot)
 		assert.NoError(t, err)
 		defer readOnlyRepo.Close()
 
@@ -363,7 +379,9 @@ func TestFSRepository_ErrorConditions(t *testing.T) {
 func TestFSRepository_BoundaryValues(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	repo, err := NewFSRepository(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	assert.NoError(t, err)
+	repo, err := NewFSRepository(root)
 	assert.NoError(t, err)
 	defer repo.Close()
 
@@ -404,7 +422,9 @@ func TestFSRepository_BoundaryValues(t *testing.T) {
 func TestFSRepository_Concurrency(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	repo, err := NewFSRepository(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	assert.NoError(t, err)
+	repo, err := NewFSRepository(root)
 	assert.NoError(t, err)
 	defer repo.Close()
 
@@ -505,7 +525,9 @@ func TestFSRepository_Concurrency(t *testing.T) {
 func TestFSRepository_Security(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	repo, err := NewFSRepository(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	assert.NoError(t, err)
+	repo, err := NewFSRepository(root)
 	assert.NoError(t, err)
 	defer repo.Close()
 
@@ -548,7 +570,9 @@ func TestFSRepository_Security(t *testing.T) {
 
 func TestFSRepository_SpacesInDirectoryNames(t *testing.T) {
 	tempDir := t.TempDir()
-	repo, err := NewFSRepository(tempDir)
+	root, err := os.OpenRoot(tempDir)
+	assert.NoError(t, err)
+	repo, err := NewFSRepository(root)
 	assert.NoError(t, err)
 	defer repo.Close()
 

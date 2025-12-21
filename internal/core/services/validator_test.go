@@ -176,7 +176,11 @@ func TestValidatorService_CheckWorld(t *testing.T) {
 			local: &domain.Manifest{
 				StoredWorlds: []domain.World{},
 			},
-			remote:      &domain.Manifest{},
+			remote: &domain.Manifest{
+				StoredWorlds: []domain.World{
+					{URI: "world1", CreatedAt: validTime},
+				},
+			},
 			expectedErr: ErrNoLocalWorlds,
 		},
 		{
@@ -317,10 +321,10 @@ func TestValidatorService_CheckLock(t *testing.T) {
 		{
 			name: "both_locked_by_same_entity",
 			local: &domain.Manifest{
-				LockedBy: "user1__1234567890",
+				LockedBy: "user1::1234567890",
 			},
 			remote: &domain.Manifest{
-				LockedBy: "user1__1234567890",
+				LockedBy: "user1::1234567890",
 			},
 			expectedErr: ErrLockConflict,
 		},
@@ -339,10 +343,10 @@ func TestValidatorService_CheckLock(t *testing.T) {
 		{
 			name: "lock_conflict",
 			local: &domain.Manifest{
-				LockedBy: "user1__1234567890",
+				LockedBy: "user1::1234567890",
 			},
 			remote: &domain.Manifest{
-				LockedBy: "user2__1234567890",
+				LockedBy: "user2::1234567890",
 			},
 			expectedErr: ErrLockConflict,
 		},
@@ -352,14 +356,14 @@ func TestValidatorService_CheckLock(t *testing.T) {
 				LockedBy: "",
 			},
 			remote: &domain.Manifest{
-				LockedBy: "user1__1234567890",
+				LockedBy: "user1::1234567890",
 			},
 			expectedErr: ErrLockConflict,
 		},
 		{
 			name: "local_locked_remote_unlocked",
 			local: &domain.Manifest{
-				LockedBy: "user1__1234567890",
+				LockedBy: "user1::1234567890",
 			},
 			remote: &domain.Manifest{
 				LockedBy: "",
@@ -435,7 +439,6 @@ func TestValidatorService_CheckWorldBounds(t *testing.T) {
 		remote := &domain.Manifest{StoredWorlds: []domain.World{}}
 
 		err := validator.CheckWorld(local, remote)
-		assert.Error(t, err)
-		assert.Equal(t, ErrNoRemoteWorlds, err)
+		assert.NoError(t, err, "Empty remote worlds should be allowed")
 	})
 }

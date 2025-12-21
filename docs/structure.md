@@ -6,7 +6,7 @@ All project imports follow the pattern: `ritual/...`
 
 Example imports:
 - `ritual/internal/core/domain` - Domain entities
-- `ritual/internal/core/ports` - Interface definitions  
+- `ritual/internal/core/ports` - Interface definitions
 - `ritual/internal/core/services` - Business logic services
 - `ritual/internal/adapters` - External system integrations
 
@@ -27,14 +27,35 @@ ritual/
 ├── docs/
 │   ├── overview.md              # High-level architecture overview
 │   ├── structure.md             # This file - project structure documentation
-│   └── ritual.drawio            # Architecture diagrams
+│   ├── progress.md              # Sprint tracker and progress
+│   ├── cleanup.md               # Cleanup tasks documentation
+│   └── coding-practices.md      # NASA JPL defensive programming standards
 └── internal/
+    ├── config/
+    │   └── config.go           # Centralized configuration constants
     ├── adapters/
-    │   ├── cli.go               # CLI command handler
     │   ├── fs.go                # Local filesystem storage adapter
+    │   ├── fs_test.go           # FSRepository tests
     │   ├── r2.go                # Cloudflare R2 storage adapter
+    │   ├── r2_test.go           # R2Repository tests
     │   ├── serverrunner.go      # Server execution adapter
-    │   └── commandexecutor.go   # Command execution adapter
+    │   ├── serverrunner_test.go # ServerRunner tests
+    │   ├── commandexecutor.go   # Command execution adapter
+    │   ├── commandexecutor_test.go # CommandExecutor tests
+    │   └── streamer/            # Streaming archive operations
+    │       ├── types.go         # Streamer types and interfaces
+    │       ├── push.go          # Streaming upload (tar.gz creation)
+    │       ├── push_test.go     # Push tests
+    │       ├── pull.go          # Streaming download (tar.gz extraction)
+    │       ├── pull_test.go     # Pull tests
+    │       └── localwriter.go   # Local file writer for streaming
+    ├── testhelpers/
+    │   ├── paperinstancesetup.go    # Paper Minecraft server instance test helper
+    │   ├── paperinstancesetup_test.go # PaperInstanceSetup test suite
+    │   ├── paperworldsetup.go        # Paper Minecraft world test helper
+    │   ├── paperworldsetup_test.go   # PaperWorldSetup test suite
+    │   ├── checksum.go              # Checksum helper for tests
+    │   └── checksum_test.go         # Checksum tests
     └── core/
         ├── domain/
         │   ├── manifest.go      # Manifest entity
@@ -55,24 +76,184 @@ ritual/
         │       ├── validator.go     # Mock ValidatorService implementation
         │       ├── validator_test.go # ValidatorService mock tests
         │       ├── serverrunner.go     # Mock ServerRunner implementation
-        │       └── serverrunner_test.go # ServerRunner mock tests
+        │       ├── serverrunner_test.go # ServerRunner mock tests
+        │       ├── commandexecutor.go  # Mock CommandExecutor implementation
+        │       ├── commandexecutor_test.go # CommandExecutor mock tests
+        │       ├── backupper.go        # Mock BackupperService implementation
+        │       ├── backupper_test.go   # BackupperService mock tests
+        │       ├── updater.go          # Mock UpdaterService implementation
+        │       └── updater_test.go     # UpdaterService mock tests
         └── services/
-            ├── archive.go       # Archive management service
-            ├── archive_test.go  # ArchiveService tests
-            ├── librarian.go     # Manifest management service
-            ├── librarian_test.go # LibrarianService tests
-            ├── molfar.go        # Main orchestration service
-            ├── validator.go     # Validation service
-            └── validator_test.go # ValidatorService tests
+            ├── molfar.go            # Main orchestration service
+            ├── molfar_test.go       # MolfarService tests
+            ├── librarian.go         # Manifest management service
+            ├── librarian_test.go    # LibrarianService tests
+            ├── validator.go         # Validation service
+            ├── validator_test.go    # ValidatorService tests
+            ├── backupper_local.go   # Local backup service (streaming)
+            ├── backupper_local_test.go # LocalBackupper tests
+            ├── backupper_r2.go      # R2 backup service (streaming)
+            ├── backupper_r2_test.go # R2Backupper tests
+            ├── updater_ritual.go    # Ritual self-update service
+            ├── updater_ritual_test.go # RitualUpdater tests
+            ├── updater_instance.go  # Instance update service
+            ├── updater_instance_test.go # InstanceUpdater tests
+            ├── updater_worlds.go    # Worlds update service
+            └── updater_worlds_test.go # WorldsUpdater tests
 ```
 
 ## Architecture Layers
+
+### Configuration Layer (`internal/config/`)
+
+Centralizes all application constants and configuration values:
+
+- **`config.go`** - Single source of truth for all constants
+
+#### Configuration Categories
+
+```go
+// Application identity
+const (
+    GroupName = "k10wl"
+    AppName   = "ritualdev"
+)
+
+// Directory names
+const (
+    LocalBackups  = "world_backups"
+    RemoteBackups = "worlds"
+    InstanceDir   = "instance"
+    TmpDir        = "temp"
+)
+
+// File names and keys
+const (
+    ManifestFilename   = "manifest.json"
+    InstanceArchiveKey = "instance.tar.gz"
+    RemoteBinaryKey    = "ritual.exe"
+)
+
+// Backup configuration
+const (
+    R2MaxBackups    = 5
+    LocalMaxBackups = 10
+    MaxFiles        = 1000
+    TimestampFormat = "20060102150405"
+    BackupExtension = ".tar.gz"
+)
+
+// World directories (relative to instance)
+var WorldDirs = []string{
+    "world",
+    "world_nether",
+    "world_the_end",
+}
+
+// Update process flags and timing
+const (
+    ReplaceFlag          = "--replace-old"
+    CleanupFlag          = "--cleanup-update"
+    UpdateProcessDelayMs = 500
+    UpdateFilePattern    = "ritual_update_%d.exe"
+    UpdateFileGlob       = "ritual_update_*.exe"
+)
+
+// Lock ID format
+const (
+    LockIDSeparator = "__"  // Format: {hostname}__{timestamp}
+)
+
+// S3/R2 configuration
+const (
+    S3PartSize       = 5 * 1024 * 1024  // 5 MB parts
+    S3Concurrency    = 1                 // Sequential upload
+    R2EndpointFormat = "https://%s.r2.cloudflarestorage.com"
+)
+
+// File permissions
+const (
+    DirPermission  = 0755
+    FilePermission = 0644
+)
+
+// RootPath is computed at init from user home directory
+var RootPath string
+```
+
+#### Usage Pattern
+
+All services import from the config package instead of defining local constants:
+
+```go
+import "ritual/internal/config"
+
+// Use centralized constants
+timestamp := time.Now().Format(config.TimestampFormat)
+key := config.RemoteBackups + "/" + timestamp + config.BackupExtension
+
+// World directories
+for _, dir := range config.WorldDirs {
+    worldPath := filepath.Join(rootPath, config.InstanceDir, dir)
+}
+```
+
+### Streaming Layer (`internal/adapters/streamer/`)
+
+Provides streaming archive operations for efficient backup and update processes:
+
+- **`types.go`** - Configuration types and interfaces for streaming operations
+- **`push.go`** - Streaming upload with tar.gz creation directly to R2
+- **`pull.go`** - Streaming download with tar.gz extraction from R2
+- **`localwriter.go`** - Local file writer implementation for streaming to filesystem
+
+#### Streamer Types
+
+```go
+// ConflictStrategy defines how to handle existing files during Pull
+type ConflictStrategy int
+
+const (
+    Replace ConflictStrategy = iota // Overwrite existing files (default)
+    Skip                            // Skip existing files
+    Backup                          // Move existing to .bak
+    Fail                            // Return error on conflict
+)
+
+// PushConfig configures the Push operation
+type PushConfig struct {
+    Dirs         []string    // Source directories to archive
+    Bucket       string      // R2 bucket name
+    Key          string      // R2 object key (path/filename.tar.gz)
+    LocalPath    string      // Optional: local backup path
+    ShouldBackup func() bool // Condition for local backup
+}
+
+// PullConfig configures the Pull operation
+type PullConfig struct {
+    Bucket   string                 // R2 bucket name
+    Key      string                 // R2 object key
+    Dest     string                 // Destination directory
+    Conflict ConflictStrategy       // How to handle existing files
+    Filter   func(name string) bool // Optional: filter files to extract
+}
+
+// S3StreamUploader interface for R2 streaming uploads
+type S3StreamUploader interface {
+    Upload(ctx context.Context, bucket, key string, body io.Reader) (int64, error)
+}
+
+// S3StreamDownloader interface for R2 streaming downloads
+type S3StreamDownloader interface {
+    Download(ctx context.Context, bucket, key string) (io.ReadCloser, error)
+}
+```
 
 ### Core Domain Layer (`internal/core/domain/`)
 
 Contains the core business entities:
 
-- **`manifest.go`** - Central manifest tracking instance/worlds versions, locks, and metadata
+- **`manifest.go`** - Central manifest tracking ritual/instance versions, locks, and world backups
 - **`server.go`** - Server configuration entity with address parsing and validation
 - **`world.go`** - World data entity with URI validation and timestamp tracking
 
@@ -81,36 +262,21 @@ Contains the core business entities:
 ```go
 // internal/core/domain/manifest.go
 type Manifest struct {
-    Version      string    `json:"version"`
-    LockedBy     string    `json:"locked_by"`     // {PC name}__{UNIX timestamp on 0 meridian}, or empty string if not locked
-    InstanceID   string    `json:"instance_id"`
-    StoredWorlds []World   `json:"worlds"`        // queue of latest worlds
-    UpdatedAt    time.Time `json:"updated_at"`
+    RitualVersion   string    `json:"ritual_version"`   // Version of the ritual binary
+    LockedBy        string    `json:"locked_by"`        // {hostname}__{UNIX timestamp}, or empty if not locked
+    InstanceVersion string    `json:"instance_version"` // Version of the Minecraft instance
+    StoredWorlds    []World   `json:"worlds"`           // Queue of latest world backups
+    UpdatedAt       time.Time `json:"updated_at"`
 }
 
-type World struct {
-    URI       string    `json:"uri"`
-    CreatedAt time.Time `json:"created_at"`
-}
-
-func NewWorld(uri string) (*World, error) {
-    if uri == "" {
-        return nil, fmt.Errorf("URI cannot be empty")
-    }
-    return &World{
-        URI:       uri,
-        CreatedAt: time.Now(),
-    }, nil
-}
-
-func (m *Manifest) IsLocked() bool {
-    return m.LockedBy != ""
-}
-
-func (m *Manifest) Lock(lockBy string) {
-    m.LockedBy = lockBy
-    m.UpdatedAt = time.Now()
-}
+// Key methods
+func (m *Manifest) IsLocked() bool
+func (m *Manifest) Lock(lockBy string)
+func (m *Manifest) Unlock()
+func (m *Manifest) AddWorld(world World)
+func (m *Manifest) GetLatestWorld() *World
+func (m *Manifest) Clone() *Manifest
+func (m *Manifest) RemoveOldestWorlds(maxCount int) []World
 ```
 
 ### Ports Layer (`internal/core/ports/`)
@@ -118,20 +284,24 @@ func (m *Manifest) Lock(lockBy string) {
 Defines interfaces for external dependencies and provides comprehensive mock implementations for testing:
 
 - **`ports.go`** - All service and repository interfaces
-  - `StorageRepository` - Storage operations interface
-  - `MolfarService` - Main orchestration interface
+  - `StorageRepository` - Storage operations interface (Get, Put, Delete, List, Copy)
+  - `MolfarService` - Main orchestration interface (Prepare, Run, Exit)
   - `LibrarianService` - Manifest management interface
   - `ValidatorService` - Validation interface
-  - `ArchiveService` - Archive management interface
+  - `CommandExecutor` - Command execution interface
   - `ServerRunner` - Server execution interface
+  - `BackupperService` - Backup orchestration interface
+  - `UpdaterService` - Update operations interface
 
 - **Mock Implementations** (`mocks/` folder) - Complete mock implementations with test coverage
   - `storage.go` - MockStorageRepository with comprehensive testing utilities
   - `molfar.go` - MockMolfarService with status tracking and error simulation
   - `librarian.go` - MockLibrarianService with manifest synchronization logic
   - `validator.go` - MockValidatorService with configurable validation results
-  - `archive.go` - MockArchiveService with archive operation simulation
   - `serverrunner.go` - MockServerRunner with server execution simulation
+  - `commandexecutor.go` - MockCommandExecutor with command simulation
+  - `backupper.go` - MockBackupperService with backup operation simulation
+  - `updater.go` - MockUpdaterService with update operation simulation
 
 - **Test Coverage** (`mocks/` folder) - Each mock includes comprehensive test suites
   - `*_test.go` files provide 100% test coverage for all mock functionality
@@ -152,7 +322,7 @@ type StorageRepository interface {
 
 type MolfarService interface {
     Prepare() error
-    Run() error
+    Run(server *domain.Server) error
     Exit() error
 }
 
@@ -169,9 +339,20 @@ type ValidatorService interface {
     CheckLock(local *domain.Manifest, remote *domain.Manifest) error
 }
 
-type ArchiveService interface {
-    Archive(ctx context.Context, source string, destination string) error
-    Unarchive(ctx context.Context, archive string, destination string) error
+type CommandExecutor interface {
+    Execute(command string, args []string, workingDir string) error
+}
+
+type ServerRunner interface {
+    Run(server *domain.Server) error
+}
+
+type BackupperService interface {
+    Run(ctx context.Context) (string, error)
+}
+
+type UpdaterService interface {
+    Run(ctx context.Context) error
 }
 ```
 
@@ -182,72 +363,109 @@ Implements core business logic:
 - **`molfar.go`** - Central orchestration engine coordinating all operations
 - **`librarian.go`** - Manifest synchronization and management
 - **`validator.go`** - Instance integrity and conflict validation
-- **`archive.go`** - Archive compression and extraction operations
+- **`backupper_local.go`** - Local backup service with streaming tar.gz
+- **`backupper_r2.go`** - R2 backup service with streaming tar.gz
+- **`updater_ritual.go`** - Ritual self-update service (compares versions, downloads, replaces)
+- **`updater_instance.go`** - Instance update service (downloads/extracts instance.tar.gz)
+- **`updater_worlds.go`** - Worlds update service (downloads/extracts world backups)
 
 #### Service Implementation Examples
 
 ```go
 // internal/core/services/molfar.go
 type MolfarService struct {
-    librarian LibrarianService
-    validator ValidatorService
-    storage   StorageRepository
+    updaters      []ports.UpdaterService   // Ordered list of updaters (ritual, instance, worlds)
+    backuppers    []ports.BackupperService // Ordered list of backuppers (local, R2)
+    serverRunner  ports.ServerRunner
+    librarian     ports.LibrarianService
+    logger        *slog.Logger
+    workRoot      *os.Root
+    currentLockID string // Tracks lock ownership for validation
 }
 
-func NewMolfarService(librarian LibrarianService, validator ValidatorService, storage StorageRepository) *MolfarService {
-    return &MolfarService{
-        librarian: librarian,
-        validator: validator,
-        storage:   storage,
-    }
+func NewMolfarService(
+    updaters []ports.UpdaterService,
+    backuppers []ports.BackupperService,
+    serverRunner ports.ServerRunner,
+    librarian ports.LibrarianService,
+    logger *slog.Logger,
+    workRoot *os.Root,
+) (*MolfarService, error)
+
+// Prepare runs all updaters in sequence
+func (m *MolfarService) Prepare() error
+
+// Run executes server with lock management
+func (m *MolfarService) Run(server *domain.Server) error
+
+// Exit runs all backuppers and releases locks
+func (m *MolfarService) Exit() error
+
+// internal/core/services/backupper_local.go
+type LocalBackupper struct {
+    localStorage ports.StorageRepository
+    workRoot     *os.Root
 }
 
-...
-
-// internal/core/services/librarian.go
-type LibrarianService struct {
-    localStorage  StorageRepository
-    remoteStorage StorageRepository
+func (b *LocalBackupper) Run(ctx context.Context) (string, error) {
+    // Streams world directories directly to tar.gz using streamer.Push
+    // Applies retention policy after successful backup
 }
 
-func NewLibrarianService(localStorage StorageRepository, remoteStorage StorageRepository) (*LibrarianService, error) {
-    if localStorage == nil {
-        return nil, fmt.Errorf("localStorage cannot be nil")
-    }
-    if remoteStorage == nil {
-        return nil, fmt.Errorf("remoteStorage cannot be nil")
-    }
-    return &LibrarianService{
-        localStorage: localStorage,
-        remoteStorage: remoteStorage,
-    }, nil
+// internal/core/services/backupper_r2.go
+type R2Backupper struct {
+    uploader      streamer.S3StreamUploader
+    remoteStorage ports.StorageRepository
+    bucket        string
+    workRoot      *os.Root
+    localPath     string      // Optional local backup path
+    shouldBackup  func() bool // Condition for local backup
 }
 
-// internal/core/services/validator.go
-type ValidatorService struct{}
-
-func NewValidatorService() (*ValidatorService, error) {
-    validator := &ValidatorService{}
-    
-    // Postcondition assertion (NASA JPL Rule 2)
-    if validator == nil {
-        return nil, ErrValidatorInitializationFailed
-    }
-    
-    return validator, nil
+func (b *R2Backupper) Run(ctx context.Context) (string, error) {
+    // Streams world directories directly to R2 with optional local copy
+    // Applies retention policy after successful backup
 }
 
-func (v *ValidatorService) CheckInstance(local *domain.Manifest, remote *domain.Manifest) error {
-    if v == nil {
-        return errors.New("validator service cannot be nil")
-    }
-    if local == nil {
-        return ErrLocalManifestNil
-    }
-    if remote == nil {
-        return ErrRemoteManifestNil
-    }
-    // Additional validation logic...
+// internal/core/services/updater_ritual.go
+type RitualUpdater struct {
+    librarian     ports.LibrarianService
+    storage       ports.StorageRepository
+    binaryVersion string // Compiled-in version string
+}
+
+func (u *RitualUpdater) Run(ctx context.Context) error {
+    // Compares binaryVersion with remote manifest RitualVersion
+    // Downloads new binary, writes to temp, launches with --replace-old flag
+    // Handles Windows-compatible self-update process
+}
+
+// internal/core/services/updater_instance.go
+type InstanceUpdater struct {
+    librarian  ports.LibrarianService
+    validator  ports.ValidatorService
+    downloader streamer.S3StreamDownloader
+    bucket     string
+    workRoot   *os.Root
+}
+
+func (u *InstanceUpdater) Run(ctx context.Context) error {
+    // Checks if local instance version differs from remote
+    // Downloads and extracts instance.tar.gz using streamer.Pull
+}
+
+// internal/core/services/updater_worlds.go
+type WorldsUpdater struct {
+    librarian  ports.LibrarianService
+    validator  ports.ValidatorService
+    downloader streamer.S3StreamDownloader
+    bucket     string
+    workRoot   *os.Root
+}
+
+func (u *WorldsUpdater) Run(ctx context.Context) error {
+    // Checks if local worlds are outdated
+    // Downloads and extracts world archive using streamer.Pull
 }
 ```
 
@@ -255,22 +473,28 @@ func (v *ValidatorService) CheckInstance(local *domain.Manifest, remote *domain.
 
 Implements external system integrations:
 
-- **`cli.go`** - Command-line interface handler
-- **`fs.go`** - Local filesystem storage implementation
-- **`r2.go`** - Cloudflare R2 cloud storage implementation
-- **`serverrunner.go`** - Server execution implementation
+- **`fs.go`** - Local filesystem storage implementation (StorageRepository)
+- **`r2.go`** - Cloudflare R2 cloud storage implementation (StorageRepository)
+- **`serverrunner.go`** - Server execution implementation (ServerRunner)
+- **`commandexecutor.go`** - Command execution implementation (CommandExecutor)
+- **`streamer/`** - Streaming archive operations (see Streaming Layer above)
 
 #### Adapter Implementation Examples
 
 ```go
 // internal/adapters/fs.go
 type FSRepository struct {
-    basePath string
+    root *os.Root
 }
 
-func NewFSRepository(basePath string) *FSRepository {
-    return &FSRepository{basePath: basePath}
+func NewFSRepository(root *os.Root) (*FSRepository, error) {
+    if root == nil {
+        return nil, errors.New("root cannot be nil")
+    }
+    return &FSRepository{root: root}, nil
 }
+
+// Implements: Get, Put, Delete, List, Copy
 
 // internal/adapters/r2.go
 type R2Repository struct {
@@ -284,6 +508,8 @@ func NewR2Repository(client *s3.Client, bucket string) *R2Repository {
         bucket: bucket,
     }
 }
+
+// Implements: Get, Put, Delete, List, Copy
 
 // internal/adapters/serverrunner.go
 type ServerRunner struct {
@@ -309,6 +535,17 @@ func (s *ServerRunner) Run(server *domain.Server) error {
     // Validates server configuration and executes server.bat
     // Returns error if server.bat not found or execution fails
 }
+
+// internal/adapters/commandexecutor.go
+type CommandExecutor struct{}
+
+func NewCommandExecutor() *CommandExecutor {
+    return &CommandExecutor{}
+}
+
+func (e *CommandExecutor) Execute(command string, args []string, workingDir string) error {
+    // Executes shell command with arguments in specified working directory
+}
 ```
 
 ## Key Design Principles
@@ -330,33 +567,108 @@ func (s *ServerRunner) Run(server *domain.Server) error {
 ## Component Responsibilities
 
 ### Molfar (Orchestration Engine)
-- Coordinates initialization, execution, and termination phases
-- Manages the complete server lifecycle
-- Handles error recovery and cleanup
+- Coordinates initialization (Prepare), execution (Run), and termination (Exit) phases
+- Manages ordered execution of updaters during Prepare phase
+- Manages ordered execution of backuppers during Exit phase
+- Handles lock acquisition, validation, and release
+- Coordinates server execution via ServerRunner
 
 ### Librarian (Manifest Management)
 - Synchronizes local and remote manifests
 - Manages lock mechanisms for concurrency control
 - Handles version control and consistency
+- Uses config.ManifestFilename for consistent file naming
 
 ### Validator (Validation System)
-- Performs instance integrity checks
-- Validates world data consistency
-- Enforces lock mechanism compliance
-- Implements CheckInstance, CheckWorld, and CheckLock operations
-- Provides comprehensive test coverage with testify framework
+- Performs instance integrity checks (CheckInstance)
+- Validates world data consistency (CheckWorld)
+- Enforces lock mechanism compliance (CheckLock)
+- Returns typed errors for different validation failures
 
-### Archive (Archive Management)
-- Handles compression and extraction of data archives
-- Supports ZIP archive format for world/plugin backups
-- Manages archive lifecycle operations
-- Integrates with storage abstraction for remote archive operations
+### Updaters (Update Services)
+Three specialized updaters execute during Prepare phase:
+
+- **RitualUpdater**: Self-update for the ritual binary
+  - Compares compiled-in version with remote manifest
+  - Downloads new binary from R2 storage
+  - Windows-compatible self-replacement process
+
+- **InstanceUpdater**: Minecraft server instance updates
+  - Compares local/remote instance versions
+  - Downloads and extracts instance.tar.gz
+  - Initializes new instances when local manifest missing
+
+- **WorldsUpdater**: World data updates
+  - Compares local/remote world versions
+  - Downloads and extracts world archives
+  - Handles "no worlds" case for fresh instances
+
+### Backuppers (Backup Services)
+Two specialized backuppers execute during Exit phase:
+
+- **LocalBackupper**: Local filesystem backups
+  - Streams world directories to tar.gz
+  - Applies count-based retention (config.LocalMaxBackups)
+  - Uses streamer.Push with LocalFileWriter
+
+- **R2Backupper**: Cloud storage backups
+  - Streams world directories directly to R2
+  - Optional local copy via ShouldBackup condition
+  - Applies count-based retention (config.R2MaxBackups)
+
+### Retention (Data Lifecycle Management)
+- **Built into Backuppers**: Each backupper has its own applyRetention() method
+- **Count-Based**: LocalMaxBackups (10) and R2MaxBackups (5)
+- **Sorted by Timestamp**: Newest backups kept, oldest deleted
+- **Bounded Operations**: MaxFiles limit prevents runaway operations
+
+
+### Test Helpers (`internal/testhelpers/`)
+
+Provides comprehensive test utilities for Minecraft server testing:
+
+- **`paperinstancesetup.go`** - Creates complete Paper Minecraft server instances for testing
+  - Generates server files: `server.properties`, `server.jar`, `eula.txt`, `bukkit.yml`, `spigot.yml`, `paper.yml`
+  - Creates plugin files: `worldedit`, `essentials`, `luckperms`, `vault` (jars and configs)
+  - Creates logs directory with `latest.log` and `debug.log`
+  - Accepts version parameter for `paper.yml` configuration
+  - Returns temp directory path, created files list, and comparison function
+  - Uses `os.Root` parameter for secure file operations (string paths removed)
+
+- **`paperworldsetup.go`** - Creates Paper Minecraft world directories with region files
+  - Generates world directory structure using os.Root for secure operations
+  - Creates mock region files (.mca)
+  - Creates level.dat and other world metadata files
+  - Supports multiple world types (overworld, nether, end)
+  - All operations use Root methods (Mkdir, WriteFile, etc.)
+
+**Test Coverage**: Both helpers include comprehensive test suites with version validation, file structure verification, and comparison function testing. All test initialization uses os.OpenRoot before calling helper functions.
 
 ### Storage Abstraction
 - Unified interface for local (filesystem) and remote (R2) storage
 - Supports manifest, world data, and backup operations
 - Provides Copy operation for efficient data movement
 - Enables easy switching between storage backends
+- Uses os.Root for all filesystem operations to prevent path traversal attacks
+
+### Root-Based Security Architecture
+
+All filesystem operations use `os.Root` to enforce secure path boundaries:
+
+- **Path Security**: No string-based path construction - all operations constrained to Root boundary
+- **Initialization Pattern**: `root, err := os.OpenRoot(basePath)` creates secured root
+- **Service Integration**: All services (Molfar, Backupper, Archive) store `*os.Root` instead of string paths
+- **Adapter Pattern**: FSRepository and other adapters accept Root in constructors
+- **Operation Methods**: Use Root.Mkdir(), Root.ReadFile(), Root.WriteFile(), etc.
+- **Zero Path Traversal**: Impossible to escape root boundary with string manipulation
+- **Test Pattern**: Tests create roots before initializing services: `tempRoot, err := os.OpenRoot(tempDir)`
+
+**Migration Complete**: root.md documents full conversion from string-based paths to os.Root across all layers (Phases 1-4 complete, Phase 5 remaining for adapter review).
+
+### Logging
+- Uses standard `log/slog` package
+- Logger instance passed via dependency injection to services
+- Structured logging with contextual fields
 
 ## Development Guidelines
 
@@ -410,6 +722,25 @@ R.I.T.U.A.L. enforces NASA JPL Power of Ten defensive programming standards for 
 - Functions must include pre/post condition assertions
 - Error propagation must be explicit and handled at every layer
 
+### Retention Policy Compliance
+
+**CRITICAL PATH REQUIREMENTS:**
+- **Backupper Integration**: All retention decisions flow through Backupper component orchestration
+- **Performance Compliance**: O(n log n) sorting algorithms, bounded operations
+- **Data Integrity**: Backup verification before deletion
+- **Strategy Pattern**: Configurable retention strategies injected via `markForCleanup` function
+- **Configuration Management**: Structured configuration objects with weighted scoring
+
+**Retention Categories:**
+- **World Retention**: Time-based with usage weighting (configurable max)
+- **Local Backup Retention**: Dual-criteria time+count (configurable limits)
+
+**Compliance Validation:**
+- All retention operations must pass integrity validation
+- Retention decisions must be logged with reasoning
+- Failed retention operations must support rollback
+- Concurrent retention operations must be thread-safe
+
 ## Documentation Requirements
 - Each component must have GoDoc comments
 - Architecture decisions must be documented
@@ -420,6 +751,84 @@ R.I.T.U.A.L. enforces NASA JPL Power of Ten defensive programming standards for 
 - **AI must update progress tracking in docs/progress.md when implementing components**
 - **MANDATORY**: Follow defensive programming standards per NASA JPL Power of Ten
 
+## Main Initialization Pattern
+
+### Service Integration Pattern
+
+```go
+// Typical initialization flow
+func main() {
+    // 1. Open root for filesystem operations
+    workRoot, err := os.OpenRoot(config.RootPath)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // 2. Create storage adapters
+    localStorage, _ := adapters.NewFSRepository(workRoot)
+    r2Client := createR2Client() // AWS SDK configuration
+    remoteStorage := adapters.NewR2Repository(r2Client, bucketName)
+
+    // 3. Create core services
+    librarian, _ := services.NewLibrarianService(localStorage, remoteStorage)
+    validator, _ := services.NewValidatorService()
+
+    // 4. Create updaters (order matters: ritual → instance → worlds)
+    updaters := []ports.UpdaterService{
+        ritualUpdater,
+        instanceUpdater,
+        worldsUpdater,
+    }
+
+    // 5. Create backuppers (order matters: local → R2)
+    backuppers := []ports.BackupperService{
+        localBackupper,
+        r2Backupper,
+    }
+
+    // 6. Create Molfar orchestrator
+    molfar, _ := services.NewMolfarService(
+        updaters,
+        backuppers,
+        serverRunner,
+        librarian,
+        slog.Default(),
+        workRoot,
+    )
+
+    // 7. Execute lifecycle
+    molfar.Prepare()
+    molfar.Run(server)
+    molfar.Exit()
+}
+```
+
+### Test Setup Pattern
+
+```go
+// Test setup pattern (internal/core/services/molfar_test.go)
+tempDir := t.TempDir()
+tempRoot, err := os.OpenRoot(tempDir)
+require.NoError(t, err)
+
+// Create mock dependencies
+mockLibrarian := mocks.NewMockLibrarianService()
+mockValidator := mocks.NewMockValidatorService()
+mockUpdaters := []ports.UpdaterService{mocks.NewMockUpdaterService()}
+mockBackuppers := []ports.BackupperService{mocks.NewMockBackupperService()}
+mockServerRunner := mocks.NewMockServerRunner()
+
+// Create service under test
+molfar, err := services.NewMolfarService(
+    mockUpdaters,
+    mockBackuppers,
+    mockServerRunner,
+    mockLibrarian,
+    slog.Default(),
+    tempRoot,
+)
+```
+
 ## Structure.md Authority
 - **@structure.md is the authoritative source for project structure**
 - All architectural decisions must align with structure.md definitions
@@ -427,4 +836,5 @@ R.I.T.U.A.L. enforces NASA JPL Power of Ten defensive programming standards for 
 - Structure.md contains detailed examples and implementation patterns
 - Any structural changes require updating both code and structure.md documentation
 
-This structure ensures R.I.T.U.A.L. maintains clean architecture while supporting the complex requirements of Minecraft server orchestration, manifest management, and distributed storage synchronization.
+This structure ensures R.I.T.U.A.L. maintains clean architecture while supporting the complex requirements of Minecraft server orchestration, manifest management, distributed storage synchronization, and centralized logging infrastructure.
+

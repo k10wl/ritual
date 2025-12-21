@@ -1,6 +1,7 @@
 package mocks
 
 import (
+	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"testing"
 )
@@ -23,11 +24,16 @@ func TestMockMolfarService(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	mockMolfar.RunFunc = func() error {
+	mockMolfar.RunFunc = func(server *domain.Server) error {
 		return nil
 	}
 
-	err = molfar.Run()
+	server, err := domain.NewServer("127.0.0.1:25565", 1024)
+	if err != nil {
+		t.Errorf("Failed to create server: %v", err)
+	}
+
+	err = molfar.Run(server)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}

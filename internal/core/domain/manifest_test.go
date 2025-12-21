@@ -23,7 +23,7 @@ func TestManifest_IsLocked(t *testing.T) {
 		{
 			name: "locked manifest",
 			manifest: Manifest{
-				LockedBy: "PC123__1640995200",
+				LockedBy: "PC123::1640995200",
 			},
 			expected: true,
 		},
@@ -44,7 +44,7 @@ func TestManifest_Lock(t *testing.T) {
 		UpdatedAt:       time.Now().Add(-time.Hour), // Set to past time
 	}
 
-	lockBy := "PC123__1640995200"
+	lockBy := "PC123::1640995200"
 	manifest.Lock(lockBy)
 
 	assert.Equal(t, lockBy, manifest.LockedBy)
@@ -54,7 +54,7 @@ func TestManifest_Lock(t *testing.T) {
 
 func TestManifest_Unlock(t *testing.T) {
 	manifest := Manifest{
-		LockedBy:  "PC123__1640995200",
+		LockedBy:  "PC123::1640995200",
 		UpdatedAt: time.Now().Add(-time.Hour), // Set to past time
 	}
 

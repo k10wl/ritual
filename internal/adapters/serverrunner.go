@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"strconv"
@@ -33,7 +34,7 @@ func NewServerRunner(homedir string, commandExecutor ports.CommandExecutor) (*Se
 	}, nil
 }
 
-// Run executes the Minecraft server process
+// Run executes the Minecraft server process using Java
 func (s *ServerRunner) Run(server *domain.Server) error {
 	if s == nil {
 		return fmt.Errorf("server runner cannot be nil")
@@ -41,25 +42,24 @@ func (s *ServerRunner) Run(server *domain.Server) error {
 	if server == nil {
 		return fmt.Errorf("server cannot be nil")
 	}
-	if server.BatPath == "" {
-		return fmt.Errorf("server bat path cannot be empty")
-	}
 
-	instancePath := filepath.Join(s.homedir, "instance")
-	batPath := filepath.Join(instancePath, server.BatPath)
+	instancePath := filepath.Join(s.homedir, config.InstanceDir)
+	jarPath := filepath.Join(instancePath, config.ServerJarFilename)
 
-	if _, err := os.Stat(batPath); err != nil {
+	if _, err := os.Stat(jarPath); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("server.bat not found at %s", batPath)
+			return fmt.Errorf("%s not found at %s", config.ServerJarFilename, jarPath)
 		}
-		return fmt.Errorf("failed to check server.bat at %s: %w", batPath, err)
+		return fmt.Errorf("failed to check %s at %s: %w", config.ServerJarFilename, jarPath, err)
 	}
 
+	memoryStr := strconv.Itoa(server.Memory) + "M"
 	args := []string{
-		"/C", "start", batPath,
-		server.IP,
-		strconv.Itoa(server.Port),
-		strconv.Itoa(server.Memory),
+		"/C", "start", "/wait", "java",
+		"-Xms" + memoryStr,
+		"-Xmx" + memoryStr,
+		"-jar", config.ServerJarFilename,
+		"nogui",
 	}
 
 	if err := s.commandExecutor.Execute("cmd", args, instancePath); err != nil {

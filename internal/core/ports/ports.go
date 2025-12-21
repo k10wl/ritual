@@ -31,7 +31,7 @@ type MolfarService interface {
 	Prepare() error
 
 	// Run executes the main server orchestration process
-	Run() error
+	Run(server *domain.Server) error
 
 	// Exit gracefully shuts down the server and cleans up resources
 	Exit() error
@@ -66,16 +66,6 @@ type ValidatorService interface {
 	CheckLock(local *domain.Manifest, remote *domain.Manifest) error
 }
 
-// ArchiveService defines the archive management interface
-// ArchiveService handles compression and extraction of data archives
-type ArchiveService interface {
-	// Archive compresses source to destination
-	Archive(ctx context.Context, source string, destination string) error
-
-	// Unarchive extracts archive to destination
-	Unarchive(ctx context.Context, archive string, destination string) error
-}
-
 // CommandExecutor defines the command execution interface
 // CommandExecutor abstracts command execution for testability
 type CommandExecutor interface {
@@ -88,4 +78,28 @@ type CommandExecutor interface {
 type ServerRunner interface {
 	// Run executes the server process with the given server configuration
 	Run(server *domain.Server) error
+}
+
+// BackupperService defines the backup orchestration interface
+// BackupperService handles backup creation and storage
+type BackupperService interface {
+	// Run executes the backup orchestration process
+	// Returns the archive name/URI that was created for manifest updates
+	Run(ctx context.Context) (string, error)
+}
+
+// UpdaterService defines the interface for update operations
+// Updaters handle downloading and extracting content from remote storage
+type UpdaterService interface {
+	// Run executes the update process
+	// Returns nil if no update needed or update succeeded, error if update failed
+	Run(ctx context.Context) error
+}
+
+// RetentionService defines the interface for backup retention operations
+// Retentions clean up old backups after manifest is updated
+type RetentionService interface {
+	// Apply removes old backups exceeding the retention limit
+	// Uses manifest's StoredWorlds to identify valid backups
+	Apply(ctx context.Context, manifest *domain.Manifest) error
 }

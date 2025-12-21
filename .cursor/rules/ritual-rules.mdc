@@ -1,3 +1,9 @@
+---
+description: R.I.T.U.A.L. Project Cursor Rules - Complete Configuration
+globs: ["**/*.go", "**/*.md", "docs/**"]
+alwaysApply: true
+---
+
 # R.I.T.U.A.L. Cursor Rules
 # Replicate Instances, Track Updates, Archive Legacy
 
@@ -20,6 +26,8 @@
 - Import testify packages: `github.com/stretchr/testify/assert` and `github.com/stretchr/testify/mock`
 - Use `assert.Equal`, `assert.NoError`, `assert.True`, `assert.False` for assertions
 - Use `mock.Mock` interface for mocking external dependencies
+- **TEST EXECUTION**: Run all tests together, not in isolation
+- **TEST EFFICIENCY**: Execute tests only once per code change, avoid multiple invocations
 
 ## Hexagonal Architecture Patterns
 - Domain layer: Core business logic (Molfar, Librarian, Validator)

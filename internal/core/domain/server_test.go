@@ -81,12 +81,7 @@ func TestNewServer(t *testing.T) {
 				assert.NotNil(t, server)
 				assert.Equal(t, tt.address, server.Address)
 				assert.Equal(t, tt.memory, server.Memory)
-				assert.Equal(t, DefaultBatPath, server.BatPath)
 			}
 		})
 	}
-}
-
-func TestDefaultBatPath(t *testing.T) {
-	assert.Equal(t, "server.bat", DefaultBatPath)
 }

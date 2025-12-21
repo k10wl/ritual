@@ -5,7 +5,7 @@ import "time"
 // Manifest represents the central manifest tracking instance/worlds versions, locks, and metadata
 type Manifest struct {
 	RitualVersion   string    `json:"ritual_version"`
-	LockedBy        string    `json:"locked_by"` // {PC name}__{UNIX timestamp on 0 meridian}, or empty string if not locked
+	LockedBy        string    `json:"locked_by"` // {hostname}::{nanosecond timestamp}, or empty string if not locked
 	InstanceVersion string    `json:"instance_version"`
 	StoredWorlds    []World   `json:"worlds"` // queue of latest worlds
 	UpdatedAt       time.Time `json:"updated_at"`
@@ -47,4 +47,54 @@ func (m *Manifest) GetLatestWorld() *World {
 		}
 	}
 	return latest
+}
+
+// Clone creates a deep copy of the manifest
+func (m *Manifest) Clone() *Manifest {
+	if m == nil {
+		return nil
+	}
+
+	clone := &Manifest{
+		RitualVersion:   m.RitualVersion,
+		LockedBy:        m.LockedBy,
+		InstanceVersion: m.InstanceVersion,
+		StoredWorlds:    make([]World, len(m.StoredWorlds)),
+		UpdatedAt:       time.Now(),
+	}
+
+	copy(clone.StoredWorlds, m.StoredWorlds)
+	return clone
+}
+
+// RemoveOldestWorlds removes the oldest worlds from the manifest, keeping only the specified count
+func (m *Manifest) RemoveOldestWorlds(maxCount int) []World {
+	if maxCount <= 0 {
+		return nil
+	}
+	if len(m.StoredWorlds) <= maxCount {
+		return nil
+	}
+
+	// Sort worlds by creation time (oldest first)
+	sortedWorlds := make([]World, len(m.StoredWorlds))
+	copy(sortedWorlds, m.StoredWorlds)
+
+	for i := 0; i < len(sortedWorlds)-1; i++ {
+		for j := i + 1; j < len(sortedWorlds); j++ {
+			if sortedWorlds[i].CreatedAt.After(sortedWorlds[j].CreatedAt) {
+				sortedWorlds[i], sortedWorlds[j] = sortedWorlds[j], sortedWorlds[i]
+			}
+		}
+	}
+
+	removedCount := len(m.StoredWorlds) - maxCount
+	removed := make([]World, removedCount)
+	copy(removed, sortedWorlds[:removedCount])
+
+	// Keep only the newest worlds
+	m.StoredWorlds = sortedWorlds[removedCount:]
+	m.UpdatedAt = time.Now()
+
+	return removed
 }

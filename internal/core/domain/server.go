@@ -6,17 +6,12 @@ import (
 	"strconv"
 )
 
-const (
-	DefaultBatPath = "server.bat"
-)
-
 // Server represents a Minecraft server configuration
 type Server struct {
 	Address string `json:"address"`
 	IP      string `json:"ip"`
 	Port    int    `json:"port"`
 	Memory  int    `json:"memory"`
-	BatPath string `json:"bat_path"`
 }
 
 // NewServer creates a new Server instance with address parsing
@@ -38,7 +33,6 @@ func NewServer(address string, memory int) (*Server, error) {
 		IP:      ip,
 		Port:    port,
 		Memory:  memory,
-		BatPath: DefaultBatPath,
 	}
 
 	if server.IP == "" {

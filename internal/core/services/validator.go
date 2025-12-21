@@ -78,12 +78,13 @@ func (v *ValidatorService) CheckWorld(local *domain.Manifest, remote *domain.Man
 		return ErrRemoteManifestNil
 	}
 
-	if len(local.StoredWorlds) == 0 {
-		return ErrNoLocalWorlds
+	// Skip world validation if remote has no worlds - allow launching without worlds
+	if len(remote.StoredWorlds) == 0 {
+		return nil
 	}
 
-	if len(remote.StoredWorlds) == 0 {
-		return ErrNoRemoteWorlds
+	if len(local.StoredWorlds) == 0 {
+		return ErrNoLocalWorlds
 	}
 
 	for _, world := range local.StoredWorlds {
