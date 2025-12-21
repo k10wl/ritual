@@ -37,12 +37,14 @@ func PromptSettings(events chan<- ports.Event) (*domain.Settings, error) {
 	}
 	settings.Port, _ = strconv.Atoi(portStr)
 
-	// Prompt for Memory
-	memStr, err := promptWithValidation(events, "RAM (MB)", strconv.Itoa(settings.Memory), validateMemory)
+	// Prompt for Memory (display in GB, store in MB)
+	memGB := settings.Memory / 1024
+	memStr, err := promptWithValidation(events, "RAM (GB)", strconv.Itoa(memGB), validateMemoryGB)
 	if err != nil {
 		return nil, err
 	}
-	settings.Memory, _ = strconv.Atoi(memStr)
+	memGBValue, _ := strconv.Atoi(memStr)
+	settings.Memory = memGBValue * 1024
 
 	// Validate final settings
 	if err := settings.Validate(); err != nil {
@@ -56,7 +58,7 @@ func PromptSettings(events chan<- ports.Event) (*domain.Settings, error) {
 
 	ports.SendEvent(events, ports.UpdateEvent{
 		Operation: "Settings",
-		Message:   fmt.Sprintf("Saved: IP=%s, Port=%d, RAM=%dMB", settings.IP, settings.Port, settings.Memory),
+		Message:   fmt.Sprintf("Saved: IP=%s, Port=%d, RAM=%dGB", settings.IP, settings.Port, settings.Memory/1024),
 	})
 	ports.SendEvent(events, ports.FinishEvent{Operation: "Settings"})
 
@@ -115,13 +117,16 @@ func validatePort(input string) error {
 	return nil
 }
 
-func validateMemory(input string) error {
-	memory, err := strconv.Atoi(input)
+func validateMemoryGB(input string) error {
+	memoryGB, err := strconv.Atoi(input)
 	if err != nil {
 		return fmt.Errorf("memory must be a number")
 	}
-	if memory <= 0 {
+	if memoryGB <= 0 {
 		return fmt.Errorf("memory must be positive")
+	}
+	if memoryGB > 64 {
+		return fmt.Errorf("memory cannot exceed 64GB")
 	}
 	return nil
 }
