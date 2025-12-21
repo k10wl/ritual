@@ -25,6 +25,7 @@ type R2Backupper struct {
 	uploader        streamer.S3StreamUploader
 	bucket          string
 	workRoot        *os.Root
+	worldDirs       []string                   // Directories to archive (relative to instance dir)
 	saveLocalBackup bool                       // Whether to also save local backup
 	shouldBackup    func() bool                // Condition for local backup
 	events          chan<- ports.Event         // Optional: channel for progress events
@@ -39,6 +40,7 @@ func NewR2Backupper(
 	uploader streamer.S3StreamUploader,
 	bucket string,
 	workRoot *os.Root,
+	worldDirs []string,
 	saveLocalBackup bool,
 	shouldBackup func() bool,
 	events chan<- ports.Event,
@@ -49,11 +51,15 @@ func NewR2Backupper(
 	if workRoot == nil {
 		return nil, ErrR2BackupperWorkRootNil
 	}
+	if len(worldDirs) == 0 {
+		return nil, errors.New("worldDirs cannot be empty")
+	}
 
 	backupper := &R2Backupper{
 		uploader:        uploader,
 		bucket:          bucket,
 		workRoot:        workRoot,
+		worldDirs:       worldDirs,
 		saveLocalBackup: saveLocalBackup,
 		shouldBackup:    shouldBackup,
 		events:          events,
@@ -84,7 +90,7 @@ func (b *R2Backupper) Run(ctx context.Context) (string, error) {
 
 	// World directories to backup (via workRoot for safety)
 	var existingDirs []string
-	for _, dir := range config.WorldDirs {
+	for _, dir := range b.worldDirs {
 		relPath := config.InstanceDir + "/" + dir
 		if _, err := b.workRoot.Stat(relPath); err == nil {
 			// Convert to absolute path for tar archiver

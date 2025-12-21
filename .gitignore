@@ -41,6 +41,6 @@ Thumbs.db
 *.temp
 
 # Environment files
-.env
+.env*.local
 
 nul

@@ -8,7 +8,7 @@ import (
 // Application identity
 const (
 	GroupName = "k10wl"
-	AppName   = "ritual"
+	AppName   = "ritualdev"
 )
 
 // Directory names
@@ -40,13 +40,6 @@ const (
 	BackupExtension = ".tar"
 	LogExtension    = ".log"
 )
-
-// World directories (relative to instance)
-var WorldDirs = []string{
-	"world",
-	"world_nether",
-	"world_the_end",
-}
 
 // Update process flags
 const (

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -122,17 +123,6 @@ func main() {
 
 	updaters := []ports.UpdaterService{instanceUpdater, worldsUpdater}
 
-	// Create backupper (R2 with local tee - single archive stream to both destinations)
-	r2Backupper, err := services.NewR2Backupper(r2Uploader, envBucket, workRoot, true, nil, events)
-	if err != nil {
-		fmt.Printf("Failed to create R2 backupper: %v\n", err)
-		close(events)
-		wg.Wait()
-		return
-	}
-
-	backuppers := []ports.BackupperService{r2Backupper}
-
 	// Create retention services
 	localRetention, err := services.NewLocalRetention(localStorage, events)
 	if err != nil {
@@ -160,9 +150,29 @@ func main() {
 
 	retentions := []ports.RetentionService{localRetention, r2Retention, logRetention}
 
+	// Fetch remote manifest to get configuration
+	remoteManifest, err := librarian.GetRemoteManifest(context.Background())
+	if err != nil {
+		fmt.Printf("Failed to get remote manifest: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	// Create backupper (R2 with local tee - single archive stream to both destinations)
+	r2Backupper, err := services.NewR2Backupper(r2Uploader, envBucket, workRoot, remoteManifest.WorldDirs, true, nil, events)
+	if err != nil {
+		fmt.Printf("Failed to create R2 backupper: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	backuppers := []ports.BackupperService{r2Backupper}
+
 	// Create server runner
 	commandExecutor := adapters.NewCommandExecutorAdapter()
-	serverRunner, err := adapters.NewServerRunner(config.RootPath, commandExecutor)
+	serverRunner, err := adapters.NewServerRunner(config.RootPath, workRoot, remoteManifest.StartScript, commandExecutor)
 	if err != nil {
 		fmt.Printf("Failed to create server runner: %v\n", err)
 		close(events)
