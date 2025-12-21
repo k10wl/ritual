@@ -24,6 +24,11 @@ var (
 )
 
 func main() {
+	// Handle update process flags (--replace-old, --cleanup-update)
+	if services.HandleUpdateProcess() {
+		return
+	}
+
 	success := false
 	defer func() {
 		if !success {
@@ -106,7 +111,15 @@ func main() {
 		return
 	}
 
-	// Create updaters
+	// Create updaters (ritual updater first - must self-update before anything else)
+	ritualUpdater, err := services.NewRitualUpdater(librarian, remoteStorage, config.AppVersion)
+	if err != nil {
+		fmt.Printf("Failed to create ritual updater: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
 	instanceUpdater, err := services.NewInstanceUpdater(librarian, validator, remoteStorage, envBucket, workRoot)
 	if err != nil {
 		fmt.Printf("Failed to create instance updater: %v\n", err)
@@ -123,7 +136,7 @@ func main() {
 		return
 	}
 
-	updaters := []ports.UpdaterService{instanceUpdater, worldsUpdater}
+	updaters := []ports.UpdaterService{ritualUpdater, instanceUpdater, worldsUpdater}
 
 	// Create retention services
 	localRetention, err := services.NewLocalRetention(localStorage, events)

@@ -416,6 +416,9 @@ func (m *MolfarService) updateManifestsWithArchive(ctx context.Context, archiveN
 		return nil, err
 	}
 
+	// Stamp RitualVersion before saving to remote
+	localManifest.RitualVersion = config.AppVersion
+
 	// Save updated remote manifest
 	if err := m.librarian.SaveRemoteManifest(ctx, localManifest); err != nil {
 		return nil, err
@@ -491,6 +494,7 @@ func (m *MolfarService) unlockManifests(ctx context.Context) error {
 
 	if remoteManifest != nil {
 		remoteManifest.Unlock()
+		remoteManifest.RitualVersion = config.AppVersion
 		err = m.librarian.SaveRemoteManifest(ctx, remoteManifest)
 		if err != nil {
 			m.send(ports.ErrorEvent{Operation: "unlock", Err: err})
