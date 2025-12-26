@@ -103,3 +103,11 @@ type RetentionService interface {
 	// Uses manifest's StoredWorlds to identify valid backups
 	Apply(ctx context.Context, manifest *domain.Manifest) error
 }
+
+// ConditionService defines the interface for pre-flight condition checks
+// Conditions validate system prerequisites before updaters can run
+type ConditionService interface {
+	// Check validates the condition
+	// Returns nil if condition passes, error with descriptive message if fails
+	Check(ctx context.Context) error
+}

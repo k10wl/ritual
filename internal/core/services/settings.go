@@ -10,11 +10,18 @@ import (
 )
 
 // PromptSettings loads existing settings and prompts user for each value via events
+// minRAMMB is the minimum RAM requirement from manifest (in MB)
 // Returns validated and saved settings
-func PromptSettings(events chan<- ports.Event) (*domain.Settings, error) {
+func PromptSettings(events chan<- ports.Event, minRAMMB int) (*domain.Settings, error) {
 	settings, err := domain.LoadSettings()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load existing settings: %w", err)
+	}
+
+	// Convert min RAM to GB for display and validation
+	minRAMGB := minRAMMB / 1024
+	if minRAMGB < 1 {
+		minRAMGB = 1 // At least 1GB minimum
 	}
 
 	ports.SendEvent(events, ports.StartEvent{Operation: "Settings"})
@@ -39,7 +46,12 @@ func PromptSettings(events chan<- ports.Event) (*domain.Settings, error) {
 
 	// Prompt for Memory (display in GB, store in MB)
 	memGB := settings.Memory / 1024
-	memStr, err := promptWithValidation(events, "RAM (GB)", strconv.Itoa(memGB), validateMemoryGB)
+	// Ensure default is at least the minimum
+	if memGB < minRAMGB {
+		memGB = minRAMGB
+	}
+	memPrompt := fmt.Sprintf("RAM (GB, min %d)", minRAMGB)
+	memStr, err := promptWithValidation(events, memPrompt, strconv.Itoa(memGB), makeMemoryValidator(minRAMGB))
 	if err != nil {
 		return nil, err
 	}
@@ -117,16 +129,19 @@ func validatePort(input string) error {
 	return nil
 }
 
-func validateMemoryGB(input string) error {
-	memoryGB, err := strconv.Atoi(input)
-	if err != nil {
-		return fmt.Errorf("memory must be a number")
+// makeMemoryValidator creates a memory validator with the specified minimum
+func makeMemoryValidator(minGB int) func(string) error {
+	return func(input string) error {
+		memoryGB, err := strconv.Atoi(input)
+		if err != nil {
+			return fmt.Errorf("memory must be a number")
+		}
+		if memoryGB < minGB {
+			return fmt.Errorf("memory must be at least %dGB (required minimum)", minGB)
+		}
+		if memoryGB > 64 {
+			return fmt.Errorf("memory cannot exceed 64GB")
+		}
+		return nil
 	}
-	if memoryGB <= 0 {
-		return fmt.Errorf("memory must be positive")
-	}
-	if memoryGB > 64 {
-		return fmt.Errorf("memory cannot exceed 64GB")
-	}
-	return nil
 }

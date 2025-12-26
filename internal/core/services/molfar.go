@@ -23,6 +23,7 @@ var (
 // MolfarService implements the main orchestration interface as a state machine
 // Molfar coordinates the complete server lifecycle and manages all operations
 type MolfarService struct {
+	conditions    []ports.ConditionService
 	updaters      []ports.UpdaterService
 	backuppers    []ports.BackupperService
 	retentions    []ports.RetentionService
@@ -36,6 +37,7 @@ type MolfarService struct {
 // NewMolfarService creates a new Molfar orchestration service
 // Validates all dependencies are non-nil per NASA JPL defensive programming standards
 func NewMolfarService(
+	conditions []ports.ConditionService,
 	updaters []ports.UpdaterService,
 	backuppers []ports.BackupperService,
 	retentions []ports.RetentionService,
@@ -44,6 +46,14 @@ func NewMolfarService(
 	events chan<- ports.Event,
 	workRoot *os.Root,
 ) (*MolfarService, error) {
+	if conditions == nil {
+		return nil, errors.New("conditions slice cannot be nil")
+	}
+	for i, c := range conditions {
+		if c == nil {
+			return nil, fmt.Errorf("condition at index %d cannot be nil", i)
+		}
+	}
 	if updaters == nil {
 		return nil, errors.New("updaters slice cannot be nil")
 	}
@@ -79,6 +89,7 @@ func NewMolfarService(
 	}
 
 	molfar := &MolfarService{
+		conditions:   conditions,
 		updaters:     updaters,
 		backuppers:   backuppers,
 		retentions:   retentions,
@@ -97,7 +108,7 @@ func (m *MolfarService) send(evt ports.Event) {
 }
 
 // Prepare initializes the environment and validates prerequisites
-// Runs all updaters in sequence
+// Runs all conditions first, then all updaters in sequence
 func (m *MolfarService) Prepare() error {
 	if m == nil {
 		return ErrMolfarNil
@@ -107,16 +118,15 @@ func (m *MolfarService) Prepare() error {
 	m.send(ports.UpdateEvent{Operation: "prepare", Message: "Starting preparation phase", Data: map[string]any{"workRoot": m.workRoot.Name()}})
 	ctx := context.Background()
 
-	// Check if remote manifest is locked before running updates
-	remoteManifest, err := m.librarian.GetRemoteManifest(ctx)
-	if err != nil {
-		m.send(ports.ErrorEvent{Operation: "prepare", Err: err})
-		return fmt.Errorf("failed to get remote manifest: %w", err)
-	}
-	if remoteManifest.IsLocked() {
-		err := fmt.Errorf("remote manifest is locked by %s", remoteManifest.LockedBy)
-		m.send(ports.ErrorEvent{Operation: "prepare", Err: err})
-		return err
+	// Run all conditions first (includes manifest lock check)
+	for i, condition := range m.conditions {
+		m.send(ports.StartEvent{Operation: "condition"})
+		m.send(ports.UpdateEvent{Operation: "condition", Message: "Checking condition", Data: map[string]any{"index": i}})
+		if err := condition.Check(ctx); err != nil {
+			m.send(ports.ErrorEvent{Operation: "condition", Err: err})
+			return fmt.Errorf("condition %d failed: %w", i, err)
+		}
+		m.send(ports.FinishEvent{Operation: "condition"})
 	}
 
 	// Run all updaters

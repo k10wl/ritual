@@ -138,6 +138,60 @@ func main() {
 
 	updaters := []ports.UpdaterService{ritualUpdater, instanceUpdater, worldsUpdater}
 
+	// Create conditions (pre-flight checks before updaters run)
+	// Fetch remote manifest to get thresholds for conditions
+	remoteManifestForConditions, err := librarian.GetRemoteManifest(context.Background())
+	if err != nil {
+		fmt.Printf("Failed to get remote manifest for conditions: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	// Create system info adapter for RAM and disk space checks
+	systemInfo := adapters.NewWindowsSystemInfo()
+
+	// Create Java info adapter for Java version check
+	javaInfo := adapters.NewJavaInfo()
+
+	// Create manifest lock condition
+	lockCondition, err := services.NewManifestLockCondition(librarian)
+	if err != nil {
+		fmt.Printf("Failed to create lock condition: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	// Create RAM condition
+	ramCondition, err := services.NewRAMCondition(remoteManifestForConditions.GetMinRAMMB(), systemInfo)
+	if err != nil {
+		fmt.Printf("Failed to create RAM condition: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	// Create disk space condition
+	diskCondition, err := services.NewDiskSpaceCondition(remoteManifestForConditions.GetMinDiskMB(), config.RootPath, systemInfo)
+	if err != nil {
+		fmt.Printf("Failed to create disk condition: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	// Create Java version condition
+	javaCondition, err := services.NewJavaVersionCondition(remoteManifestForConditions.GetMinJavaVersion(), javaInfo)
+	if err != nil {
+		fmt.Printf("Failed to create Java condition: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	conditions := []ports.ConditionService{lockCondition, ramCondition, diskCondition, javaCondition}
+
 	// Create retention services
 	localRetention, err := services.NewLocalRetention(localStorage, events)
 	if err != nil {
@@ -209,7 +263,7 @@ func main() {
 	}
 
 	// Create Molfar service
-	molfar, err := services.NewMolfarService(updaters, backuppers, retentions, serverRunner, librarian, events, workRoot)
+	molfar, err := services.NewMolfarService(conditions, updaters, backuppers, retentions, serverRunner, librarian, events, workRoot)
 	if err != nil {
 		fmt.Printf("Failed to create molfar service: %v\n", err)
 		close(events)
@@ -218,7 +272,8 @@ func main() {
 	}
 
 	// Prompt for settings and create server config
-	settings, err := services.PromptSettings(events)
+	// Pass min RAM from manifest so user can't enter less than required
+	settings, err := services.PromptSettings(events, remoteManifestForConditions.GetMinRAMMB())
 	if err != nil {
 		fmt.Printf("Failed to get settings: %v\n", err)
 		close(events)

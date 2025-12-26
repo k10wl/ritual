@@ -12,6 +12,9 @@ type Manifest struct {
 	WorldDirs       []string  `json:"world_dirs"`   // directories to archive (relative to instance dir)
 	StoredWorlds    []World   `json:"worlds"`       // queue of latest worlds
 	UpdatedAt       time.Time `json:"updated_at"`
+	MinRAMMB        int       `json:"min_ram_mb"`       // minimum free RAM in MB required to run (0 = use default 4096)
+	MinDiskMB       int       `json:"min_disk_mb"`      // minimum free disk space in MB required (0 = use default 5120)
+	MinJavaVersion  int       `json:"min_java_version"` // minimum Java version required (0 = use default 21)
 }
 
 // IsLocked returns true if the manifest is currently locked
@@ -67,6 +70,9 @@ func (m *Manifest) Clone() *Manifest {
 		WorldDirs:       make([]string, len(m.WorldDirs)),
 		StoredWorlds:    make([]World, len(m.StoredWorlds)),
 		UpdatedAt:       time.Now(),
+		MinRAMMB:        m.MinRAMMB,
+		MinDiskMB:       m.MinDiskMB,
+		MinJavaVersion:  m.MinJavaVersion,
 	}
 
 	copy(clone.WorldDirs, m.WorldDirs)
@@ -104,4 +110,28 @@ func (m *Manifest) RemoveOldestWorlds(maxCount int) []World {
 	m.UpdatedAt = time.Now()
 
 	return removed
+}
+
+// GetMinRAMMB returns the minimum RAM requirement in MB, defaulting to 4096 (4GB) if not set
+func (m *Manifest) GetMinRAMMB() int {
+	if m.MinRAMMB <= 0 {
+		return 4096
+	}
+	return m.MinRAMMB
+}
+
+// GetMinDiskMB returns the minimum disk space requirement in MB, defaulting to 5120 (5GB) if not set
+func (m *Manifest) GetMinDiskMB() int {
+	if m.MinDiskMB <= 0 {
+		return 5120
+	}
+	return m.MinDiskMB
+}
+
+// GetMinJavaVersion returns the minimum Java version requirement, defaulting to 21 if not set
+func (m *Manifest) GetMinJavaVersion() int {
+	if m.MinJavaVersion <= 0 {
+		return 21
+	}
+	return m.MinJavaVersion
 }
