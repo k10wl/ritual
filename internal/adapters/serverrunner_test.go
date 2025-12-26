@@ -2,11 +2,13 @@ package adapters
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
 
+	"ritual/internal/config"
 	"ritual/internal/core/domain"
 
 	"github.com/stretchr/testify/assert"
@@ -105,7 +107,14 @@ func TestServerRunner_Run(t *testing.T) {
 	err = os.WriteFile(propsPath, []byte("server-ip=\nserver-port=25565\n"), 0644)
 	require.NoError(t, err)
 
-	expectedArgs := []string{"/C", "start", "/wait", "cmd", "/C", scriptPath, "-Xmx1024M"}
+	// Create logs directory for Tee-Object
+	logsDir := filepath.Join(tempDir, config.LogsDir)
+	err = os.MkdirAll(logsDir, 0755)
+	require.NoError(t, err)
+
+	logFile := filepath.Join(tempDir, config.LogsDir, "server.log")
+	psCommand := fmt.Sprintf("& '%s' %s 2>&1 | Tee-Object -FilePath '%s'", scriptPath, "-Xmx1024M", logFile)
+	expectedArgs := []string{"/C", "start", "/wait", "powershell", "-Command", psCommand}
 	mockExecutor := &MockCommandExecutor{}
 	mockExecutor.On("Execute", "cmd", expectedArgs, instanceDir).Return(nil)
 
@@ -179,9 +188,10 @@ func TestServerRunner_Run_UpdatesServerProperties(t *testing.T) {
 			err = os.WriteFile(propsPath, []byte("server-ip=old-ip\nserver-port=12345\nother-setting=value\n"), 0644)
 			require.NoError(t, err)
 
+			logFile := filepath.Join(tempDir, config.LogsDir, "server.log")
+			psCommand := fmt.Sprintf("& '%s' %s 2>&1 | Tee-Object -FilePath '%s'", scriptPath, tc.expectedMemory, logFile)
 			expectedArgs := []string{
-				"/C", "start", "/wait", "cmd", "/C", scriptPath,
-				tc.expectedMemory,
+				"/C", "start", "/wait", "powershell", "-Command", psCommand,
 			}
 
 			mockExecutor := &MockCommandExecutor{}
@@ -228,7 +238,9 @@ func TestServerRunner_Run_CreatesServerPropertiesIfMissing(t *testing.T) {
 
 	// Note: NOT creating server.properties - it should be created
 
-	expectedArgs := []string{"/C", "start", "/wait", "cmd", "/C", scriptPath, "-Xmx2048M"}
+	logFile := filepath.Join(tempDir, config.LogsDir, "server.log")
+	psCommand := fmt.Sprintf("& '%s' %s 2>&1 | Tee-Object -FilePath '%s'", scriptPath, "-Xmx2048M", logFile)
+	expectedArgs := []string{"/C", "start", "/wait", "powershell", "-Command", psCommand}
 	mockExecutor := &MockCommandExecutor{}
 	mockExecutor.On("Execute", "cmd", expectedArgs, instanceDir).Return(nil)
 
@@ -323,7 +335,9 @@ func TestServerRunner_Run_CommandExecutionError(t *testing.T) {
 	err = os.WriteFile(propsPath, []byte("server-ip=\nserver-port=25565\n"), 0644)
 	require.NoError(t, err)
 
-	expectedArgs := []string{"/C", "start", "/wait", "cmd", "/C", scriptPath, "-Xmx1024M"}
+	logFile := filepath.Join(tempDir, config.LogsDir, "server.log")
+	psCommand := fmt.Sprintf("& '%s' %s 2>&1 | Tee-Object -FilePath '%s'", scriptPath, "-Xmx1024M", logFile)
+	expectedArgs := []string{"/C", "start", "/wait", "powershell", "-Command", psCommand}
 	mockExecutor := &MockCommandExecutor{}
 	expectedError := errors.New("command failed")
 	mockExecutor.On("Execute", "cmd", expectedArgs, instanceDir).Return(expectedError)

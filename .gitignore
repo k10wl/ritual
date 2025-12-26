@@ -43,4 +43,8 @@ Thumbs.db
 # Environment files
 .env*.local
 
+# Generated build files
+*.syso
+cmd/cli/versioninfo.json
+
 nul

@@ -137,7 +137,7 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 
 	// Create real local backupper
 	worldDirs := []string{"world", "world_nether", "world_the_end"}
-	localBackupper, err := services.NewLocalBackupper(tempRoot, worldDirs, nil)
+	localBackupper, err := services.NewLocalBackupper(tempRoot, worldDirs, nil, nil)
 	assert.NoError(t, err)
 
 	backuppers := []ports.BackupperService{localBackupper}
@@ -148,8 +148,12 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 
 	retentions := []ports.RetentionService{localRetention}
 
+	// Create mock conditions (empty for these tests - lock check handled by ManifestLockCondition in real usage)
+	conditions := []ports.ConditionService{}
+
 	// Create molfar service with new constructor
 	molfarService, err := services.NewMolfarService(
+		conditions,
 		updaters,
 		backuppers,
 		retentions,
@@ -627,10 +631,20 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		assert.NoError(t, err)
 		defer localStorage.Close()
 
+		// Create unlocked remote manifest so Prepare can proceed to updaters
+		ctx := context.Background()
+		manifest := createTestManifest("1.0.0", "1.0.0", []domain.World{})
+		manifestData, err := json.Marshal(manifest)
+		assert.NoError(t, err)
+		err = localStorage.Put(ctx, "manifest.json", manifestData)
+		assert.NoError(t, err)
+
 		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
 		assert.NoError(t, err)
 
+		conditions := []ports.ConditionService{}
 		molfar, err := services.NewMolfarService(
+			conditions,
 			updaters,
 			backuppers,
 			retentions,
@@ -986,7 +1000,7 @@ func TestMolfarService_Exit(t *testing.T) {
 		var remoteManifestAfterObj domain.Manifest
 		err = json.Unmarshal(remoteManifestAfter, &remoteManifestAfterObj)
 		assert.NoError(t, err)
-		assert.Equal(t, manifestAfter.RitualVersion, remoteManifestAfterObj.RitualVersion)
+		assert.Equal(t, config.AppVersion, remoteManifestAfterObj.RitualVersion)
 		assert.Equal(t, manifestAfter.InstanceVersion, remoteManifestAfterObj.InstanceVersion)
 		assert.Equal(t, len(manifestAfter.StoredWorlds), len(remoteManifestAfterObj.StoredWorlds))
 		assert.False(t, remoteManifestAfterObj.IsLocked())
@@ -1079,7 +1093,9 @@ func TestMolfarService_Exit(t *testing.T) {
 		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
 		assert.NoError(t, err)
 
+		conditions := []ports.ConditionService{}
 		molfar, err := services.NewMolfarService(
+			conditions,
 			updaters,
 			backuppers,
 			retentions,
@@ -1096,6 +1112,62 @@ func TestMolfarService_Exit(t *testing.T) {
 		err = molfar.Exit()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "backupper 0 failed")
+	})
+
+	t.Run("exit stamps RitualVersion with current AppVersion", func(t *testing.T) {
+		molfar, localStorage, remoteStorage, _, tempDir, _, cleanup := setupMolfarServices(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		instancePath := filepath.Join(tempDir, config.InstanceDir)
+		err := os.MkdirAll(instancePath, 0755)
+		assert.NoError(t, err)
+
+		instanceRoot, err := os.OpenRoot(instancePath)
+		assert.NoError(t, err)
+		defer instanceRoot.Close()
+
+		// Create test world
+		_, _, _, err = testhelpers.PaperMinecraftWorldSetup(instanceRoot)
+		assert.NoError(t, err)
+		_, _, _, err = testhelpers.PaperInstanceSetup(instanceRoot, "1.20.1")
+		assert.NoError(t, err)
+
+		// Setup manifests with OLD RitualVersion (simulating old client)
+		lockID := "test-host::1234567890"
+		oldRitualVersion := "0.0.1" // Old version, different from current
+		localManifest := createTestManifest(oldRitualVersion, "1.20.1", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		localManifest.Lock(lockID)
+		manifestData, err := json.Marshal(localManifest)
+		assert.NoError(t, err)
+		err = localStorage.Put(ctx, "manifest.json", manifestData)
+		assert.NoError(t, err)
+
+		remoteManifest := createTestManifest(oldRitualVersion, "1.20.1", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		remoteManifest.Lock(lockID)
+		remoteManifestData, err := json.Marshal(remoteManifest)
+		assert.NoError(t, err)
+		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
+		assert.NoError(t, err)
+
+		molfar.SetLockIDForTesting(lockID)
+
+		// Execute Exit
+		err = molfar.Exit()
+		assert.NoError(t, err)
+
+		// Verify remote manifest has current AppVersion stamped
+		remoteManifestAfter, err := remoteStorage.Get(ctx, "manifest.json")
+		assert.NoError(t, err)
+		var remoteManifestAfterObj domain.Manifest
+		err = json.Unmarshal(remoteManifestAfter, &remoteManifestAfterObj)
+		assert.NoError(t, err)
+
+		// RitualVersion should be stamped with current AppVersion, not old version
+		assert.Equal(t, config.AppVersion, remoteManifestAfterObj.RitualVersion,
+			"Remote manifest RitualVersion should be stamped with current AppVersion")
+		assert.NotEqual(t, oldRitualVersion, remoteManifestAfterObj.RitualVersion,
+			"Remote manifest RitualVersion should not be old version")
 	})
 }
 
@@ -1387,6 +1459,60 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 }
 
 func TestNewMolfarService(t *testing.T) {
+	t.Run("nil conditions slice returns error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		_, err = services.NewMolfarService(
+			nil,
+			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
+			[]ports.BackupperService{&mocks.MockBackupperService{}},
+			[]ports.RetentionService{mocks.NewMockRetentionService()},
+			&MockServerRunner{},
+			librarianService,
+			nil,
+			tempRoot,
+		)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "conditions slice cannot be nil")
+	})
+
+	t.Run("nil condition in slice returns error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+		defer tempRoot.Close()
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, localStorage)
+		assert.NoError(t, err)
+
+		_, err = services.NewMolfarService(
+			[]ports.ConditionService{nil},
+			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
+			[]ports.BackupperService{&mocks.MockBackupperService{}},
+			[]ports.RetentionService{mocks.NewMockRetentionService()},
+			&MockServerRunner{},
+			librarianService,
+			nil,
+			tempRoot,
+		)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "condition at index 0 cannot be nil")
+	})
+
 	t.Run("nil updaters slice returns error", func(t *testing.T) {
 		tempDir := t.TempDir()
 		tempRoot, err := os.OpenRoot(tempDir)
@@ -1401,6 +1527,7 @@ func TestNewMolfarService(t *testing.T) {
 		assert.NoError(t, err)
 
 		_, err = services.NewMolfarService(
+			[]ports.ConditionService{},
 			nil,
 			[]ports.BackupperService{&mocks.MockBackupperService{}},
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
@@ -1427,6 +1554,7 @@ func TestNewMolfarService(t *testing.T) {
 		assert.NoError(t, err)
 
 		_, err = services.NewMolfarService(
+			[]ports.ConditionService{},
 			[]ports.UpdaterService{nil},
 			[]ports.BackupperService{&mocks.MockBackupperService{}},
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
@@ -1453,6 +1581,7 @@ func TestNewMolfarService(t *testing.T) {
 		assert.NoError(t, err)
 
 		_, err = services.NewMolfarService(
+			[]ports.ConditionService{},
 			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
 			nil,
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
@@ -1479,6 +1608,7 @@ func TestNewMolfarService(t *testing.T) {
 		assert.NoError(t, err)
 
 		_, err = services.NewMolfarService(
+			[]ports.ConditionService{},
 			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
 			[]ports.BackupperService{nil},
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
@@ -1505,6 +1635,7 @@ func TestNewMolfarService(t *testing.T) {
 		assert.NoError(t, err)
 
 		_, err = services.NewMolfarService(
+			[]ports.ConditionService{},
 			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
 			[]ports.BackupperService{&mocks.MockBackupperService{}},
 			nil,
@@ -1531,6 +1662,7 @@ func TestNewMolfarService(t *testing.T) {
 		assert.NoError(t, err)
 
 		_, err = services.NewMolfarService(
+			[]ports.ConditionService{},
 			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
 			[]ports.BackupperService{&mocks.MockBackupperService{}},
 			[]ports.RetentionService{nil},
@@ -1557,6 +1689,7 @@ func TestNewMolfarService(t *testing.T) {
 		assert.NoError(t, err)
 
 		_, err = services.NewMolfarService(
+			[]ports.ConditionService{},
 			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
 			[]ports.BackupperService{&mocks.MockBackupperService{}},
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
@@ -1576,6 +1709,7 @@ func TestNewMolfarService(t *testing.T) {
 		defer tempRoot.Close()
 
 		_, err = services.NewMolfarService(
+			[]ports.ConditionService{},
 			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
 			[]ports.BackupperService{&mocks.MockBackupperService{}},
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
@@ -1602,6 +1736,7 @@ func TestNewMolfarService(t *testing.T) {
 		assert.NoError(t, err)
 
 		_, err = services.NewMolfarService(
+			[]ports.ConditionService{},
 			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
 			[]ports.BackupperService{&mocks.MockBackupperService{}},
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
@@ -1628,6 +1763,7 @@ func TestNewMolfarService(t *testing.T) {
 		assert.NoError(t, err)
 
 		molfar, err := services.NewMolfarService(
+			[]ports.ConditionService{},
 			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
 			[]ports.BackupperService{&mocks.MockBackupperService{}},
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
@@ -1654,6 +1790,7 @@ func TestNewMolfarService(t *testing.T) {
 		assert.NoError(t, err)
 
 		molfar, err := services.NewMolfarService(
+			[]ports.ConditionService{},
 			[]ports.UpdaterService{},
 			[]ports.BackupperService{&mocks.MockBackupperService{}},
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
@@ -1680,6 +1817,7 @@ func TestNewMolfarService(t *testing.T) {
 		assert.NoError(t, err)
 
 		molfar, err := services.NewMolfarService(
+			[]ports.ConditionService{},
 			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
 			[]ports.BackupperService{},
 			[]ports.RetentionService{mocks.NewMockRetentionService()},
@@ -1706,6 +1844,7 @@ func TestNewMolfarService(t *testing.T) {
 		assert.NoError(t, err)
 
 		molfar, err := services.NewMolfarService(
+			[]ports.ConditionService{},
 			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
 			[]ports.BackupperService{&mocks.MockBackupperService{}},
 			[]ports.RetentionService{},

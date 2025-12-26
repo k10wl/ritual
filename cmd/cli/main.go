@@ -1,5 +1,7 @@
 package main
 
+//go:generate goversioninfo
+
 import (
 	"bufio"
 	"context"
@@ -22,6 +24,11 @@ var (
 )
 
 func main() {
+	// Handle update process flags (--replace-old, --cleanup-update)
+	if services.HandleUpdateProcess() {
+		return
+	}
+
 	success := false
 	defer func() {
 		if !success {
@@ -104,7 +111,15 @@ func main() {
 		return
 	}
 
-	// Create updaters
+	// Create updaters (ritual updater first - must self-update before anything else)
+	ritualUpdater, err := services.NewRitualUpdater(librarian, remoteStorage, config.AppVersion)
+	if err != nil {
+		fmt.Printf("Failed to create ritual updater: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
 	instanceUpdater, err := services.NewInstanceUpdater(librarian, validator, remoteStorage, envBucket, workRoot)
 	if err != nil {
 		fmt.Printf("Failed to create instance updater: %v\n", err)
@@ -121,7 +136,61 @@ func main() {
 		return
 	}
 
-	updaters := []ports.UpdaterService{instanceUpdater, worldsUpdater}
+	updaters := []ports.UpdaterService{ritualUpdater, instanceUpdater, worldsUpdater}
+
+	// Create conditions (pre-flight checks before updaters run)
+	// Fetch remote manifest to get thresholds for conditions
+	remoteManifestForConditions, err := librarian.GetRemoteManifest(context.Background())
+	if err != nil {
+		fmt.Printf("Failed to get remote manifest for conditions: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	// Create system info adapter for RAM and disk space checks
+	systemInfo := adapters.NewWindowsSystemInfo()
+
+	// Create Java info adapter for Java version check
+	javaInfo := adapters.NewJavaInfo()
+
+	// Create manifest lock condition
+	lockCondition, err := services.NewManifestLockCondition(librarian)
+	if err != nil {
+		fmt.Printf("Failed to create lock condition: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	// Create RAM condition
+	ramCondition, err := services.NewRAMCondition(remoteManifestForConditions.GetMinRAMMB(), systemInfo)
+	if err != nil {
+		fmt.Printf("Failed to create RAM condition: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	// Create disk space condition
+	diskCondition, err := services.NewDiskSpaceCondition(remoteManifestForConditions.GetMinDiskMB(), config.RootPath, systemInfo)
+	if err != nil {
+		fmt.Printf("Failed to create disk condition: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	// Create Java version condition
+	javaCondition, err := services.NewJavaVersionCondition(remoteManifestForConditions.GetMinJavaVersion(), javaInfo)
+	if err != nil {
+		fmt.Printf("Failed to create Java condition: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	conditions := []ports.ConditionService{lockCondition, ramCondition, diskCondition, javaCondition}
 
 	// Create retention services
 	localRetention, err := services.NewLocalRetention(localStorage, events)
@@ -159,8 +228,21 @@ func main() {
 		return
 	}
 
+	// Create shouldRun callback - skips backup if no players joined
+	shouldRunBackup := func() bool {
+		joined, err := services.CheckPlayersJoined(workRoot)
+		if err != nil {
+			fmt.Printf("Warning: failed to check player joins: %v (defaulting to backup)\n", err)
+			return true // Safe fallback - always backup on error
+		}
+		if !joined {
+			fmt.Println("No players joined during session, skipping backup")
+		}
+		return joined
+	}
+
 	// Create backupper (R2 with local tee - single archive stream to both destinations)
-	r2Backupper, err := services.NewR2Backupper(r2Uploader, envBucket, workRoot, remoteManifest.WorldDirs, true, nil, events)
+	r2Backupper, err := services.NewR2Backupper(r2Uploader, envBucket, workRoot, remoteManifest.WorldDirs, true, nil, shouldRunBackup, events)
 	if err != nil {
 		fmt.Printf("Failed to create R2 backupper: %v\n", err)
 		close(events)
@@ -181,7 +263,7 @@ func main() {
 	}
 
 	// Create Molfar service
-	molfar, err := services.NewMolfarService(updaters, backuppers, retentions, serverRunner, librarian, events, workRoot)
+	molfar, err := services.NewMolfarService(conditions, updaters, backuppers, retentions, serverRunner, librarian, events, workRoot)
 	if err != nil {
 		fmt.Printf("Failed to create molfar service: %v\n", err)
 		close(events)
@@ -190,7 +272,8 @@ func main() {
 	}
 
 	// Prompt for settings and create server config
-	settings, err := services.PromptSettings(events)
+	// Pass min RAM from manifest so user can't enter less than required
+	settings, err := services.PromptSettings(events, remoteManifestForConditions.GetMinRAMMB())
 	if err != nil {
 		fmt.Printf("Failed to get settings: %v\n", err)
 		close(events)

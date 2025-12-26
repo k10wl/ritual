@@ -1,15 +1,29 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
 
+// Version info (single source of truth)
+const (
+	VersionMajor = 1
+	VersionMinor = 3
+	VersionPatch = 0
+)
+
 // Application identity
 const (
-	GroupName = "k10wl"
-	AppName   = "ritualdev"
+	GroupName   = "k10wl"
+	ProductName = "Ritual"
+	Description = "Ritual - Minecraft Server Manager"
 )
+
+// AppName is injected at build time via ldflags (ritualdev or ritual)
+var AppName = "ritualdev"
+
+var AppVersion string
 
 // Directory names
 const (
@@ -83,6 +97,8 @@ const (
 var RootPath string
 
 func init() {
+	AppVersion = fmt.Sprintf("%d.%d.%d", VersionMajor, VersionMinor, VersionPatch)
+
 	workDir, err := os.UserHomeDir()
 	if err != nil {
 		panic(err)

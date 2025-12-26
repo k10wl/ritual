@@ -23,6 +23,7 @@ var (
 type LocalBackupper struct {
 	workRoot  *os.Root
 	worldDirs []string           // Directories to archive (relative to instance dir)
+	shouldRun func() bool        // Condition to run backup at all (nil = always run)
 	events    chan<- ports.Event // Optional: channel for progress events
 }
 
@@ -31,7 +32,7 @@ var _ ports.BackupperService = (*LocalBackupper)(nil)
 
 // NewLocalBackupper creates a new local backupper with streaming support
 // Validates all dependencies are non-nil per NASA JPL defensive programming standards
-func NewLocalBackupper(workRoot *os.Root, worldDirs []string, events chan<- ports.Event) (*LocalBackupper, error) {
+func NewLocalBackupper(workRoot *os.Root, worldDirs []string, shouldRun func() bool, events chan<- ports.Event) (*LocalBackupper, error) {
 	if workRoot == nil {
 		return nil, ErrLocalBackupperWorkRootNil
 	}
@@ -42,6 +43,7 @@ func NewLocalBackupper(workRoot *os.Root, worldDirs []string, events chan<- port
 	backupper := &LocalBackupper{
 		workRoot:  workRoot,
 		worldDirs: worldDirs,
+		shouldRun: shouldRun,
 		events:    events,
 	}
 
@@ -55,12 +57,18 @@ func NewLocalBackupper(workRoot *os.Root, worldDirs []string, events chan<- port
 
 // Run executes the streaming backup process
 // Returns the archive path (relative to workRoot) for manifest updates
+// Returns empty string if shouldRun callback returns false (backup skipped)
 func (b *LocalBackupper) Run(ctx context.Context) (string, error) {
 	if b == nil {
 		return "", ErrLocalBackupperNil
 	}
 	if ctx == nil {
 		return "", errors.New("context cannot be nil")
+	}
+
+	// Check if backup should run at all
+	if b.shouldRun != nil && !b.shouldRun() {
+		return "", nil // Skip backup, return empty (no archive created)
 	}
 
 	// Generate backup name based on timestamp
