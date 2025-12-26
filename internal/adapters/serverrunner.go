@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"strconv"
@@ -68,11 +69,13 @@ func (s *ServerRunner) Run(server *domain.Server) error {
 		return fmt.Errorf("failed to update server.properties: %w", err)
 	}
 
-	scriptPath := filepath.Join(s.homedir, s.startScript)
+	rootPath := s.workRoot.Name()
+	scriptPath := filepath.Join(rootPath, s.startScript)
 	memoryArg := "-Xmx" + strconv.Itoa(server.Memory) + "M"
+	logFile := filepath.Join(rootPath, config.LogsDir, "server.log")
+	psCommand := fmt.Sprintf("& '%s' %s 2>&1 | Tee-Object -FilePath '%s'", scriptPath, memoryArg, logFile)
 	args := []string{
-		"/C", "start", "/wait", "cmd", "/C", scriptPath,
-		memoryArg,
+		"/C", "start", "/wait", "powershell", "-Command", psCommand,
 	}
 
 	workingDir := filepath.Dir(scriptPath)

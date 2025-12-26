@@ -63,7 +63,7 @@ $versionInfo = @{
             CharsetID = "04B0"
         }
     }
-    IconPath = "../../assets/ritual.ico"
+    IconPath = "../../assets/baiki-$env.ico"
     ManifestPath = ""
 }
 
