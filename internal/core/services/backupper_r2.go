@@ -25,10 +25,11 @@ type R2Backupper struct {
 	uploader        streamer.S3StreamUploader
 	bucket          string
 	workRoot        *os.Root
-	worldDirs       []string                   // Directories to archive (relative to instance dir)
-	saveLocalBackup bool                       // Whether to also save local backup
-	shouldBackup    func() bool                // Condition for local backup
-	events          chan<- ports.Event         // Optional: channel for progress events
+	worldDirs       []string           // Directories to archive (relative to instance dir)
+	saveLocalBackup bool               // Whether to also save local backup
+	shouldSaveLocal func() bool        // Condition for local backup (nil = always save if enabled)
+	shouldRun       func() bool        // Condition to run backup at all (nil = always run)
+	events          chan<- ports.Event // Optional: channel for progress events
 }
 
 // Compile-time check to ensure R2Backupper implements ports.BackupperService
@@ -42,7 +43,8 @@ func NewR2Backupper(
 	workRoot *os.Root,
 	worldDirs []string,
 	saveLocalBackup bool,
-	shouldBackup func() bool,
+	shouldSaveLocal func() bool,
+	shouldRun func() bool,
 	events chan<- ports.Event,
 ) (*R2Backupper, error) {
 	if uploader == nil {
@@ -61,7 +63,8 @@ func NewR2Backupper(
 		workRoot:        workRoot,
 		worldDirs:       worldDirs,
 		saveLocalBackup: saveLocalBackup,
-		shouldBackup:    shouldBackup,
+		shouldSaveLocal: shouldSaveLocal,
+		shouldRun:       shouldRun,
 		events:          events,
 	}
 
@@ -75,12 +78,18 @@ func NewR2Backupper(
 
 // Run executes the streaming backup process
 // Returns the archive key for manifest updates
+// Returns empty string if shouldRun callback returns false (backup skipped)
 func (b *R2Backupper) Run(ctx context.Context) (string, error) {
 	if b == nil {
 		return "", ErrR2BackupperNil
 	}
 	if ctx == nil {
 		return "", errors.New("context cannot be nil")
+	}
+
+	// Check if backup should run at all
+	if b.shouldRun != nil && !b.shouldRun() {
+		return "", nil // Skip backup, return empty (no archive created)
 	}
 
 	// Generate backup key based on timestamp
@@ -105,7 +114,7 @@ func (b *R2Backupper) Run(ctx context.Context) (string, error) {
 	// Prepare local path if configured (via workRoot for safety)
 	// Evaluate condition early to avoid creating directory unnecessarily
 	var localBackupPath string
-	doLocalBackup := b.saveLocalBackup && (b.shouldBackup == nil || b.shouldBackup())
+	doLocalBackup := b.saveLocalBackup && (b.shouldSaveLocal == nil || b.shouldSaveLocal())
 	if doLocalBackup {
 		// Ensure local backup directory exists
 		if err := b.workRoot.Mkdir(config.LocalBackups, 0755); err != nil && !os.IsExist(err) {

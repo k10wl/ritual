@@ -114,7 +114,8 @@ func TestR2Backupper_Run(t *testing.T) {
 			workRoot,
 			[]string{"world", "world_nether", "world_the_end"},
 			false, // no local backup
-			nil,   // no backup condition
+			nil,   // shouldSaveLocal
+			nil,   // shouldRun
 			nil,   // no events
 		)
 		require.NoError(t, err)
@@ -141,6 +142,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			workRoot,
 			[]string{"world", "world_nether", "world_the_end"},
 			false,
+			nil,
 			nil,
 			nil,
 		)
@@ -173,6 +175,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			false,
 			nil,
 			nil,
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -198,6 +201,7 @@ func TestR2Backupper_Run(t *testing.T) {
 			false,
 			nil,
 			nil,
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -214,7 +218,7 @@ func TestNewR2Backupper(t *testing.T) {
 		_, _, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(nil, "bucket", workRoot, worldDirs, false, nil, nil)
+		_, err := services.NewR2Backupper(nil, "bucket", workRoot, worldDirs, false, nil, nil, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "uploader")
 	})
@@ -223,7 +227,7 @@ func TestNewR2Backupper(t *testing.T) {
 		uploader, _, _, _, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(uploader, "bucket", nil, worldDirs, false, nil, nil)
+		_, err := services.NewR2Backupper(uploader, "bucket", nil, worldDirs, false, nil, nil, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "workRoot")
 	})
@@ -232,7 +236,7 @@ func TestNewR2Backupper(t *testing.T) {
 		uploader, _, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		_, err := services.NewR2Backupper(uploader, "bucket", workRoot, []string{}, false, nil, nil)
+		_, err := services.NewR2Backupper(uploader, "bucket", workRoot, []string{}, false, nil, nil, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "worldDirs")
 	})
@@ -241,7 +245,7 @@ func TestNewR2Backupper(t *testing.T) {
 		uploader, _, _, workRoot, cleanup := setupR2BackupperServices(t)
 		defer cleanup()
 
-		backupper, err := services.NewR2Backupper(uploader, "bucket", workRoot, worldDirs, false, nil, nil)
+		backupper, err := services.NewR2Backupper(uploader, "bucket", workRoot, worldDirs, false, nil, nil, nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, backupper)
 	})
@@ -263,6 +267,7 @@ func TestR2Backupper_LocalBackup(t *testing.T) {
 			workRoot,
 			[]string{"world", "world_nether", "world_the_end"},
 			true, // saveLocalBackup
+			nil,
 			nil,
 			nil,
 		)
@@ -296,6 +301,7 @@ func TestR2Backupper_LocalBackup(t *testing.T) {
 			false, // saveLocalBackup
 			nil,
 			nil,
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -324,7 +330,8 @@ func TestR2Backupper_LocalBackup(t *testing.T) {
 			workRoot,
 			[]string{"world", "world_nether", "world_the_end"},
 			true,
-			func() bool { return false }, // condition returns false
+			func() bool { return false }, // shouldSaveLocal returns false
+			nil,                          // shouldRun
 			nil,
 		)
 		require.NoError(t, err)
@@ -363,6 +370,7 @@ func TestR2Backupper_StreamingVerification(t *testing.T) {
 			tempRoot,
 			[]string{"world", "world_nether", "world_the_end"},
 			false,
+			nil,
 			nil,
 			nil,
 		)
@@ -407,4 +415,114 @@ type mockStreamDownloader struct {
 
 func (m *mockStreamDownloader) Download(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(m.data)), nil
+}
+
+// TestR2Backupper_ShouldRun tests the shouldRun callback that skips entire backup
+func TestR2Backupper_ShouldRun(t *testing.T) {
+	t.Run("skips backup when shouldRun returns false", func(t *testing.T) {
+		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+		defer cleanup()
+
+		// Setup world data
+		setupR2BackupperWorldData(t, tempDir)
+
+		// Create R2Backupper with shouldRun returning false
+		backupper, err := services.NewR2Backupper(
+			uploader,
+			"test-bucket",
+			workRoot,
+			[]string{"world", "world_nether", "world_the_end"},
+			true,                         // saveLocalBackup
+			nil,                          // shouldSaveLocal
+			func() bool { return false }, // shouldRun - skip backup
+			nil,                          // events
+		)
+		require.NoError(t, err)
+
+		// Execute backup
+		ctx := context.Background()
+		archiveKey, err := backupper.Run(ctx)
+		require.NoError(t, err)
+
+		// Should return empty string (no archive created)
+		assert.Empty(t, archiveKey, "Archive key should be empty when backup is skipped")
+
+		// Verify NO backup was uploaded to remote storage
+		backupFiles, err := remoteStorage.List(ctx, config.RemoteBackups)
+		assert.NoError(t, err)
+		assert.Empty(t, backupFiles, "No backup should be uploaded when shouldRun returns false")
+
+		// Verify NO local backup was created
+		localBackupDir := filepath.Join(tempDir, config.LocalBackups)
+		_, err = os.ReadDir(localBackupDir)
+		assert.True(t, os.IsNotExist(err), "No local backup should be created when shouldRun returns false")
+	})
+
+	t.Run("runs backup when shouldRun returns true", func(t *testing.T) {
+		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+		defer cleanup()
+
+		// Setup world data
+		setupR2BackupperWorldData(t, tempDir)
+
+		// Create R2Backupper with shouldRun returning true
+		backupper, err := services.NewR2Backupper(
+			uploader,
+			"test-bucket",
+			workRoot,
+			[]string{"world", "world_nether", "world_the_end"},
+			false,                       // saveLocalBackup
+			nil,                         // shouldSaveLocal
+			func() bool { return true }, // shouldRun - run backup
+			nil,                         // events
+		)
+		require.NoError(t, err)
+
+		// Execute backup
+		ctx := context.Background()
+		archiveKey, err := backupper.Run(ctx)
+		require.NoError(t, err)
+
+		// Should return non-empty archive key
+		assert.NotEmpty(t, archiveKey, "Archive key should be returned when backup runs")
+
+		// Verify backup was uploaded to remote storage
+		backupFiles, err := remoteStorage.List(ctx, config.RemoteBackups)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, backupFiles, "Backup should be uploaded when shouldRun returns true")
+	})
+
+	t.Run("runs backup when shouldRun is nil", func(t *testing.T) {
+		uploader, remoteStorage, tempDir, workRoot, cleanup := setupR2BackupperServices(t)
+		defer cleanup()
+
+		// Setup world data
+		setupR2BackupperWorldData(t, tempDir)
+
+		// Create R2Backupper with shouldRun nil (default behavior)
+		backupper, err := services.NewR2Backupper(
+			uploader,
+			"test-bucket",
+			workRoot,
+			[]string{"world", "world_nether", "world_the_end"},
+			false, // saveLocalBackup
+			nil,   // shouldSaveLocal
+			nil,   // shouldRun - nil means always run
+			nil,   // events
+		)
+		require.NoError(t, err)
+
+		// Execute backup
+		ctx := context.Background()
+		archiveKey, err := backupper.Run(ctx)
+		require.NoError(t, err)
+
+		// Should return non-empty archive key
+		assert.NotEmpty(t, archiveKey, "Archive key should be returned when shouldRun is nil")
+
+		// Verify backup was uploaded to remote storage
+		backupFiles, err := remoteStorage.List(ctx, config.RemoteBackups)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, backupFiles, "Backup should be uploaded when shouldRun is nil")
+	})
 }

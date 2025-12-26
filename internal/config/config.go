@@ -9,8 +9,8 @@ import (
 // Version info (single source of truth)
 const (
 	VersionMajor = 1
-	VersionMinor = 1
-	VersionPatch = 4
+	VersionMinor = 2
+	VersionPatch = 0
 )
 
 // Application identity

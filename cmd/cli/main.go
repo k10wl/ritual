@@ -174,8 +174,21 @@ func main() {
 		return
 	}
 
+	// Create shouldRun callback - skips backup if no players joined
+	shouldRunBackup := func() bool {
+		joined, err := services.CheckPlayersJoined(workRoot)
+		if err != nil {
+			fmt.Printf("Warning: failed to check player joins: %v (defaulting to backup)\n", err)
+			return true // Safe fallback - always backup on error
+		}
+		if !joined {
+			fmt.Println("No players joined during session, skipping backup")
+		}
+		return joined
+	}
+
 	// Create backupper (R2 with local tee - single archive stream to both destinations)
-	r2Backupper, err := services.NewR2Backupper(r2Uploader, envBucket, workRoot, remoteManifest.WorldDirs, true, nil, events)
+	r2Backupper, err := services.NewR2Backupper(r2Uploader, envBucket, workRoot, remoteManifest.WorldDirs, true, nil, shouldRunBackup, events)
 	if err != nil {
 		fmt.Printf("Failed to create R2 backupper: %v\n", err)
 		close(events)

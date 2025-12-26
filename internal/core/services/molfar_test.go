@@ -137,7 +137,7 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 
 	// Create real local backupper
 	worldDirs := []string{"world", "world_nether", "world_the_end"}
-	localBackupper, err := services.NewLocalBackupper(tempRoot, worldDirs, nil)
+	localBackupper, err := services.NewLocalBackupper(tempRoot, worldDirs, nil, nil)
 	assert.NoError(t, err)
 
 	backuppers := []ports.BackupperService{localBackupper}
