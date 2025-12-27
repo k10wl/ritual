@@ -18,7 +18,7 @@ import (
 
 func TestR2Retention_ManifestShouldNotAccumulateWorlds(t *testing.T) {
 	// This test verifies that after retention deletes old backups,
-	// the manifest's StoredWorlds should also be cleaned up
+	// the manifest's Backups should also be cleaned up
 	// BUG: Currently manifest accumulates worlds beyond R2MaxBackups
 
 	tempDir := t.TempDir()
@@ -62,11 +62,11 @@ func TestR2Retention_ManifestShouldNotAccumulateWorlds(t *testing.T) {
 
 	// Create manifest with all worlds
 	manifest := &domain.Manifest{
-		StoredWorlds: worlds,
+		Backups: worlds,
 	}
 
 	// Verify we start with more worlds than allowed
-	assert.Equal(t, numBackups, len(manifest.StoredWorlds), "Should start with %d worlds", numBackups)
+	assert.Equal(t, numBackups, len(manifest.Backups), "Should start with %d worlds", numBackups)
 
 	// Create and run retention
 	retention, err := services.NewR2Retention(remoteStorage, nil)
@@ -87,9 +87,9 @@ func TestR2Retention_ManifestShouldNotAccumulateWorlds(t *testing.T) {
 	}
 	assert.Equal(t, config.R2MaxBackups, len(backupFiles), "Should have only %d backup files after retention", config.R2MaxBackups)
 
-	// BUG: This assertion will FAIL because manifest.StoredWorlds is not updated
+	// BUG: This assertion will FAIL because manifest.Backups is not updated
 	// After retention, manifest should only have R2MaxBackups worlds
-	assert.Equal(t, config.R2MaxBackups, len(manifest.StoredWorlds),
+	assert.Equal(t, config.R2MaxBackups, len(manifest.Backups),
 		"BUG: Manifest should have only %d worlds after retention, but has %d",
-		config.R2MaxBackups, len(manifest.StoredWorlds))
+		config.R2MaxBackups, len(manifest.Backups))
 }

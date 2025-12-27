@@ -94,7 +94,7 @@ func createWorldsTestManifest(ritualVersion string, instanceVersion string, worl
 	return &domain.Manifest{
 		RitualVersion:   ritualVersion,
 		InstanceVersion: instanceVersion,
-		StoredWorlds:    worlds,
+		Backups:    worlds,
 		UpdatedAt:       time.Now(),
 	}
 }
@@ -238,7 +238,7 @@ func TestWorldsUpdater_Run(t *testing.T) {
 		var manifestObj domain.Manifest
 		err = json.Unmarshal(updatedManifest, &manifestObj)
 		assert.NoError(t, err)
-		assert.NotEmpty(t, manifestObj.StoredWorlds)
+		assert.NotEmpty(t, manifestObj.Backups)
 	})
 
 	t.Run("outdated world - updates worlds", func(t *testing.T) {
@@ -311,7 +311,7 @@ func TestWorldsUpdater_Run(t *testing.T) {
 		remoteManifest := &domain.Manifest{
 			RitualVersion:   "1.0.0",
 			InstanceVersion: "1.20.1",
-			StoredWorlds:    []domain.World{world},
+			Backups:    []domain.World{world},
 			UpdatedAt:       fixedTime,
 		}
 		remoteManifestData, err := json.Marshal(remoteManifest)
@@ -323,7 +323,7 @@ func TestWorldsUpdater_Run(t *testing.T) {
 		localManifest := &domain.Manifest{
 			RitualVersion:   "1.0.0",
 			InstanceVersion: "1.20.1",
-			StoredWorlds:    []domain.World{world},
+			Backups:    []domain.World{world},
 			UpdatedAt:       fixedTime,
 		}
 		localManifestData, err := json.Marshal(localManifest)

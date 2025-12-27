@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"ritual/internal/config"
+	"time"
+)
 
 // Manifest represents the central manifest tracking instance/worlds versions, locks, and metadata
 type Manifest struct {
@@ -10,11 +13,11 @@ type Manifest struct {
 	InstanceVersion string    `json:"instance_version"`
 	StartScript     string    `json:"start_script"` // path to bat file that starts the server (relative to ritual root)
 	WorldDirs       []string  `json:"world_dirs"`   // directories to archive (relative to instance dir)
-	StoredWorlds    []World   `json:"worlds"`       // queue of latest worlds
+	Backups         []World   `json:"backups"`      // queue of latest backups
 	UpdatedAt       time.Time `json:"updated_at"`
-	MinRAMMB        int       `json:"min_ram_mb"`       // minimum free RAM in MB required to run (0 = use default 4096)
-	MinDiskMB       int       `json:"min_disk_mb"`      // minimum free disk space in MB required (0 = use default 5120)
-	MinJavaVersion  int       `json:"min_java_version"` // minimum Java version required (0 = use default 21)
+	MinRAMMB        int       `json:"min_ram_mb"`       // minimum free RAM in MB required to run (0 = use config default)
+	MinDiskMB       int       `json:"min_disk_mb"`      // minimum free disk space in MB required (0 = use config default)
+	MinJavaVersion  int       `json:"min_java_version"` // minimum Java version required (0 = use config default)
 }
 
 // IsLocked returns true if the manifest is currently locked
@@ -36,20 +39,20 @@ func (m *Manifest) Unlock() {
 
 // AddWorld adds a new world to the stored worlds queue
 func (m *Manifest) AddWorld(world World) {
-	m.StoredWorlds = append(m.StoredWorlds, world)
+	m.Backups = append(m.Backups, world)
 	m.UpdatedAt = time.Now()
 }
 
 // GetLatestWorld returns the most recently created world
 func (m *Manifest) GetLatestWorld() *World {
-	if len(m.StoredWorlds) == 0 {
+	if len(m.Backups) == 0 {
 		return nil
 	}
 
 	var latest *World
-	for i := range m.StoredWorlds {
-		if latest == nil || m.StoredWorlds[i].CreatedAt.After(latest.CreatedAt) {
-			latest = &m.StoredWorlds[i]
+	for i := range m.Backups {
+		if latest == nil || m.Backups[i].CreatedAt.After(latest.CreatedAt) {
+			latest = &m.Backups[i]
 		}
 	}
 	return latest
@@ -68,7 +71,7 @@ func (m *Manifest) Clone() *Manifest {
 		InstanceVersion: m.InstanceVersion,
 		StartScript:     m.StartScript,
 		WorldDirs:       make([]string, len(m.WorldDirs)),
-		StoredWorlds:    make([]World, len(m.StoredWorlds)),
+		Backups:    make([]World, len(m.Backups)),
 		UpdatedAt:       time.Now(),
 		MinRAMMB:        m.MinRAMMB,
 		MinDiskMB:       m.MinDiskMB,
@@ -76,7 +79,7 @@ func (m *Manifest) Clone() *Manifest {
 	}
 
 	copy(clone.WorldDirs, m.WorldDirs)
-	copy(clone.StoredWorlds, m.StoredWorlds)
+	copy(clone.Backups, m.Backups)
 	return clone
 }
 
@@ -85,13 +88,13 @@ func (m *Manifest) RemoveOldestWorlds(maxCount int) []World {
 	if maxCount <= 0 {
 		return nil
 	}
-	if len(m.StoredWorlds) <= maxCount {
+	if len(m.Backups) <= maxCount {
 		return nil
 	}
 
 	// Sort worlds by creation time (oldest first)
-	sortedWorlds := make([]World, len(m.StoredWorlds))
-	copy(sortedWorlds, m.StoredWorlds)
+	sortedWorlds := make([]World, len(m.Backups))
+	copy(sortedWorlds, m.Backups)
 
 	for i := 0; i < len(sortedWorlds)-1; i++ {
 		for j := i + 1; j < len(sortedWorlds); j++ {
@@ -101,37 +104,50 @@ func (m *Manifest) RemoveOldestWorlds(maxCount int) []World {
 		}
 	}
 
-	removedCount := len(m.StoredWorlds) - maxCount
+	removedCount := len(m.Backups) - maxCount
 	removed := make([]World, removedCount)
 	copy(removed, sortedWorlds[:removedCount])
 
 	// Keep only the newest worlds
-	m.StoredWorlds = sortedWorlds[removedCount:]
+	m.Backups = sortedWorlds[removedCount:]
 	m.UpdatedAt = time.Now()
 
 	return removed
 }
 
-// GetMinRAMMB returns the minimum RAM requirement in MB, defaulting to 4096 (4GB) if not set
+// GetMinRAMMB returns the minimum RAM requirement in MB
 func (m *Manifest) GetMinRAMMB() int {
 	if m.MinRAMMB <= 0 {
-		return 4096
+		return config.DefaultMinRAMMB
 	}
 	return m.MinRAMMB
 }
 
-// GetMinDiskMB returns the minimum disk space requirement in MB, defaulting to 5120 (5GB) if not set
+// GetMinDiskMB returns the minimum disk space requirement in MB
 func (m *Manifest) GetMinDiskMB() int {
 	if m.MinDiskMB <= 0 {
-		return 5120
+		return config.DefaultMinDiskMB
 	}
 	return m.MinDiskMB
 }
 
-// GetMinJavaVersion returns the minimum Java version requirement, defaulting to 21 if not set
+// GetMinJavaVersion returns the minimum Java version requirement
 func (m *Manifest) GetMinJavaVersion() int {
 	if m.MinJavaVersion <= 0 {
-		return 21
+		return config.DefaultMinJavaVersion
 	}
 	return m.MinJavaVersion
+}
+
+// ApplyDefaults sets default values for fields that are zero
+func (m *Manifest) ApplyDefaults() {
+	if m.MinRAMMB <= 0 {
+		m.MinRAMMB = config.DefaultMinRAMMB
+	}
+	if m.MinDiskMB <= 0 {
+		m.MinDiskMB = config.DefaultMinDiskMB
+	}
+	if m.MinJavaVersion <= 0 {
+		m.MinJavaVersion = config.DefaultMinJavaVersion
+	}
 }

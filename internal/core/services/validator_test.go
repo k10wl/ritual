@@ -146,13 +146,13 @@ func TestValidatorService_CheckWorld(t *testing.T) {
 		{
 			name: "valid_worlds",
 			local: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
 					{URI: "world2", CreatedAt: validTime},
 				},
 			},
 			remote: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
 					{URI: "world2", CreatedAt: validTime},
 				},
@@ -174,10 +174,10 @@ func TestValidatorService_CheckWorld(t *testing.T) {
 		{
 			name: "no_local_worlds",
 			local: &domain.Manifest{
-				StoredWorlds: []domain.World{},
+				Backups: []domain.World{},
 			},
 			remote: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
 				},
 			},
@@ -186,12 +186,12 @@ func TestValidatorService_CheckWorld(t *testing.T) {
 		{
 			name: "empty_local_world_uri",
 			local: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "", CreatedAt: validTime},
 				},
 			},
 			remote: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
 				},
 			},
@@ -200,12 +200,12 @@ func TestValidatorService_CheckWorld(t *testing.T) {
 		{
 			name: "zero_local_world_timestamp",
 			local: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "world1", CreatedAt: zeroTime},
 				},
 			},
 			remote: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
 				},
 			},
@@ -214,12 +214,12 @@ func TestValidatorService_CheckWorld(t *testing.T) {
 		{
 			name: "empty_remote_world_uri",
 			local: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
 				},
 			},
 			remote: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "", CreatedAt: validTime},
 				},
 			},
@@ -228,12 +228,12 @@ func TestValidatorService_CheckWorld(t *testing.T) {
 		{
 			name: "zero_remote_world_timestamp",
 			local: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
 				},
 			},
 			remote: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "world1", CreatedAt: zeroTime},
 				},
 			},
@@ -242,12 +242,12 @@ func TestValidatorService_CheckWorld(t *testing.T) {
 		{
 			name: "whitespace_local_world_uri",
 			local: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "   ", CreatedAt: validTime},
 				},
 			},
 			remote: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
 				},
 			},
@@ -256,12 +256,12 @@ func TestValidatorService_CheckWorld(t *testing.T) {
 		{
 			name: "whitespace_remote_world_uri",
 			local: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
 				},
 			},
 			remote: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "   ", CreatedAt: validTime},
 				},
 			},
@@ -270,12 +270,12 @@ func TestValidatorService_CheckWorld(t *testing.T) {
 		{
 			name: "world_list_mismatch",
 			local: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
 				},
 			},
 			remote: &domain.Manifest{
-				StoredWorlds: []domain.World{
+				Backups: []domain.World{
 					{URI: "world2", CreatedAt: validTime},
 				},
 			},
@@ -537,8 +537,8 @@ func TestValidatorService_CheckWorldBounds(t *testing.T) {
 	assert.NoError(t, err)
 
 	t.Run("empty_local_worlds_bounds", func(t *testing.T) {
-		local := &domain.Manifest{StoredWorlds: []domain.World{}}
-		remote := &domain.Manifest{StoredWorlds: []domain.World{{URI: "world1", CreatedAt: time.Now()}}}
+		local := &domain.Manifest{Backups: []domain.World{}}
+		remote := &domain.Manifest{Backups: []domain.World{{URI: "world1", CreatedAt: time.Now()}}}
 
 		err := validator.CheckWorld(local, remote)
 		assert.Error(t, err)
@@ -546,8 +546,8 @@ func TestValidatorService_CheckWorldBounds(t *testing.T) {
 	})
 
 	t.Run("empty_remote_worlds_bounds", func(t *testing.T) {
-		local := &domain.Manifest{StoredWorlds: []domain.World{{URI: "world1", CreatedAt: time.Now()}}}
-		remote := &domain.Manifest{StoredWorlds: []domain.World{}}
+		local := &domain.Manifest{Backups: []domain.World{{URI: "world1", CreatedAt: time.Now()}}}
+		remote := &domain.Manifest{Backups: []domain.World{}}
 
 		err := validator.CheckWorld(local, remote)
 		assert.NoError(t, err, "Empty remote worlds should be allowed")

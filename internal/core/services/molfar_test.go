@@ -66,7 +66,7 @@ func createTestManifest(ritualVersion string, instanceVersion string, worlds []d
 	return &domain.Manifest{
 		RitualVersion:   ritualVersion,
 		InstanceVersion: instanceVersion,
-		StoredWorlds:    worlds,
+		Backups:    worlds,
 		UpdatedAt:       time.Now(),
 	}
 }
@@ -370,7 +370,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		assert.NotEmpty(t, localManifestObj.RitualVersion)
 		assert.NotEmpty(t, localManifestObj.InstanceVersion)
 		assert.False(t, localManifestObj.IsLocked())
-		assert.NotEmpty(t, localManifestObj.StoredWorlds)
+		assert.NotEmpty(t, localManifestObj.Backups)
 		assert.True(t, localManifestObj.UpdatedAt.After(time.Time{}))
 
 		// Verify remote manifest structure matches
@@ -383,7 +383,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, localManifestObj.RitualVersion, remoteManifestObj.RitualVersion)
 		assert.Equal(t, localManifestObj.InstanceVersion, remoteManifestObj.InstanceVersion)
-		assert.Equal(t, len(localManifestObj.StoredWorlds), len(remoteManifestObj.StoredWorlds))
+		assert.Equal(t, len(localManifestObj.Backups), len(remoteManifestObj.Backups))
 
 		// Verify instance directory was created
 		instancePath := filepath.Join(tempDir, config.InstanceDir)
@@ -475,7 +475,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		assert.NotEmpty(t, updatedManifestObj.RitualVersion)
 		assert.NotEmpty(t, updatedManifestObj.InstanceVersion)
 		assert.False(t, updatedManifestObj.IsLocked())
-		assert.NotEmpty(t, updatedManifestObj.StoredWorlds)
+		assert.NotEmpty(t, updatedManifestObj.Backups)
 		assert.True(t, updatedManifestObj.UpdatedAt.After(time.Time{}))
 
 		// Verify remote manifest structure matches updated local
@@ -488,7 +488,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, updatedManifestObj.RitualVersion, remoteManifestObj.RitualVersion)
 		assert.Equal(t, updatedManifestObj.InstanceVersion, remoteManifestObj.InstanceVersion)
-		assert.Equal(t, len(updatedManifestObj.StoredWorlds), len(remoteManifestObj.StoredWorlds))
+		assert.Equal(t, len(updatedManifestObj.Backups), len(remoteManifestObj.Backups))
 
 		// Verify world directories match remote after update
 		instancePath := filepath.Join(tempDir, config.InstanceDir)
@@ -539,7 +539,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		assert.NotEmpty(t, updatedManifestObj.RitualVersion)
 		assert.NotEmpty(t, updatedManifestObj.InstanceVersion)
 		assert.False(t, updatedManifestObj.IsLocked())
-		assert.NotEmpty(t, updatedManifestObj.StoredWorlds)
+		assert.NotEmpty(t, updatedManifestObj.Backups)
 		assert.True(t, updatedManifestObj.UpdatedAt.After(time.Time{}))
 
 		// Verify the latest world matches the expected URI
@@ -558,7 +558,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, updatedManifestObj.RitualVersion, remoteManifestObj.RitualVersion)
 		assert.Equal(t, updatedManifestObj.InstanceVersion, remoteManifestObj.InstanceVersion)
-		assert.Equal(t, len(updatedManifestObj.StoredWorlds), len(remoteManifestObj.StoredWorlds))
+		assert.Equal(t, len(updatedManifestObj.Backups), len(remoteManifestObj.Backups))
 
 		// Verify world directories match remote after update
 		instancePath := filepath.Join(tempDir, config.InstanceDir)
@@ -985,7 +985,7 @@ func TestMolfarService_Exit(t *testing.T) {
 		// Validate manifest structure after exit
 		assert.NotEmpty(t, manifestAfter.RitualVersion)
 		assert.NotEmpty(t, manifestAfter.InstanceVersion)
-		assert.NotEmpty(t, manifestAfter.StoredWorlds)
+		assert.NotEmpty(t, manifestAfter.Backups)
 		assert.True(t, manifestAfter.UpdatedAt.After(time.Time{}))
 
 		// Verify new world entry was added from backup
@@ -1002,7 +1002,7 @@ func TestMolfarService_Exit(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, config.AppVersion, remoteManifestAfterObj.RitualVersion)
 		assert.Equal(t, manifestAfter.InstanceVersion, remoteManifestAfterObj.InstanceVersion)
-		assert.Equal(t, len(manifestAfter.StoredWorlds), len(remoteManifestAfterObj.StoredWorlds))
+		assert.Equal(t, len(manifestAfter.Backups), len(remoteManifestAfterObj.Backups))
 		assert.False(t, remoteManifestAfterObj.IsLocked())
 
 		// List file tree before assertions
@@ -1168,6 +1168,149 @@ func TestMolfarService_Exit(t *testing.T) {
 			"Remote manifest RitualVersion should be stamped with current AppVersion")
 		assert.NotEqual(t, oldRitualVersion, remoteManifestAfterObj.RitualVersion,
 			"Remote manifest RitualVersion should not be old version")
+	})
+
+	t.Run("retention changes to Backups are persisted", func(t *testing.T) {
+		tempDir := t.TempDir()
+		remoteTempDir := t.TempDir()
+
+		tempRoot, err := os.OpenRoot(tempDir)
+		assert.NoError(t, err)
+
+		remoteRoot, err := os.OpenRoot(remoteTempDir)
+		assert.NoError(t, err)
+
+		localStorage, err := adapters.NewFSRepository(tempRoot)
+		assert.NoError(t, err)
+		defer localStorage.Close()
+
+		remoteStorage, err := adapters.NewFSRepository(remoteRoot)
+		assert.NoError(t, err)
+		defer remoteStorage.Close()
+
+		librarianService, err := services.NewLibrarianService(localStorage, remoteStorage)
+		assert.NoError(t, err)
+
+		ctx := context.Background()
+
+		// Setup instance directory with world
+		instancePath := filepath.Join(tempDir, config.InstanceDir)
+		err = os.MkdirAll(instancePath, 0755)
+		assert.NoError(t, err)
+
+		instanceRoot, err := os.OpenRoot(instancePath)
+		assert.NoError(t, err)
+		defer instanceRoot.Close()
+
+		_, _, _, err = testhelpers.PaperMinecraftWorldSetup(instanceRoot)
+		assert.NoError(t, err)
+		_, _, _, err = testhelpers.PaperInstanceSetup(instanceRoot, "1.20.1")
+		assert.NoError(t, err)
+
+		// Create backupper that returns a valid archive name
+		mockBackupper := &mocks.MockBackupperService{
+			RunFunc: func(ctx context.Context) (string, error) {
+				return config.RemoteBackups + "/20251227120000.tar", nil
+			},
+		}
+
+		// Create retention that removes old worlds (keeps only 2 newest)
+		retentionApplied := false
+		mockRetention := &mocks.MockRetentionService{
+			ApplyFunc: func(ctx context.Context, manifest *domain.Manifest) error {
+				retentionApplied = true
+				// Simulate retention: keep only the 2 newest worlds
+				if len(manifest.Backups) > 2 {
+					// Sort by CreatedAt descending and keep newest 2
+					worlds := manifest.Backups
+					for i := 0; i < len(worlds)-1; i++ {
+						for j := i + 1; j < len(worlds); j++ {
+							if worlds[i].CreatedAt.Before(worlds[j].CreatedAt) {
+								worlds[i], worlds[j] = worlds[j], worlds[i]
+							}
+						}
+					}
+					manifest.Backups = worlds[:2]
+				}
+				return nil
+			},
+		}
+
+		// Setup manifests with 5 worlds (more than retention limit)
+		lockID := "test-host::1234567890"
+		baseTime := time.Now().Add(-5 * time.Hour)
+		worlds := []domain.World{
+			{URI: config.RemoteBackups + "/world1.tar", CreatedAt: baseTime},
+			{URI: config.RemoteBackups + "/world2.tar", CreatedAt: baseTime.Add(1 * time.Hour)},
+			{URI: config.RemoteBackups + "/world3.tar", CreatedAt: baseTime.Add(2 * time.Hour)},
+			{URI: config.RemoteBackups + "/world4.tar", CreatedAt: baseTime.Add(3 * time.Hour)},
+			{URI: config.RemoteBackups + "/world5.tar", CreatedAt: baseTime.Add(4 * time.Hour)},
+		}
+		localManifest := createTestManifest("1.0.0", "1.20.1", worlds)
+		localManifest.Lock(lockID)
+		manifestData, err := json.Marshal(localManifest)
+		assert.NoError(t, err)
+		err = localStorage.Put(ctx, "manifest.json", manifestData)
+		assert.NoError(t, err)
+
+		remoteManifest := createTestManifest("1.0.0", "1.20.1", worlds)
+		remoteManifest.Lock(lockID)
+		remoteManifestData, err := json.Marshal(remoteManifest)
+		assert.NoError(t, err)
+		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
+		assert.NoError(t, err)
+
+		// Create molfar with mock retention
+		molfar, err := services.NewMolfarService(
+			[]ports.ConditionService{},
+			[]ports.UpdaterService{mocks.NewMockUpdaterService()},
+			[]ports.BackupperService{mockBackupper},
+			[]ports.RetentionService{mockRetention},
+			&MockServerRunner{},
+			librarianService,
+			nil,
+			tempRoot,
+		)
+		assert.NoError(t, err)
+		molfar.SetLockIDForTesting(lockID)
+
+		// Verify we start with 5 worlds
+		localManifestBefore, err := localStorage.Get(ctx, "manifest.json")
+		assert.NoError(t, err)
+		var manifestBefore domain.Manifest
+		err = json.Unmarshal(localManifestBefore, &manifestBefore)
+		assert.NoError(t, err)
+		assert.Equal(t, 5, len(manifestBefore.Backups), "Should start with 5 worlds")
+
+		// Execute Exit
+		err = molfar.Exit()
+		assert.NoError(t, err)
+
+		// Verify retention was called
+		assert.True(t, retentionApplied, "Retention should have been applied")
+
+		// Verify LOCAL manifest has reduced world count
+		// Flow: 5 worlds -> backup adds 1 -> 6 worlds -> retention keeps 2 newest -> 2 worlds
+		localManifestAfter, err := localStorage.Get(ctx, "manifest.json")
+		assert.NoError(t, err)
+		var localManifestAfterObj domain.Manifest
+		err = json.Unmarshal(localManifestAfter, &localManifestAfterObj)
+		assert.NoError(t, err)
+		assert.Equal(t, 2, len(localManifestAfterObj.Backups),
+			"Local manifest should have 2 worlds after retention (keeps 2 newest including backup)")
+
+		// Verify REMOTE manifest also has reduced world count
+		remoteManifestAfter, err := remoteStorage.Get(ctx, "manifest.json")
+		assert.NoError(t, err)
+		var remoteManifestAfterObj domain.Manifest
+		err = json.Unmarshal(remoteManifestAfter, &remoteManifestAfterObj)
+		assert.NoError(t, err)
+		assert.Equal(t, 2, len(remoteManifestAfterObj.Backups),
+			"Remote manifest should have 2 worlds after retention (keeps 2 newest including backup)")
+
+		// Verify both manifests are in sync
+		assert.Equal(t, len(localManifestAfterObj.Backups), len(remoteManifestAfterObj.Backups),
+			"Local and remote manifests should have same number of worlds")
 	})
 }
 

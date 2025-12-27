@@ -72,7 +72,7 @@ func (s *ServerRunner) Run(server *domain.Server) error {
 	rootPath := s.workRoot.Name()
 	scriptPath := filepath.Join(rootPath, s.startScript)
 	memoryArg := "-Xmx" + strconv.Itoa(server.Memory) + "M"
-	logFile := filepath.Join(rootPath, config.LogsDir, "server.log")
+	logFile := filepath.Join(rootPath, config.LogsDir, config.ServerLogFilename)
 	psCommand := fmt.Sprintf("& '%s' %s 2>&1 | Tee-Object -FilePath '%s'", scriptPath, memoryArg, logFile)
 	args := []string{
 		"/C", "start", "/wait", "powershell", "-Command", psCommand,

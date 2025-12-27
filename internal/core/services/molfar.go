@@ -390,6 +390,16 @@ func (m *MolfarService) Exit() error {
 			}
 			m.send(ports.FinishEvent{Operation: "retention"})
 		}
+
+		// Save manifest after retention policies modified Backups
+		if err := m.librarian.SaveLocalManifest(ctx, updatedManifest); err != nil {
+			m.send(ports.ErrorEvent{Operation: "retention", Err: err})
+			return fmt.Errorf("failed to save local manifest after retention: %w", err)
+		}
+		if err := m.librarian.SaveRemoteManifest(ctx, updatedManifest); err != nil {
+			m.send(ports.ErrorEvent{Operation: "retention", Err: err})
+			return fmt.Errorf("failed to save remote manifest after retention: %w", err)
+		}
 	}
 
 	// Unlock manifests after successful backup
@@ -433,13 +443,13 @@ func (m *MolfarService) updateManifestsWithArchive(ctx context.Context, archiveN
 	// Add world to manifest
 	localManifest.AddWorld(*world)
 
+	// Stamp RitualVersion before saving manifests
+	localManifest.RitualVersion = config.AppVersion
+
 	// Save updated local manifest
 	if err := m.librarian.SaveLocalManifest(ctx, localManifest); err != nil {
 		return nil, err
 	}
-
-	// Stamp RitualVersion before saving to remote
-	localManifest.RitualVersion = config.AppVersion
 
 	// Save updated remote manifest
 	if err := m.librarian.SaveRemoteManifest(ctx, localManifest); err != nil {
@@ -498,8 +508,9 @@ func (m *MolfarService) unlockManifests(ctx context.Context) error {
 
 	m.send(ports.UpdateEvent{Operation: "unlock", Message: "Validated lock ownership", Data: map[string]any{"lock_id": localManifest.LockedBy}})
 
-	// Unlock both manifests
+	// Unlock both manifests and stamp RitualVersion
 	localManifest.Unlock()
+	localManifest.RitualVersion = config.AppVersion
 	err = m.librarian.SaveLocalManifest(ctx, localManifest)
 	if err != nil {
 		m.send(ports.ErrorEvent{Operation: "unlock", Err: err})

@@ -67,7 +67,7 @@ func TestManifest_Unlock(t *testing.T) {
 
 func TestManifest_AddWorld(t *testing.T) {
 	manifest := Manifest{
-		StoredWorlds: []World{},
+		Backups: []World{},
 		UpdatedAt:    time.Now().Add(-time.Hour), // Set to past time
 	}
 
@@ -78,8 +78,8 @@ func TestManifest_AddWorld(t *testing.T) {
 
 	manifest.AddWorld(world)
 
-	assert.Len(t, manifest.StoredWorlds, 1, "AddWorld() should add 1 world")
-	assert.Equal(t, world.URI, manifest.StoredWorlds[0].URI)
+	assert.Len(t, manifest.Backups, 1, "AddWorld() should add 1 world")
+	assert.Equal(t, world.URI, manifest.Backups[0].URI)
 	assert.False(t, manifest.UpdatedAt.IsZero(), "AddWorld() should update UpdatedAt timestamp")
 	assert.True(t, manifest.UpdatedAt.After(time.Now().Add(-time.Minute)), "UpdatedAt should be set to current time")
 }
@@ -93,14 +93,14 @@ func TestManifest_GetLatestWorld(t *testing.T) {
 		{
 			name: "empty worlds list",
 			manifest: Manifest{
-				StoredWorlds: []World{},
+				Backups: []World{},
 			},
 			expected: nil,
 		},
 		{
 			name: "single world",
 			manifest: Manifest{
-				StoredWorlds: []World{
+				Backups: []World{
 					{URI: "world1", CreatedAt: time.Now()},
 				},
 			},
@@ -109,7 +109,7 @@ func TestManifest_GetLatestWorld(t *testing.T) {
 		{
 			name: "multiple worlds - latest first",
 			manifest: Manifest{
-				StoredWorlds: []World{
+				Backups: []World{
 					{URI: "world3", CreatedAt: time.Now()},
 					{URI: "world2", CreatedAt: time.Now().Add(-time.Hour)},
 					{URI: "world1", CreatedAt: time.Now().Add(-2 * time.Hour)},
@@ -120,7 +120,7 @@ func TestManifest_GetLatestWorld(t *testing.T) {
 		{
 			name: "multiple worlds - latest in middle",
 			manifest: Manifest{
-				StoredWorlds: []World{
+				Backups: []World{
 					{URI: "world1", CreatedAt: time.Now().Add(-2 * time.Hour)},
 					{URI: "world3", CreatedAt: time.Now()},
 					{URI: "world2", CreatedAt: time.Now().Add(-time.Hour)},

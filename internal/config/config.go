@@ -10,7 +10,7 @@ import (
 const (
 	VersionMajor = 1
 	VersionMinor = 3
-	VersionPatch = 0
+	VersionPatch = 5
 )
 
 // Application identity
@@ -41,6 +41,7 @@ const (
 	RemoteBinaryKey     = "ritual.exe"
 	ManualWorldFilename = "manual.tar"
 	ServerJarFilename   = "paper.jar"
+	ServerLogFilename   = "server.log"
 )
 
 // Backup configuration
@@ -53,6 +54,13 @@ const (
 	TimestampFormat = "20060102150405"
 	BackupExtension = ".tar"
 	LogExtension    = ".log"
+)
+
+// Default manifest thresholds
+const (
+	DefaultMinRAMMB       = 4096 // 4GB
+	DefaultMinDiskMB      = 5120 // 5GB
+	DefaultMinJavaVersion = 21
 )
 
 // Update process flags

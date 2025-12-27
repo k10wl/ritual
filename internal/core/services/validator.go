@@ -114,15 +114,15 @@ func (v *ValidatorService) CheckWorld(local *domain.Manifest, remote *domain.Man
 	}
 
 	// Skip world validation if remote has no worlds - allow launching without worlds
-	if len(remote.StoredWorlds) == 0 {
+	if len(remote.Backups) == 0 {
 		return nil
 	}
 
-	if len(local.StoredWorlds) == 0 {
+	if len(local.Backups) == 0 {
 		return ErrNoLocalWorlds
 	}
 
-	for _, world := range local.StoredWorlds {
+	for _, world := range local.Backups {
 		if strings.TrimSpace(world.URI) == "" {
 			return ErrLocalWorldURIEmpty
 		}
@@ -131,7 +131,7 @@ func (v *ValidatorService) CheckWorld(local *domain.Manifest, remote *domain.Man
 		}
 	}
 
-	for _, world := range remote.StoredWorlds {
+	for _, world := range remote.Backups {
 		if strings.TrimSpace(world.URI) == "" {
 			return ErrRemoteWorldURIEmpty
 		}
@@ -141,8 +141,8 @@ func (v *ValidatorService) CheckWorld(local *domain.Manifest, remote *domain.Man
 	}
 
 	// Safe comparison of last world only
-	if remote.StoredWorlds[len(remote.StoredWorlds)-1] !=
-		local.StoredWorlds[len(local.StoredWorlds)-1] {
+	if remote.Backups[len(remote.Backups)-1] !=
+		local.Backups[len(local.Backups)-1] {
 		return ErrOutdatedWorld
 	}
 
