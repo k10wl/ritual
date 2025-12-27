@@ -100,7 +100,7 @@ type UpdaterService interface {
 // Retentions clean up old backups after manifest is updated
 type RetentionService interface {
 	// Apply removes old backups exceeding the retention limit
-	// Uses manifest's StoredWorlds to identify valid backups
+	// Uses manifest's Backups to identify valid backups
 	Apply(ctx context.Context, manifest *domain.Manifest) error
 }
 

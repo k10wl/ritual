@@ -45,7 +45,7 @@ func (r *R2Retention) send(evt ports.Event) {
 }
 
 // Apply removes old R2 backups exceeding the retention limit
-// Keeps only backups that are in manifest's StoredWorlds, up to R2MaxBackups
+// Keeps only backups that are in manifest's Backups, up to R2MaxBackups
 func (r *R2Retention) Apply(ctx context.Context, manifest *domain.Manifest) error {
 	if r == nil {
 		return ErrR2RetentionNil
@@ -70,7 +70,7 @@ func (r *R2Retention) Apply(ctx context.Context, manifest *domain.Manifest) erro
 
 	// Build set of valid URIs from manifest
 	validURIs := make(map[string]bool)
-	for _, world := range manifest.StoredWorlds {
+	for _, world := range manifest.Backups {
 		validURIs[world.URI] = true
 	}
 
@@ -131,12 +131,12 @@ func (r *R2Retention) Apply(ctx context.Context, manifest *domain.Manifest) erro
 	// Update manifest to remove deleted worlds
 	if len(deletedSet) > 0 {
 		var remainingWorlds []domain.World
-		for _, world := range manifest.StoredWorlds {
+		for _, world := range manifest.Backups {
 			if !deletedSet[world.URI] {
 				remainingWorlds = append(remainingWorlds, world)
 			}
 		}
-		manifest.StoredWorlds = remainingWorlds
+		manifest.Backups = remainingWorlds
 	}
 
 	return nil

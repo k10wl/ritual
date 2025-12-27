@@ -61,7 +61,7 @@ func createRitualTestManifest(ritualVersion string, instanceVersion string) *dom
 	return &domain.Manifest{
 		RitualVersion:   ritualVersion,
 		InstanceVersion: instanceVersion,
-		StoredWorlds:    []domain.World{},
+		Backups:    []domain.World{},
 		UpdatedAt:       time.Now(),
 	}
 }

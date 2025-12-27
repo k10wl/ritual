@@ -165,7 +165,7 @@ func (u *InstanceUpdater) initializeInstance(ctx context.Context, remoteManifest
 	localManifest := &domain.Manifest{
 		RitualVersion:   remoteManifest.RitualVersion,
 		InstanceVersion: remoteManifest.InstanceVersion,
-		StoredWorlds:    []domain.World{}, // Empty - WorldsUpdater handles this
+		Backups:    []domain.World{}, // Empty - WorldsUpdater handles this
 		UpdatedAt:       remoteManifest.UpdatedAt,
 	}
 

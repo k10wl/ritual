@@ -27,7 +27,7 @@ func TestLibrarianService_GetLocalManifest(t *testing.T) {
 				"ritual_version": "1.0.0",
 				"locked_by": "",
 				"instance_version": "test-instance",
-				"worlds": [],
+				"backups": [],
 				"updated_at": "2023-01-01T00:00:00Z"
 			}`),
 			storageError: nil,
@@ -35,7 +35,7 @@ func TestLibrarianService_GetLocalManifest(t *testing.T) {
 				RitualVersion:   "1.0.0",
 				LockedBy:        "",
 				InstanceVersion: "test-instance",
-				StoredWorlds:    []domain.World{},
+				Backups:    []domain.World{},
 			},
 			expectedError: false,
 		},
@@ -92,7 +92,7 @@ func TestLibrarianService_GetLocalManifest(t *testing.T) {
 				assert.Equal(t, tt.expectedResult.RitualVersion, result.RitualVersion)
 				assert.Equal(t, tt.expectedResult.LockedBy, result.LockedBy)
 				assert.Equal(t, tt.expectedResult.InstanceVersion, result.InstanceVersion)
-				assert.Equal(t, tt.expectedResult.StoredWorlds, result.StoredWorlds)
+				assert.Equal(t, tt.expectedResult.Backups, result.Backups)
 			}
 		})
 	}
@@ -112,7 +112,7 @@ func TestLibrarianService_GetRemoteManifest(t *testing.T) {
 				"ritual_version": "1.0.0",
 				"locked_by": "user::1234567890",
 				"instance_version": "test-instance",
-				"worlds": [],
+				"backups": [],
 				"updated_at": "2023-01-01T00:00:00Z"
 			}`),
 			storageError: nil,
@@ -120,7 +120,7 @@ func TestLibrarianService_GetRemoteManifest(t *testing.T) {
 				RitualVersion:   "1.0.0",
 				LockedBy:        "user::1234567890",
 				InstanceVersion: "test-instance",
-				StoredWorlds:    []domain.World{},
+				Backups:    []domain.World{},
 			},
 			expectedError: false,
 		},
@@ -170,7 +170,7 @@ func TestLibrarianService_GetRemoteManifest(t *testing.T) {
 				assert.Equal(t, tt.expectedResult.RitualVersion, result.RitualVersion)
 				assert.Equal(t, tt.expectedResult.LockedBy, result.LockedBy)
 				assert.Equal(t, tt.expectedResult.InstanceVersion, result.InstanceVersion)
-				assert.Equal(t, tt.expectedResult.StoredWorlds, result.StoredWorlds)
+				assert.Equal(t, tt.expectedResult.Backups, result.Backups)
 			}
 		})
 	}
@@ -366,7 +366,7 @@ func TestLibrarianService_Integration(t *testing.T) {
 		RitualVersion:   "1.0.0",
 		LockedBy:        "user::1234567890",
 		InstanceVersion: "test-instance",
-		StoredWorlds: []domain.World{
+		Backups: []domain.World{
 			{URI: "world1", CreatedAt: time.Now()},
 		},
 	}

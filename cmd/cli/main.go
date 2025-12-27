@@ -232,11 +232,14 @@ func main() {
 	shouldRunBackup := func() bool {
 		joined, err := services.CheckPlayersJoined(workRoot)
 		if err != nil {
-			fmt.Printf("Warning: failed to check player joins: %v (defaulting to backup)\n", err)
-			return true // Safe fallback - always backup on error
+			// Safe fallback - always backup on error
+			return true
 		}
 		if !joined {
-			fmt.Println("No players joined during session, skipping backup")
+			ports.SendEvent(events, ports.UpdateEvent{
+				Operation: "backup",
+				Message:   "No players joined, skipping backup",
+			})
 		}
 		return joined
 	}
