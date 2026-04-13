@@ -74,14 +74,13 @@ func (r *R2Retention) Apply(ctx context.Context, manifest *domain.Manifest) erro
 		validURIs[world.URI] = true
 	}
 
-	// Filter valid backup files (exclude manual.tar.gz and temp files)
+	// Filter backup entries by timestamp (skip manual and temp files, ignore invalid names)
 	var backups []string
 	for _, key := range keys {
-		if strings.HasSuffix(key, config.BackupExtension) {
-			// Skip manual world file and temp files
-			if strings.Contains(key, config.ManualWorldFilename) || strings.Contains(key, "temp_") {
-				continue
-			}
+		if strings.Contains(key, config.ManualWorldFilename) || strings.Contains(key, "temp_") {
+			continue
+		}
+		if extractTimestamp(key) != "" {
 			backups = append(backups, key)
 		}
 	}

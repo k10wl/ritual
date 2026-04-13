@@ -66,18 +66,18 @@ func (r *LocalRetention) Apply(ctx context.Context, manifest *domain.Manifest) e
 		return fmt.Errorf("too many backup files: %d exceeds limit %d", len(keys), config.MaxFiles)
 	}
 
-	// Filter backup files (skip temp files)
+	// Filter backup entries by timestamp (skip temp files and invalid names)
 	var backups []string
 	for _, key := range keys {
-		if strings.HasSuffix(key, config.BackupExtension) {
-			if strings.Contains(key, "temp_") {
-				continue
-			}
+		if strings.Contains(key, "temp_") {
+			continue
+		}
+		if extractTimestamp(key) != "" {
 			backups = append(backups, key)
 		}
 	}
 
-	// Sort by filename (timestamp in name, newest first)
+	// Sort by name (timestamp in name, newest first)
 	sort.Slice(backups, func(i, j int) bool {
 		return backups[i] > backups[j]
 	})
