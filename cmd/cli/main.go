@@ -84,8 +84,8 @@ func main() {
 		return
 	}
 
-	// Create remote storage (R2) and uploader
-	remoteStorage, r2Uploader, err := adapters.NewR2RepositoryWithUploader(envBucket, envAccountID, envAccessKeyID, envSecretAccessKey, events)
+	// Create remote storage (R2)
+	remoteStorage, err := adapters.NewR2Repository(envBucket, envAccountID, envAccessKeyID, envSecretAccessKey, events)
 	if err != nil {
 		fmt.Printf("Failed to create remote storage: %v\n", err)
 		close(events)
@@ -128,15 +128,40 @@ func main() {
 		return
 	}
 
-	worldsUpdater, err := services.NewWorldsUpdater(librarian, validator, remoteStorage, envBucket, workRoot, events)
+	// Create world scanner — full scan if no xxhash map, mtime-filtered otherwise
+	localManifestForScanner, err := librarian.GetLocalManifest(context.Background())
 	if err != nil {
-		fmt.Printf("Failed to create worlds updater: %v\n", err)
+		fmt.Printf("Failed to get local manifest for scanner: %v\n", err)
 		close(events)
 		wg.Wait()
 		return
 	}
 
-	updaters := []ports.UpdaterService{ritualUpdater, instanceUpdater, worldsUpdater}
+	var worldScanner ports.WorldScanner
+	worldsPath := config.RootPath + string(os.PathSeparator) + "worlds"
+	if len(localManifestForScanner.XXHashMap) == 0 {
+		worldScanner, err = adapters.NewFullWorldScanner(worldsPath)
+	} else {
+		worldScanner, err = adapters.NewMtimeWorldScanner(worldsPath, localManifestForScanner.XXHashSyncAt, localManifestForScanner.XXHashMap)
+	}
+	if err != nil {
+		fmt.Printf("Failed to create world scanner: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	// Create sync service for delta world transfers
+	syncService, err := services.NewSyncService(worldScanner, localStorage, remoteStorage, librarian, events)
+	if err != nil {
+		fmt.Printf("Failed to create sync service: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	syncDownloader := services.NewSyncDownloadUpdater(syncService)
+	updaters := []ports.UpdaterService{ritualUpdater, instanceUpdater, syncDownloader}
 
 	// Create conditions (pre-flight checks before updaters run)
 	// Fetch remote manifest to get thresholds for conditions
@@ -219,45 +244,13 @@ func main() {
 
 	retentions := []ports.RetentionService{localRetention, r2Retention, logRetention}
 
-	// Fetch remote manifest to get configuration
-	remoteManifest, err := librarian.GetRemoteManifest(context.Background())
-	if err != nil {
-		fmt.Printf("Failed to get remote manifest: %v\n", err)
-		close(events)
-		wg.Wait()
-		return
-	}
-
-	// Create shouldRun callback - skips backup if no players joined
-	shouldRunBackup := func() bool {
-		joined, err := services.CheckPlayersJoined(workRoot)
-		if err != nil {
-			// Safe fallback - always backup on error
-			return true
-		}
-		if !joined {
-			ports.SendEvent(events, ports.UpdateEvent{
-				Operation: "backup",
-				Message:   "No players joined, skipping backup",
-			})
-		}
-		return joined
-	}
-
-	// Create backupper (R2 with local tee - single archive stream to both destinations)
-	r2Backupper, err := services.NewR2Backupper(r2Uploader, envBucket, workRoot, remoteManifest.WorldDirs, true, nil, shouldRunBackup, events)
-	if err != nil {
-		fmt.Printf("Failed to create R2 backupper: %v\n", err)
-		close(events)
-		wg.Wait()
-		return
-	}
-
-	backuppers := []ports.BackupperService{r2Backupper}
+	// Create sync upload backupper for delta world transfers
+	syncUploader := services.NewSyncUploadBackupper(syncService)
+	backuppers := []ports.BackupperService{syncUploader}
 
 	// Create server runner
 	commandExecutor := adapters.NewCommandExecutorAdapter()
-	serverRunner, err := adapters.NewServerRunner(config.RootPath, workRoot, remoteManifest.StartScript, commandExecutor)
+	serverRunner, err := adapters.NewServerRunner(config.RootPath, workRoot, remoteManifestForConditions.StartScript, commandExecutor)
 	if err != nil {
 		fmt.Printf("Failed to create server runner: %v\n", err)
 		close(events)
