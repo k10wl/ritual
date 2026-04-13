@@ -111,3 +111,9 @@ type ConditionService interface {
 	// Returns nil if condition passes, error with descriptive message if fails
 	Check(ctx context.Context) error
 }
+
+// WorldScanner produces an xxhash map of all files in the worlds directory.
+// Implementations determine scanning strategy (full walk vs mtime-filtered).
+type WorldScanner interface {
+	Scan(ctx context.Context) (map[string]string, error)
+}
