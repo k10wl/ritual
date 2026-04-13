@@ -14,8 +14,10 @@ type Manifest struct {
 	StartScript     string    `json:"start_script"` // path to bat file that starts the server (relative to ritual root)
 	WorldDirs       []string  `json:"world_dirs"`   // directories to archive (relative to instance dir)
 	Backups         []World   `json:"backups"`      // queue of latest backups
-	UpdatedAt       time.Time `json:"updated_at"`
-	MinRAMMB        int       `json:"min_ram_mb"`       // minimum free RAM in MB required to run (0 = use config default)
+	UpdatedAt       time.Time         `json:"updated_at"`
+	XXHashMap       map[string]string `json:"xxhash_map,omitempty"`    // relative file path → xxhash of file contents
+	XXHashSyncAt    time.Time         `json:"xxhash_sync_at,omitempty"` // when xxhash map was last computed (distinct from UpdatedAt)
+	MinRAMMB        int               `json:"min_ram_mb"`       // minimum free RAM in MB required to run (0 = use config default)
 	MinDiskMB       int       `json:"min_disk_mb"`      // minimum free disk space in MB required (0 = use config default)
 	MinJavaVersion  int       `json:"min_java_version"` // minimum Java version required (0 = use config default)
 }
@@ -71,8 +73,9 @@ func (m *Manifest) Clone() *Manifest {
 		InstanceVersion: m.InstanceVersion,
 		StartScript:     m.StartScript,
 		WorldDirs:       make([]string, len(m.WorldDirs)),
-		Backups:    make([]World, len(m.Backups)),
+		Backups:         make([]World, len(m.Backups)),
 		UpdatedAt:       time.Now(),
+		XXHashSyncAt:    m.XXHashSyncAt,
 		MinRAMMB:        m.MinRAMMB,
 		MinDiskMB:       m.MinDiskMB,
 		MinJavaVersion:  m.MinJavaVersion,
@@ -80,6 +83,14 @@ func (m *Manifest) Clone() *Manifest {
 
 	copy(clone.WorldDirs, m.WorldDirs)
 	copy(clone.Backups, m.Backups)
+
+	if m.XXHashMap != nil {
+		clone.XXHashMap = make(map[string]string, len(m.XXHashMap))
+		for k, v := range m.XXHashMap {
+			clone.XXHashMap[k] = v
+		}
+	}
+
 	return clone
 }
 

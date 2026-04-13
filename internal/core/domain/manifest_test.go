@@ -1,10 +1,12 @@
 package domain
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestManifest_IsLocked(t *testing.T) {
@@ -143,4 +145,64 @@ func TestManifest_GetLatestWorld(t *testing.T) {
 			assert.Equal(t, tt.expected.URI, result.URI)
 		})
 	}
+}
+
+func TestManifest_XXHashMap_MarshalRoundtrip(t *testing.T) {
+	original := Manifest{
+		ManifestVersion: "1.0.0",
+		RitualVersion:   "2.0.0",
+		XXHashMap: map[string]string{
+			"world/region/r.0.0.mca": "a1b2c3d4e5f6",
+			"world/level.dat":        "1a2b3c4d5e6f",
+		},
+		XXHashSyncAt: time.Date(2026, 4, 14, 10, 30, 0, 0, time.UTC),
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var restored Manifest
+	err = json.Unmarshal(data, &restored)
+	require.NoError(t, err)
+
+	assert.Equal(t, original.XXHashMap, restored.XXHashMap)
+	assert.True(t, original.XXHashSyncAt.Equal(restored.XXHashSyncAt))
+}
+
+func TestManifest_XXHashMap_V1BackwardsCompat(t *testing.T) {
+	v1JSON := `{"manifest_version":"1.0.0","ritual_version":"1.0.0","locked_by":"","instance_version":"paper-1.20","updated_at":"2026-01-01T00:00:00Z"}`
+
+	var manifest Manifest
+	err := json.Unmarshal([]byte(v1JSON), &manifest)
+	require.NoError(t, err)
+
+	assert.Nil(t, manifest.XXHashMap, "v1 manifest should have nil XXHashMap")
+	assert.True(t, manifest.XXHashSyncAt.IsZero(), "v1 manifest should have zero XXHashSyncAt")
+}
+
+func TestManifest_Clone_DeepCopiesXXHashMap(t *testing.T) {
+	original := &Manifest{
+		XXHashMap: map[string]string{
+			"world/level.dat": "abc123",
+		},
+		XXHashSyncAt: time.Date(2026, 4, 14, 10, 0, 0, 0, time.UTC),
+	}
+
+	clone := original.Clone()
+
+	assert.Equal(t, original.XXHashMap, clone.XXHashMap)
+	assert.True(t, original.XXHashSyncAt.Equal(clone.XXHashSyncAt))
+
+	// mutating clone must not affect original
+	clone.XXHashMap["world/level.dat"] = "modified"
+	assert.Equal(t, "abc123", original.XXHashMap["world/level.dat"])
+}
+
+func TestManifest_Clone_NilXXHashMap(t *testing.T) {
+	original := &Manifest{
+		XXHashMap: nil,
+	}
+
+	clone := original.Clone()
+	assert.Nil(t, clone.XXHashMap)
 }
