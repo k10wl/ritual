@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"time"
 
-	retry "github.com/avast/retry-go/v4"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )
@@ -22,16 +20,10 @@ var (
 	ErrSyncNil          = errors.New("sync service cannot be nil")
 )
 
-// Sync retry configuration
-const (
-	syncMaxRetries  = 5
-	syncBaseDelay   = 1 * time.Second
-	syncMaxDelay    = 15 * time.Second
-)
-
 // SyncService orchestrates delta sync upload and download flows.
 // Coordinates P1→P2→P3 phases for both directions using WorldScanner,
 // StorageRepository, and LibrarianService.
+// Retry logic belongs in the StorageRepository decorator, not here.
 type SyncService struct {
 	scanner   ports.WorldScanner
 	local     ports.StorageRepository
@@ -83,7 +75,6 @@ func (s *SyncService) Download(ctx context.Context) error {
 
 	s.send(ports.StartEvent{Operation: "sync-download"})
 
-	// Fetch manifests
 	localManifest, err := s.librarian.GetLocalManifest(ctx)
 	if err != nil {
 		return fmt.Errorf("get local manifest: %w", err)
@@ -93,7 +84,6 @@ func (s *SyncService) Download(ctx context.Context) error {
 		return fmt.Errorf("get remote manifest: %w", err)
 	}
 
-	// String comparison only — zero IO
 	diff := domain.ComputeDiff(localManifest.XXHashMap, remoteManifest.XXHashMap)
 
 	if len(diff.Download) == 0 {
@@ -109,60 +99,37 @@ func (s *SyncService) Download(ctx context.Context) error {
 		"total_files": len(diff.Download),
 	}})
 
-	for i, path := range diff.Download {
-		filePath := path
+	for i, filePath := range diff.Download {
 		s.send(ports.UpdateEvent{Operation: "sync-download", Message: "Downloading file", Data: map[string]any{
-			"file":     filePath,
-			"progress": i + 1,
-			"total":    len(diff.Download),
+			"file": filePath, "progress": i + 1, "total": len(diff.Download),
 		}})
 
-		err := retry.Do(func() error {
-			data, getErr := s.remote.Get(ctx, filepath.ToSlash(filepath.Join("worlds", filePath)))
-			if getErr != nil {
-				return getErr
-			}
-			return s.local.Put(ctx, filepath.ToSlash(filepath.Join(syncPrefix, filePath)), data)
-		},
-			retry.Attempts(syncMaxRetries),
-			retry.Delay(syncBaseDelay),
-			retry.MaxDelay(syncMaxDelay),
-			retry.DelayType(retry.BackOffDelay),
-			retry.Context(ctx),
-		)
-		if err != nil {
-			return fmt.Errorf("download P1 failed for %s: %w", filePath, err)
+		data, getErr := s.remote.Get(ctx, filepath.ToSlash(filepath.Join("worlds", filePath)))
+		if getErr != nil {
+			return fmt.Errorf("download P1 failed for %s: %w", filePath, getErr)
+		}
+		if putErr := s.local.Put(ctx, filepath.ToSlash(filepath.Join(syncPrefix, filePath)), data); putErr != nil {
+			return fmt.Errorf("download P1 staging failed for %s: %w", filePath, putErr)
 		}
 	}
 	s.send(ports.FinishEvent{Operation: "sync-download-p1"})
 
 	// P2: Move from sync to worlds + update local manifest
 	s.send(ports.StartEvent{Operation: "sync-download-p2"})
-	for _, path := range diff.Download {
-		filePath := path
-		err := retry.Do(func() error {
-			syncKey := filepath.ToSlash(filepath.Join(syncPrefix, filePath))
-			data, getErr := s.local.Get(ctx, syncKey)
-			if getErr != nil {
-				return getErr
-			}
-			if putErr := s.local.Put(ctx, filepath.ToSlash(filepath.Join("worlds", filePath)), data); putErr != nil {
-				return putErr
-			}
-			return s.local.Delete(ctx, syncKey)
-		},
-			retry.Attempts(syncMaxRetries),
-			retry.Delay(syncBaseDelay),
-			retry.MaxDelay(syncMaxDelay),
-			retry.DelayType(retry.BackOffDelay),
-			retry.Context(ctx),
-		)
-		if err != nil {
-			return fmt.Errorf("download P2 failed for %s: %w", filePath, err)
+	for _, filePath := range diff.Download {
+		syncKey := filepath.ToSlash(filepath.Join(syncPrefix, filePath))
+		data, getErr := s.local.Get(ctx, syncKey)
+		if getErr != nil {
+			return fmt.Errorf("download P2 read failed for %s: %w", filePath, getErr)
+		}
+		if putErr := s.local.Put(ctx, filepath.ToSlash(filepath.Join("worlds", filePath)), data); putErr != nil {
+			return fmt.Errorf("download P2 write failed for %s: %w", filePath, putErr)
+		}
+		if delErr := s.local.Delete(ctx, syncKey); delErr != nil {
+			return fmt.Errorf("download P2 cleanup failed for %s: %w", filePath, delErr)
 		}
 	}
 
-	// Update local manifest to match remote
 	localManifest.XXHashMap = remoteManifest.XXHashMap
 	localManifest.XXHashSyncAt = remoteManifest.XXHashSyncAt
 	if err := s.librarian.SaveLocalManifest(ctx, localManifest); err != nil {
@@ -179,7 +146,6 @@ func (s *SyncService) Download(ctx context.Context) error {
 
 	for _, key := range localFiles {
 		rel := filepath.ToSlash(key)
-		// Strip "worlds/" prefix for manifest lookup
 		if len(rel) > 7 && rel[:7] == "worlds/" {
 			rel = rel[7:]
 		}
@@ -192,9 +158,7 @@ func (s *SyncService) Download(ctx context.Context) error {
 	}
 	s.send(ports.FinishEvent{Operation: "sync-download-p3"})
 
-	// Clean sync folder
 	s.cleanSyncFolder(ctx, syncPrefix)
-
 	s.send(ports.FinishEvent{Operation: "sync-download"})
 	return nil
 }
@@ -208,13 +172,11 @@ func (s *SyncService) Upload(ctx context.Context) error {
 
 	s.send(ports.StartEvent{Operation: "sync-upload"})
 
-	// Walk worlds, compute xxhash → new_map (disk is truth)
 	newMap, err := s.scanner.Scan(ctx)
 	if err != nil {
 		return fmt.Errorf("scan worlds: %w", err)
 	}
 
-	// Overwrite local manifest with new map
 	localManifest, err := s.librarian.GetLocalManifest(ctx)
 	if err != nil {
 		return fmt.Errorf("get local manifest: %w", err)
@@ -225,7 +187,6 @@ func (s *SyncService) Upload(ctx context.Context) error {
 		return fmt.Errorf("save local manifest after scan: %w", err)
 	}
 
-	// Diff against remote
 	remoteManifest, err := s.librarian.GetRemoteManifest(ctx)
 	if err != nil {
 		return fmt.Errorf("get remote manifest: %w", err)
@@ -247,53 +208,31 @@ func (s *SyncService) Upload(ctx context.Context) error {
 			"total_files": len(diff.Upload),
 		}})
 
-		for i, path := range diff.Upload {
-			filePath := path
+		for i, filePath := range diff.Upload {
 			s.send(ports.UpdateEvent{Operation: "sync-upload", Message: "Uploading file", Data: map[string]any{
-				"file":     filePath,
-				"progress": i + 1,
-				"total":    len(diff.Upload),
+				"file": filePath, "progress": i + 1, "total": len(diff.Upload),
 			}})
 
-			err := retry.Do(func() error {
-				data, getErr := s.local.Get(ctx, filepath.ToSlash(filepath.Join("worlds", filePath)))
-				if getErr != nil {
-					return getErr
-				}
-				return s.remote.Put(ctx, filepath.ToSlash(filepath.Join(syncPrefix, filePath)), data)
-			},
-				retry.Attempts(syncMaxRetries),
-				retry.Delay(syncBaseDelay),
-				retry.MaxDelay(syncMaxDelay),
-				retry.DelayType(retry.BackOffDelay),
-				retry.Context(ctx),
-			)
-			if err != nil {
-				return fmt.Errorf("upload P1 failed for %s: %w", filePath, err)
+			data, getErr := s.local.Get(ctx, filepath.ToSlash(filepath.Join("worlds", filePath)))
+			if getErr != nil {
+				return fmt.Errorf("upload P1 failed for %s: %w", filePath, getErr)
+			}
+			if putErr := s.remote.Put(ctx, filepath.ToSlash(filepath.Join(syncPrefix, filePath)), data); putErr != nil {
+				return fmt.Errorf("upload P1 staging failed for %s: %w", filePath, putErr)
 			}
 		}
 		s.send(ports.FinishEvent{Operation: "sync-upload-p1"})
 
 		// P2: Move from remote sync to remote worlds + update remote manifest
 		s.send(ports.StartEvent{Operation: "sync-upload-p2"})
-		for _, path := range diff.Upload {
-			filePath := path
-			err := retry.Do(func() error {
-				src := filepath.ToSlash(filepath.Join(syncPrefix, filePath))
-				dst := filepath.ToSlash(filepath.Join("worlds", filePath))
-				if copyErr := s.remote.Copy(ctx, src, dst); copyErr != nil {
-					return copyErr
-				}
-				return s.remote.Delete(ctx, src)
-			},
-				retry.Attempts(syncMaxRetries),
-				retry.Delay(syncBaseDelay),
-				retry.MaxDelay(syncMaxDelay),
-				retry.DelayType(retry.BackOffDelay),
-				retry.Context(ctx),
-			)
-			if err != nil {
-				return fmt.Errorf("upload P2 failed for %s: %w", filePath, err)
+		for _, filePath := range diff.Upload {
+			src := filepath.ToSlash(filepath.Join(syncPrefix, filePath))
+			dst := filepath.ToSlash(filepath.Join("worlds", filePath))
+			if copyErr := s.remote.Copy(ctx, src, dst); copyErr != nil {
+				return fmt.Errorf("upload P2 copy failed for %s: %w", filePath, copyErr)
+			}
+			if delErr := s.remote.Delete(ctx, src); delErr != nil {
+				return fmt.Errorf("upload P2 cleanup failed for %s: %w", filePath, delErr)
 			}
 		}
 
@@ -308,29 +247,16 @@ func (s *SyncService) Upload(ctx context.Context) error {
 	// P3: Delete orphaned files from remote worlds
 	if len(diff.Delete) > 0 {
 		s.send(ports.StartEvent{Operation: "sync-upload-p3"})
-		for _, path := range diff.Delete {
-			filePath := path
+		for _, filePath := range diff.Delete {
 			s.send(ports.UpdateEvent{Operation: "sync-upload", Message: "Deleting remote orphan", Data: map[string]any{"file": filePath}})
-
-			err := retry.Do(func() error {
-				return s.remote.Delete(ctx, filepath.ToSlash(filepath.Join("worlds", filePath)))
-			},
-				retry.Attempts(syncMaxRetries),
-				retry.Delay(syncBaseDelay),
-				retry.MaxDelay(syncMaxDelay),
-				retry.DelayType(retry.BackOffDelay),
-				retry.Context(ctx),
-			)
-			if err != nil {
-				return fmt.Errorf("upload P3 failed for %s: %w", filePath, err)
+			if delErr := s.remote.Delete(ctx, filepath.ToSlash(filepath.Join("worlds", filePath))); delErr != nil {
+				return fmt.Errorf("upload P3 failed for %s: %w", filePath, delErr)
 			}
 		}
 		s.send(ports.FinishEvent{Operation: "sync-upload-p3"})
 	}
 
-	// Clean remote sync folder
 	s.cleanRemoteSyncFolder(ctx, syncPrefix)
-
 	s.send(ports.FinishEvent{Operation: "sync-upload"})
 	return nil
 }

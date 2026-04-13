@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"ritual/internal/adapters"
 	"ritual/internal/config"
@@ -151,8 +152,11 @@ func main() {
 		return
 	}
 
+	// Wrap remote storage with retry for sync operations (5 attempts, 1s base, 15s cap)
+	retryRemote := adapters.NewRetryStorageRepository(remoteStorage, 5, 1*time.Second, 15*time.Second)
+
 	// Create sync service for delta world transfers
-	syncService, err := services.NewSyncService(worldScanner, localStorage, remoteStorage, librarian, events)
+	syncService, err := services.NewSyncService(worldScanner, localStorage, retryRemote, librarian, events)
 	if err != nil {
 		fmt.Printf("Failed to create sync service: %v\n", err)
 		close(events)
