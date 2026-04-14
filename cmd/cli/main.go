@@ -156,7 +156,7 @@ func main() {
 	retryRemote := adapters.NewRetryStorageRepository(remoteStorage, 5, 1*time.Second, 15*time.Second)
 
 	// Create sync service for delta world transfers
-	syncService, err := services.NewSyncService(worldScanner, localStorage, retryRemote, librarian, events)
+	syncService, err := services.NewSyncService(worldScanner, localStorage, retryRemote, librarian, events, worldsPath)
 	if err != nil {
 		fmt.Printf("Failed to create sync service: %v\n", err)
 		close(events)

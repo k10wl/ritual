@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -25,11 +27,12 @@ var (
 // StorageRepository, and LibrarianService.
 // Retry logic belongs in the StorageRepository decorator, not here.
 type SyncService struct {
-	scanner   ports.WorldScanner
-	local     ports.StorageRepository
-	remote    ports.StorageRepository
-	librarian ports.LibrarianService
-	events    chan<- ports.Event
+	scanner    ports.WorldScanner
+	local      ports.StorageRepository
+	remote     ports.StorageRepository
+	librarian  ports.LibrarianService
+	events     chan<- ports.Event
+	worldsRoot string // absolute path to local worlds directory, used for ghost cleanup walk
 }
 
 // NewSyncService creates a new sync service with all dependencies injected.
@@ -39,6 +42,7 @@ func NewSyncService(
 	remote ports.StorageRepository,
 	librarian ports.LibrarianService,
 	events chan<- ports.Event,
+	worldsRoot string,
 ) (*SyncService, error) {
 	if scanner == nil {
 		return nil, ErrSyncScannerNil
@@ -53,11 +57,12 @@ func NewSyncService(
 		return nil, ErrSyncLibrarianNil
 	}
 	return &SyncService{
-		scanner:   scanner,
-		local:     local,
-		remote:    remote,
-		librarian: librarian,
-		events:    events,
+		scanner:    scanner,
+		local:      local,
+		remote:     remote,
+		librarian:  librarian,
+		events:     events,
+		worldsRoot: worldsRoot,
 	}, nil
 }
 
@@ -137,24 +142,10 @@ func (s *SyncService) Download(ctx context.Context) error {
 	}
 	s.send(ports.FinishEvent{Operation: "sync-download-p2"})
 
-	// P3: Delete local ghost files
+	// P3: Delete local ghost files — walk worlds dir, delete anything not in manifest
 	s.send(ports.StartEvent{Operation: "sync-download-p3"})
-	localFiles, err := s.local.List(ctx, "worlds")
-	if err != nil {
-		return fmt.Errorf("list local worlds for ghost cleanup: %w", err)
-	}
-
-	for _, key := range localFiles {
-		rel := filepath.ToSlash(key)
-		if len(rel) > 7 && rel[:7] == "worlds/" {
-			rel = rel[7:]
-		}
-		if _, exists := localManifest.XXHashMap[rel]; !exists {
-			s.send(ports.UpdateEvent{Operation: "sync-download", Message: "Deleting local ghost", Data: map[string]any{"file": rel}})
-			if delErr := s.local.Delete(ctx, key); delErr != nil {
-				return fmt.Errorf("delete local ghost %s: %w", key, delErr)
-			}
-		}
+	if ghostErr := s.deleteLocalGhosts(ctx, localManifest.XXHashMap); ghostErr != nil {
+		return fmt.Errorf("download P3 ghost cleanup: %w", ghostErr)
 	}
 	s.send(ports.FinishEvent{Operation: "sync-download-p3"})
 
@@ -236,12 +227,14 @@ func (s *SyncService) Upload(ctx context.Context) error {
 			}
 		}
 
-		remoteManifest.XXHashMap = newMap
-		remoteManifest.XXHashSyncAt = localManifest.XXHashSyncAt
-		if err := s.librarian.SaveRemoteManifest(ctx, remoteManifest); err != nil {
-			return fmt.Errorf("save remote manifest after upload P2: %w", err)
-		}
 		s.send(ports.FinishEvent{Operation: "sync-upload-p2"})
+	}
+
+	// Update remote manifest with new map (covers both upload and delete-only cases)
+	remoteManifest.XXHashMap = newMap
+	remoteManifest.XXHashSyncAt = localManifest.XXHashSyncAt
+	if err := s.librarian.SaveRemoteManifest(ctx, remoteManifest); err != nil {
+		return fmt.Errorf("save remote manifest: %w", err)
 	}
 
 	// P3: Delete orphaned files from remote worlds
@@ -261,24 +254,42 @@ func (s *SyncService) Upload(ctx context.Context) error {
 	return nil
 }
 
-// cleanSyncFolder removes local sync staging directory contents
-func (s *SyncService) cleanSyncFolder(ctx context.Context, prefix string) {
-	keys, err := s.local.List(ctx, prefix)
-	if err != nil {
-		return
+// deleteLocalGhosts walks local worlds directory and deletes files not in manifest
+func (s *SyncService) deleteLocalGhosts(ctx context.Context, xxhashMap map[string]string) error {
+	if s.worldsRoot == "" {
+		return nil
 	}
-	for _, key := range keys {
-		_ = s.local.Delete(ctx, key)
-	}
+	return filepath.WalkDir(s.worldsRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		rel, relErr := filepath.Rel(s.worldsRoot, path)
+		if relErr != nil {
+			return relErr
+		}
+		key := filepath.ToSlash(rel)
+
+		if _, exists := xxhashMap[key]; !exists {
+			s.send(ports.UpdateEvent{Operation: "sync-download", Message: "Deleting local ghost", Data: map[string]any{"file": key}})
+			return os.Remove(path)
+		}
+		return nil
+	})
 }
 
-// cleanRemoteSyncFolder removes remote sync staging directory contents
+// cleanSyncFolder removes local sync staging directory
+func (s *SyncService) cleanSyncFolder(ctx context.Context, prefix string) {
+	_ = s.local.Delete(ctx, prefix)
+}
+
+// cleanRemoteSyncFolder removes remote sync staging directory
 func (s *SyncService) cleanRemoteSyncFolder(ctx context.Context, prefix string) {
-	keys, err := s.remote.List(ctx, prefix)
-	if err != nil {
-		return
-	}
-	for _, key := range keys {
-		_ = s.remote.Delete(ctx, key)
-	}
+	_ = s.remote.Delete(ctx, prefix)
 }
