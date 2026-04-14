@@ -364,7 +364,9 @@ func (m *MolfarService) Exit() error {
 
 	ctx := context.Background()
 
-	// Snapshot sync state BEFORE exit updaters mutate it — for dirty check.
+	// Capture pre-sync state. ShouldBackup compares local vs remote xxhash maps
+	// to detect whether this session produced any world changes worth snapshotting.
+	// Must capture before exit updaters run (sync would zero the diff).
 	localBefore, err := m.librarian.GetLocalManifest(ctx)
 	if err != nil {
 		m.send(ports.ErrorEvent{Operation: "exit", Err: err})
