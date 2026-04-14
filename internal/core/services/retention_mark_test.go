@@ -114,6 +114,36 @@ func TestMark_MixedFormats_BothParsed(t *testing.T) {
 	}
 }
 
+func TestMark_MixedFormats_TarIsNewest_TarSurvives(t *testing.T) {
+	// v1 tar newer than v2 dirs — tar must survive KeepLast like any other entry.
+	chain := services.ChainStrategies(services.ParseTimestampDir, services.ParseTimestampTar)
+	keys := []string{
+		"backups/20260414160000.tar", // newest (v1 tar)
+		"backups/20260413160000/",    // v2 dir
+		"backups/20260412160000/",    // v2 dir
+	}
+	got := services.Mark(keys, domain.RetentionRules{KeepLast: 2}, chain)
+	if len(got) != 1 || got[0] != "backups/20260412160000/" {
+		t.Errorf("got %v, want [backups/20260412160000/] (tar should survive as newest)", got)
+	}
+}
+
+func TestMark_MixedFormats_KeepMonthly_PicksNewestPerMonthAcrossFormats(t *testing.T) {
+	// Tar and dir in same month — newer one wins monthly slot regardless of format.
+	chain := services.ChainStrategies(services.ParseTimestampDir, services.ParseTimestampTar)
+	keys := []string{
+		"backups/20260415160000.tar", // Apr 15 (tar)
+		"backups/20260414160000/",    // Apr 14 (dir, older)
+		"backups/20260315160000/",    // Mar 15 (dir)
+	}
+	got := services.Mark(keys, domain.RetentionRules{KeepMonthly: 2}, chain)
+	// April slot → tar (newer). March slot → Mar 15 dir. April 14 dir loses.
+	want := []string{"backups/20260414160000/"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
 func TestMark_DailyBoundary_UTC(t *testing.T) {
 	// 23:59 and 00:01 same UTC day? No — 23:59 on 13th is different day from 00:01 on 14th.
 	// keep_daily:2 → both newest-per-day survive.
