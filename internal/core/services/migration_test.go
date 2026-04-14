@@ -12,6 +12,15 @@ import (
 	"ritual/internal/core/domain"
 )
 
+// openRoot opens a testing root and schedules cleanup.
+func openRoot(t *testing.T, dir string) *os.Root {
+	t.Helper()
+	root, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { root.Close() })
+	return root
+}
+
 func TestRunMigrations(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -27,7 +36,7 @@ func TestRunMigrations(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var ran []string
 			testMigrations := []Migration{
-				{Version: "2.0.0", Run: func(rootPath string) error {
+				{Version: "2.0.0", Run: func(_ *os.Root) error {
 					ran = append(ran, "2.0.0")
 					return nil
 				}},
@@ -36,23 +45,29 @@ func TestRunMigrations(t *testing.T) {
 			if tt.manifestVersion != "" {
 				manifest = &domain.Manifest{ManifestVersion: tt.manifestVersion}
 			}
-			err := RunMigrationsWithList(t.TempDir(), manifest, testMigrations)
+			root := openRoot(t, t.TempDir())
+			err := RunMigrationsWithList(root, manifest, testMigrations)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantRun, ran)
 		})
 	}
 }
 
-func TestMigrateV2(t *testing.T) {
-	root := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "instance"), 0755))
-	// Also create a file inside instance/ to verify full removal
-	require.NoError(t, os.WriteFile(filepath.Join(root, "instance", "server.jar"), []byte("jar"), 0644))
+func TestRunMigrations_NilRoot_Errors(t *testing.T) {
+	err := RunMigrationsWithList(nil, nil, nil)
+	assert.Error(t, err)
+}
 
+func TestMigrateV2(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "instance"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "instance", "server.jar"), []byte("jar"), 0644))
+
+	root := openRoot(t, dir)
 	require.NoError(t, migrateV2(root))
 
-	assert.NoDirExists(t, filepath.Join(root, "instance"))
-	data, err := os.ReadFile(filepath.Join(root, config.WorldsDir, ".ritualsync"))
+	assert.NoDirExists(t, filepath.Join(dir, "instance"))
+	data, err := os.ReadFile(filepath.Join(dir, config.WorldsDir, ".ritualsync"))
 	require.NoError(t, err)
 	assert.Equal(t, "*\n", string(data))
 
@@ -61,43 +76,41 @@ func TestMigrateV2(t *testing.T) {
 }
 
 func TestMigrateV2_NoInstanceDir(t *testing.T) {
-	root := t.TempDir()
-	// No instance/ dir exists — should not error
+	dir := t.TempDir()
+	root := openRoot(t, dir)
 	require.NoError(t, migrateV2(root))
-	// .ritualsync still created
-	data, err := os.ReadFile(filepath.Join(root, config.WorldsDir, ".ritualsync"))
+
+	data, err := os.ReadFile(filepath.Join(dir, config.WorldsDir, ".ritualsync"))
 	require.NoError(t, err)
 	assert.Equal(t, "*\n", string(data))
 }
 
 func TestMigrateV2_MovesLegacyTars(t *testing.T) {
-	root := t.TempDir()
+	dir := t.TempDir()
 
-	// Seed v1 legacy tars
-	legacy := filepath.Join(root, "world_backups")
+	legacy := filepath.Join(dir, "world_backups")
 	require.NoError(t, os.MkdirAll(legacy, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(legacy, "20260414160000.tar"), []byte("t1"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(legacy, "20260413160000.tar"), []byte("t2"), 0644))
 
+	root := openRoot(t, dir)
 	require.NoError(t, migrateV2(root))
 
-	// Tars moved into backups/
-	target := filepath.Join(root, config.BackupsDir)
+	target := filepath.Join(dir, config.BackupsDir)
 	for _, name := range []string{"20260414160000.tar", "20260413160000.tar"} {
 		data, err := os.ReadFile(filepath.Join(target, name))
 		require.NoError(t, err, "%s should exist at new location", name)
 		assert.NotEmpty(t, data)
 	}
 
-	// Legacy dir removed
 	assert.NoDirExists(t, legacy)
 
-	// Idempotent — run again, no error
+	// Idempotent
 	require.NoError(t, migrateV2(root))
 }
 
 func TestMigrateV2_NoLegacyDir_NoOp(t *testing.T) {
-	root := t.TempDir()
-	// No world_backups/ exists — must not error
+	dir := t.TempDir()
+	root := openRoot(t, dir)
 	require.NoError(t, migrateV2(root))
 }
