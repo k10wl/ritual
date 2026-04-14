@@ -249,23 +249,46 @@ func main() {
 
 	conditions := []ports.ConditionService{lockCondition, ramCondition, diskCondition, javaCondition}
 
-	// Create retention services
-	localRetention, err := services.NewLocalRetention(localStorage, events)
+	// Parse strategy chain (v2 dir + v1 tar compatibility)
+	parseBackupTimestamp := services.ChainStrategies(
+		services.ParseTimestampDir,
+		services.ParseTimestampTar,
+	)
+
+	// Load host settings for local retention rules
+	retentionSettings, err := domain.LoadSettings()
+	if err != nil {
+		fmt.Printf("Failed to load settings: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+
+	// Apply defaults if zero
+	localRules := retentionSettings.LocalRetention
+	if localRules == (domain.RetentionRules{}) {
+		localRules = domain.DefaultRetentionRules()
+	}
+	remoteRules := remoteManifestForConditions.RemoteRetention
+	if remoteRules == (domain.RetentionRules{}) {
+		remoteRules = domain.DefaultRetentionRules()
+	}
+
+	// Generic retentions (local + R2) + log retention (unchanged)
+	localRetention, err := services.NewRetention(localStorage, localRules, config.BackupsDir, parseBackupTimestamp)
 	if err != nil {
 		fmt.Printf("Failed to create local retention: %v\n", err)
 		close(events)
 		wg.Wait()
 		return
 	}
-
-	r2Retention, err := services.NewR2Retention(remoteStorage, events)
+	r2Retention, err := services.NewRetention(remoteStorage, remoteRules, config.BackupsDir, parseBackupTimestamp)
 	if err != nil {
 		fmt.Printf("Failed to create R2 retention: %v\n", err)
 		close(events)
 		wg.Wait()
 		return
 	}
-
 	logRetention, err := services.NewLogRetention(localStorage, events)
 	if err != nil {
 		fmt.Printf("Failed to create log retention: %v\n", err)
