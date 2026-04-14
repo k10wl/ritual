@@ -147,7 +147,7 @@ func (m *MolfarService) Prepare() error {
 
 // Run executes the main server orchestration process
 // Already in Running state, coordinates server execution
-func (m *MolfarService) Run(server *domain.Server) error {
+func (m *MolfarService) Run(server *domain.ServerRuntime) error {
 	if m == nil {
 		return ErrMolfarNil
 	}
@@ -214,8 +214,7 @@ func (m *MolfarService) validateAndRetrieveManifest(ctx context.Context) (*domai
 		return nil, err
 	}
 	m.send(ports.UpdateEvent{Operation: "run", Message: "Retrieved local manifest", Data: map[string]any{
-		"instance_version": localManifest.InstanceVersion,
-		"ritual_version":   localManifest.RitualVersion,
+		"ritual_version": localManifest.RitualVersion,
 	}})
 
 	if localManifest.LockedBy != "" {
@@ -308,7 +307,7 @@ func (m *MolfarService) SetLockIDForTesting(lockID string) {
 }
 
 // executeServer runs the server using the server runner
-func (m *MolfarService) executeServer(ctx context.Context, server *domain.Server) error {
+func (m *MolfarService) executeServer(ctx context.Context, server *domain.ServerRuntime) error {
 	if ctx == nil {
 		return errors.New("context cannot be nil")
 	}
@@ -554,8 +553,7 @@ func (m *MolfarService) getRemoteManifest(ctx context.Context) (*domain.Manifest
 		return nil, errors.New("remote manifest cannot be nil")
 	}
 	m.send(ports.UpdateEvent{Operation: "run", Message: "Retrieved remote manifest", Data: map[string]any{
-		"ritual_version":   remoteManifest.RitualVersion,
-		"instance_version": remoteManifest.InstanceVersion,
+		"ritual_version": remoteManifest.RitualVersion,
 	}})
 	return remoteManifest, nil
 }

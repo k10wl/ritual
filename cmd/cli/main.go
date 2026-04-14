@@ -285,7 +285,7 @@ func main() {
 		return
 	}
 
-	server, err := settings.ToServer()
+	server, err := settings.ToServerRuntime()
 	if err != nil {
 		fmt.Printf("Failed to create server config: %v\n", err)
 		close(events)

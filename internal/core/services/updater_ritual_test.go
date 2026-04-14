@@ -57,12 +57,11 @@ func setupRitualUpdaterServices(t *testing.T) (
 	return localStorage, remoteStorage, librarianService, cleanup
 }
 
-func createRitualTestManifest(ritualVersion string, instanceVersion string) *domain.Manifest {
+func createRitualTestManifest(ritualVersion string) *domain.Manifest {
 	return &domain.Manifest{
-		RitualVersion:   ritualVersion,
-		InstanceVersion: instanceVersion,
-		Backups:    []domain.World{},
-		UpdatedAt:       time.Now(),
+		RitualVersion: ritualVersion,
+		Worlds:        domain.WorldsManifest{Backups: []domain.World{}},
+		UpdatedAt:     time.Now(),
 	}
 }
 
@@ -74,14 +73,14 @@ func TestRitualUpdater_Run(t *testing.T) {
 		ctx := context.Background()
 
 		// Setup remote manifest
-		remoteManifest := createRitualTestManifest("1.0.0", "1.20.1")
+		remoteManifest := createRitualTestManifest("1.0.0")
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		require.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
 		require.NoError(t, err)
 
 		// Setup local manifest with same ritual version
-		localManifest := createRitualTestManifest("1.0.0", "1.20.1")
+		localManifest := createRitualTestManifest("1.0.0")
 		localManifestData, err := json.Marshal(localManifest)
 		require.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", localManifestData)
@@ -106,14 +105,14 @@ func TestRitualUpdater_Run(t *testing.T) {
 		ctx := context.Background()
 
 		// Setup remote manifest with newer version
-		remoteManifest := createRitualTestManifest("2.0.0", "1.20.1")
+		remoteManifest := createRitualTestManifest("2.0.0")
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		require.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
 		require.NoError(t, err)
 
 		// Setup local manifest with older ritual version
-		localManifest := createRitualTestManifest("1.0.0", "1.20.1")
+		localManifest := createRitualTestManifest("1.0.0")
 		localManifestData, err := json.Marshal(localManifest)
 		require.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", localManifestData)
@@ -187,7 +186,7 @@ func TestRitualUpdater_Run(t *testing.T) {
 		ctx := context.Background()
 
 		// Setup remote manifest with newer version (but no local manifest)
-		remoteManifest := createRitualTestManifest("2.0.0", "1.20.1")
+		remoteManifest := createRitualTestManifest("2.0.0")
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		require.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
@@ -320,7 +319,7 @@ func TestRitualUpdater_VersionComparison(t *testing.T) {
 		ctx := context.Background()
 
 		// Remote has older version
-		remoteManifest := createRitualTestManifest("1.0.0", "1.20.1")
+		remoteManifest := createRitualTestManifest("1.0.0")
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		require.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
@@ -350,14 +349,14 @@ func TestRitualUpdater_VersionComparison(t *testing.T) {
 		ctx := context.Background()
 
 		// Remote has newer minor version
-		remoteManifest := createRitualTestManifest("1.1.0", "1.20.1")
+		remoteManifest := createRitualTestManifest("1.1.0")
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		require.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
 		require.NoError(t, err)
 
 		// Local manifest for update
-		localManifest := createRitualTestManifest("1.0.0", "1.20.1")
+		localManifest := createRitualTestManifest("1.0.0")
 		localManifestData, err := json.Marshal(localManifest)
 		require.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", localManifestData)
@@ -387,14 +386,14 @@ func TestRitualUpdater_VersionComparison(t *testing.T) {
 		ctx := context.Background()
 
 		// Remote has newer patch version
-		remoteManifest := createRitualTestManifest("1.0.1", "1.20.1")
+		remoteManifest := createRitualTestManifest("1.0.1")
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		require.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
 		require.NoError(t, err)
 
 		// Local manifest for update
-		localManifest := createRitualTestManifest("1.0.0", "1.20.1")
+		localManifest := createRitualTestManifest("1.0.0")
 		localManifestData, err := json.Marshal(localManifest)
 		require.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", localManifestData)

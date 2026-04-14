@@ -9,13 +9,10 @@ import (
 // Validation error constants
 var (
 	ErrOutdatedManifest              = errors.New("outdated manifest")
-	ErrOutdatedInstance              = errors.New("outdated instance")
 	ErrOutdatedWorld                 = errors.New("outdated world")
 	ErrLocalManifestNil              = errors.New("local manifest cannot be nil")
 	ErrRemoteManifestNil             = errors.New("remote manifest cannot be nil")
 	ErrRemoteManifestVersionEmpty    = errors.New("remote manifest version cannot be empty")
-	ErrLocalInstanceVersionEmpty     = errors.New("local manifest instance version cannot be empty")
-	ErrRemoteInstanceVersionEmpty    = errors.New("remote manifest instance version cannot be empty")
 	ErrNoLocalWorlds                 = errors.New("local manifest has no stored worlds")
 	ErrNoRemoteWorlds                = errors.New("remote manifest has no stored worlds")
 	ErrLocalWorldURIEmpty            = errors.New("local world URI cannot be empty")
@@ -75,32 +72,6 @@ func (v *ValidatorService) CheckManifestVersion(local *domain.Manifest, remote *
 	return nil
 }
 
-// CheckInstance validates manifest structure and content
-func (v *ValidatorService) CheckInstance(local *domain.Manifest, remote *domain.Manifest) error {
-	if v == nil {
-		return errors.New("validator service cannot be nil")
-	}
-	if local == nil {
-		return ErrLocalManifestNil
-	}
-	if remote == nil {
-		return ErrRemoteManifestNil
-	}
-
-	if strings.TrimSpace(local.InstanceVersion) == "" {
-		return ErrLocalInstanceVersionEmpty
-	}
-	if strings.TrimSpace(remote.InstanceVersion) == "" {
-		return ErrRemoteInstanceVersionEmpty
-	}
-
-	if local.InstanceVersion != remote.InstanceVersion {
-		return ErrOutdatedInstance
-	}
-
-	return nil
-}
-
 // CheckWorld validates world data integrity
 func (v *ValidatorService) CheckWorld(local *domain.Manifest, remote *domain.Manifest) error {
 	if v == nil {
@@ -114,15 +85,15 @@ func (v *ValidatorService) CheckWorld(local *domain.Manifest, remote *domain.Man
 	}
 
 	// Skip world validation if remote has no worlds - allow launching without worlds
-	if len(remote.Backups) == 0 {
+	if len(remote.Worlds.Backups) == 0 {
 		return nil
 	}
 
-	if len(local.Backups) == 0 {
+	if len(local.Worlds.Backups) == 0 {
 		return ErrNoLocalWorlds
 	}
 
-	for _, world := range local.Backups {
+	for _, world := range local.Worlds.Backups {
 		if strings.TrimSpace(world.URI) == "" {
 			return ErrLocalWorldURIEmpty
 		}
@@ -131,7 +102,7 @@ func (v *ValidatorService) CheckWorld(local *domain.Manifest, remote *domain.Man
 		}
 	}
 
-	for _, world := range remote.Backups {
+	for _, world := range remote.Worlds.Backups {
 		if strings.TrimSpace(world.URI) == "" {
 			return ErrRemoteWorldURIEmpty
 		}
@@ -141,8 +112,8 @@ func (v *ValidatorService) CheckWorld(local *domain.Manifest, remote *domain.Man
 	}
 
 	// Safe comparison of last world only
-	if remote.Backups[len(remote.Backups)-1] !=
-		local.Backups[len(local.Backups)-1] {
+	if remote.Worlds.Backups[len(remote.Worlds.Backups)-1] !=
+		local.Worlds.Backups[len(local.Worlds.Backups)-1] {
 		return ErrOutdatedWorld
 	}
 

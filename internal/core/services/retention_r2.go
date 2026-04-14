@@ -70,7 +70,7 @@ func (r *R2Retention) Apply(ctx context.Context, manifest *domain.Manifest) erro
 
 	// Build set of valid URIs from manifest
 	validURIs := make(map[string]bool)
-	for _, world := range manifest.Backups {
+	for _, world := range manifest.Worlds.Backups {
 		validURIs[world.URI] = true
 	}
 
@@ -130,12 +130,12 @@ func (r *R2Retention) Apply(ctx context.Context, manifest *domain.Manifest) erro
 	// Update manifest to remove deleted worlds
 	if len(deletedSet) > 0 {
 		var remainingWorlds []domain.World
-		for _, world := range manifest.Backups {
+		for _, world := range manifest.Worlds.Backups {
 			if !deletedSet[world.URI] {
 				remainingWorlds = append(remainingWorlds, world)
 			}
 		}
-		manifest.Backups = remainingWorlds
+		manifest.Worlds.Backups = remainingWorlds
 	}
 
 	return nil

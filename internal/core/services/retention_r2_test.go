@@ -41,10 +41,11 @@ func TestR2Retention_ManifestShouldNotAccumulateWorlds(t *testing.T) {
 	// Create more backups than R2MaxBackups allows (R2MaxBackups = 2)
 	numBackups := config.R2MaxBackups + 2 // 4 backups
 	var worlds []domain.World
+	backupExt := ".tar"
 
 	for i := 0; i < numBackups; i++ {
 		timestamp := time.Now().Add(time.Duration(-i) * time.Hour).Format(config.TimestampFormat)
-		filename := timestamp + config.BackupExtension
+		filename := timestamp + backupExt
 		// Use forward slashes for URI (as stored in manifest)
 		key := config.RemoteBackups + "/" + filename
 
@@ -62,11 +63,11 @@ func TestR2Retention_ManifestShouldNotAccumulateWorlds(t *testing.T) {
 
 	// Create manifest with all worlds
 	manifest := &domain.Manifest{
-		Backups: worlds,
+		Worlds: domain.WorldsManifest{Backups: worlds},
 	}
 
 	// Verify we start with more worlds than allowed
-	assert.Equal(t, numBackups, len(manifest.Backups), "Should start with %d worlds", numBackups)
+	assert.Equal(t, numBackups, len(manifest.Worlds.Backups), "Should start with %d worlds", numBackups)
 
 	// Create and run retention
 	retention, err := services.NewR2Retention(remoteStorage, nil)
@@ -81,15 +82,15 @@ func TestR2Retention_ManifestShouldNotAccumulateWorlds(t *testing.T) {
 
 	var backupFiles []string
 	for _, f := range remainingFiles {
-		if strings.HasSuffix(f, config.BackupExtension) {
+		if strings.HasSuffix(f, backupExt) {
 			backupFiles = append(backupFiles, f)
 		}
 	}
 	assert.Equal(t, config.R2MaxBackups, len(backupFiles), "Should have only %d backup files after retention", config.R2MaxBackups)
 
-	// BUG: This assertion will FAIL because manifest.Backups is not updated
+	// BUG: This assertion will FAIL because manifest.Worlds.Backups is not updated
 	// After retention, manifest should only have R2MaxBackups worlds
-	assert.Equal(t, config.R2MaxBackups, len(manifest.Backups),
+	assert.Equal(t, config.R2MaxBackups, len(manifest.Worlds.Backups),
 		"BUG: Manifest should have only %d worlds after retention, but has %d",
-		config.R2MaxBackups, len(manifest.Backups))
+		config.R2MaxBackups, len(manifest.Worlds.Backups))
 }

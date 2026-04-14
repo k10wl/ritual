@@ -18,117 +18,6 @@ func TestNewValidatorService(t *testing.T) {
 	})
 }
 
-func TestValidatorService_CheckInstance(t *testing.T) {
-
-	validator, err := NewValidatorService()
-	assert.NoError(t, err)
-
-	tests := []struct {
-		name        string
-		local       *domain.Manifest
-		remote      *domain.Manifest
-		expectedErr error
-	}{
-		{
-			name: "valid_manifests",
-			local: &domain.Manifest{
-				InstanceVersion: "1.0.0",
-				RitualVersion:   "1.0.0",
-			},
-			remote: &domain.Manifest{
-				InstanceVersion: "1.0.0",
-				RitualVersion:   "1.0.0",
-			},
-			expectedErr: nil,
-		},
-		{
-			name:        "nil_local_manifest",
-			local:       nil,
-			remote:      &domain.Manifest{InstanceVersion: "1.0.0", RitualVersion: "1.0.0"},
-			expectedErr: ErrLocalManifestNil,
-		},
-		{
-			name:        "nil_remote_manifest",
-			local:       &domain.Manifest{InstanceVersion: "1.0.0", RitualVersion: "1.0.0"},
-			remote:      nil,
-			expectedErr: ErrRemoteManifestNil,
-		},
-		{
-			name: "empty_local_instance_version",
-			local: &domain.Manifest{
-				InstanceVersion: "",
-				RitualVersion:   "1.0.0",
-			},
-			remote: &domain.Manifest{
-				InstanceVersion: "1.0.0",
-				RitualVersion:   "1.0.0",
-			},
-			expectedErr: ErrLocalInstanceVersionEmpty,
-		},
-		{
-			name: "empty_remote_instance_version",
-			local: &domain.Manifest{
-				InstanceVersion: "1.0.0",
-				RitualVersion:   "1.0.0",
-			},
-			remote: &domain.Manifest{
-				InstanceVersion: "",
-				RitualVersion:   "1.0.0",
-			},
-			expectedErr: ErrRemoteInstanceVersionEmpty,
-		},
-		{
-			name: "instance_version_mismatch",
-			local: &domain.Manifest{
-				InstanceVersion: "1.0.0",
-				RitualVersion:   "1.0.0",
-			},
-			remote: &domain.Manifest{
-				InstanceVersion: "2.0.0",
-				RitualVersion:   "1.0.0",
-			},
-			expectedErr: ErrOutdatedInstance,
-		},
-		{
-			name: "whitespace_local_instance_version",
-			local: &domain.Manifest{
-				InstanceVersion: "   ",
-				RitualVersion:   "1.0.0",
-			},
-			remote: &domain.Manifest{
-				InstanceVersion: "1.0.0",
-				RitualVersion:   "1.0.0",
-			},
-			expectedErr: ErrLocalInstanceVersionEmpty,
-		},
-		{
-			name: "whitespace_remote_instance_version",
-			local: &domain.Manifest{
-				InstanceVersion: "1.0.0",
-				RitualVersion:   "1.0.0",
-			},
-			remote: &domain.Manifest{
-				InstanceVersion: "   ",
-				RitualVersion:   "1.0.0",
-			},
-			expectedErr: ErrRemoteInstanceVersionEmpty,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validator.CheckInstance(tt.local, tt.remote)
-
-			if tt.expectedErr == nil {
-				assert.NoError(t, err)
-			} else {
-				assert.Error(t, err)
-				assert.Equal(t, tt.expectedErr, err)
-			}
-		})
-	}
-}
-
 func TestValidatorService_CheckWorld(t *testing.T) {
 
 	validator, err := NewValidatorService()
@@ -146,16 +35,16 @@ func TestValidatorService_CheckWorld(t *testing.T) {
 		{
 			name: "valid_worlds",
 			local: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
 					{URI: "world2", CreatedAt: validTime},
-				},
+				}},
 			},
 			remote: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
 					{URI: "world2", CreatedAt: validTime},
-				},
+				}},
 			},
 			expectedErr: nil,
 		},
@@ -174,110 +63,110 @@ func TestValidatorService_CheckWorld(t *testing.T) {
 		{
 			name: "no_local_worlds",
 			local: &domain.Manifest{
-				Backups: []domain.World{},
+				Worlds: domain.WorldsManifest{Backups: []domain.World{}},
 			},
 			remote: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
-				},
+				}},
 			},
 			expectedErr: ErrNoLocalWorlds,
 		},
 		{
 			name: "empty_local_world_uri",
 			local: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "", CreatedAt: validTime},
-				},
+				}},
 			},
 			remote: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
-				},
+				}},
 			},
 			expectedErr: ErrLocalWorldURIEmpty,
 		},
 		{
 			name: "zero_local_world_timestamp",
 			local: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "world1", CreatedAt: zeroTime},
-				},
+				}},
 			},
 			remote: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
-				},
+				}},
 			},
 			expectedErr: ErrLocalWorldTimestampZero,
 		},
 		{
 			name: "empty_remote_world_uri",
 			local: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
-				},
+				}},
 			},
 			remote: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "", CreatedAt: validTime},
-				},
+				}},
 			},
 			expectedErr: ErrRemoteWorldURIEmpty,
 		},
 		{
 			name: "zero_remote_world_timestamp",
 			local: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
-				},
+				}},
 			},
 			remote: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "world1", CreatedAt: zeroTime},
-				},
+				}},
 			},
 			expectedErr: ErrRemoteWorldTimestampZero,
 		},
 		{
 			name: "whitespace_local_world_uri",
 			local: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "   ", CreatedAt: validTime},
-				},
+				}},
 			},
 			remote: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
-				},
+				}},
 			},
 			expectedErr: ErrLocalWorldURIEmpty,
 		},
 		{
 			name: "whitespace_remote_world_uri",
 			local: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
-				},
+				}},
 			},
 			remote: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "   ", CreatedAt: validTime},
-				},
+				}},
 			},
 			expectedErr: ErrRemoteWorldURIEmpty,
 		},
 		{
 			name: "world_list_mismatch",
 			local: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "world1", CreatedAt: validTime},
-				},
+				}},
 			},
 			remote: &domain.Manifest{
-				Backups: []domain.World{
+				Worlds: domain.WorldsManifest{Backups: []domain.World{
 					{URI: "world2", CreatedAt: validTime},
-				},
+				}},
 			},
 			expectedErr: ErrOutdatedWorld,
 		},
@@ -502,13 +391,6 @@ func TestValidatorService_DefensiveValidation(t *testing.T) {
 		assert.Error(t, err)
 	})
 
-	t.Run("nil_validator_check_instance", func(t *testing.T) {
-		var nilValidator *ValidatorService
-
-		err := nilValidator.CheckInstance(&domain.Manifest{}, &domain.Manifest{})
-		assert.Error(t, err)
-	})
-
 	t.Run("nil_validator_check_world", func(t *testing.T) {
 		var nilValidator *ValidatorService
 
@@ -537,8 +419,8 @@ func TestValidatorService_CheckWorldBounds(t *testing.T) {
 	assert.NoError(t, err)
 
 	t.Run("empty_local_worlds_bounds", func(t *testing.T) {
-		local := &domain.Manifest{Backups: []domain.World{}}
-		remote := &domain.Manifest{Backups: []domain.World{{URI: "world1", CreatedAt: time.Now()}}}
+		local := &domain.Manifest{Worlds: domain.WorldsManifest{Backups: []domain.World{}}}
+		remote := &domain.Manifest{Worlds: domain.WorldsManifest{Backups: []domain.World{{URI: "world1", CreatedAt: time.Now()}}}}
 
 		err := validator.CheckWorld(local, remote)
 		assert.Error(t, err)
@@ -546,8 +428,8 @@ func TestValidatorService_CheckWorldBounds(t *testing.T) {
 	})
 
 	t.Run("empty_remote_worlds_bounds", func(t *testing.T) {
-		local := &domain.Manifest{Backups: []domain.World{{URI: "world1", CreatedAt: time.Now()}}}
-		remote := &domain.Manifest{Backups: []domain.World{}}
+		local := &domain.Manifest{Worlds: domain.WorldsManifest{Backups: []domain.World{{URI: "world1", CreatedAt: time.Now()}}}}
+		remote := &domain.Manifest{Worlds: domain.WorldsManifest{Backups: []domain.World{}}}
 
 		err := validator.CheckWorld(local, remote)
 		assert.NoError(t, err, "Empty remote worlds should be allowed")

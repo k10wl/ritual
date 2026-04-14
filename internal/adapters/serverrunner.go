@@ -48,7 +48,7 @@ func NewServerRunner(homedir string, workRoot *os.Root, startScript string, comm
 }
 
 // Run executes the Minecraft server process using the configured start script
-func (s *ServerRunner) Run(server *domain.Server) error {
+func (s *ServerRunner) Run(server *domain.ServerRuntime) error {
 	if s == nil {
 		return fmt.Errorf("server runner cannot be nil")
 	}
@@ -87,7 +87,7 @@ func (s *ServerRunner) Run(server *domain.Server) error {
 }
 
 // updateServerProperties modifies server.properties to set IP and port
-func (s *ServerRunner) updateServerProperties(server *domain.Server) error {
+func (s *ServerRunner) updateServerProperties(server *domain.ServerRuntime) error {
 	propsPath := filepath.Join(filepath.Dir(s.startScript), "server.properties")
 
 	// Read existing properties using workRoot
@@ -114,7 +114,7 @@ func (s *ServerRunner) updateServerProperties(server *domain.Server) error {
 }
 
 // writeServerProperties writes the updated server.properties file
-func (s *ServerRunner) writeServerProperties(propsPath string, server *domain.Server, existingLines []string) error {
+func (s *ServerRunner) writeServerProperties(propsPath string, server *domain.ServerRuntime, existingLines []string) error {
 	portStr := strconv.Itoa(server.Port)
 	foundIP := false
 	foundPort := false

@@ -120,7 +120,7 @@ func TestServerRunner_Run(t *testing.T) {
 
 	runner, err := NewServerRunner(tempDir, workRoot, startScript, mockExecutor)
 	require.NoError(t, err)
-	server, err := domain.NewServer("127.0.0.1:25565", 1024)
+	server, err := domain.NewServerRuntime("127.0.0.1:25565", 1024)
 	require.NoError(t, err)
 
 	err = runner.Run(server)
@@ -201,7 +201,7 @@ func TestServerRunner_Run_UpdatesServerProperties(t *testing.T) {
 			require.NoError(t, err)
 
 			address := tc.ip + ":" + strconv.Itoa(tc.port)
-			server, err := domain.NewServer(address, tc.memory)
+			server, err := domain.NewServerRuntime(address, tc.memory)
 			require.NoError(t, err)
 
 			err = runner.Run(server)
@@ -246,7 +246,7 @@ func TestServerRunner_Run_CreatesServerPropertiesIfMissing(t *testing.T) {
 
 	runner, err := NewServerRunner(tempDir, workRoot, startScript, mockExecutor)
 	require.NoError(t, err)
-	server, err := domain.NewServer("192.168.1.50:25570", 2048)
+	server, err := domain.NewServerRuntime("192.168.1.50:25570", 2048)
 	require.NoError(t, err)
 
 	err = runner.Run(server)
@@ -264,7 +264,7 @@ func TestServerRunner_Run_CreatesServerPropertiesIfMissing(t *testing.T) {
 
 func TestServerRunner_Run_NilRunner(t *testing.T) {
 	var runner *ServerRunner
-	server, err := domain.NewServer("127.0.0.1:25565", 1024)
+	server, err := domain.NewServerRuntime("127.0.0.1:25565", 1024)
 	require.NoError(t, err)
 
 	err = runner.Run(server)
@@ -306,7 +306,7 @@ func TestServerRunner_Run_ScriptNotFound(t *testing.T) {
 
 	runner, err := NewServerRunner(tempDir, workRoot, startScript, mockExecutor)
 	require.NoError(t, err)
-	server, err := domain.NewServer("127.0.0.1:25565", 1024)
+	server, err := domain.NewServerRuntime("127.0.0.1:25565", 1024)
 	require.NoError(t, err)
 
 	err = runner.Run(server)
@@ -344,7 +344,7 @@ func TestServerRunner_Run_CommandExecutionError(t *testing.T) {
 
 	runner, err := NewServerRunner(tempDir, workRoot, startScript, mockExecutor)
 	require.NoError(t, err)
-	server, err := domain.NewServer("127.0.0.1:25565", 1024)
+	server, err := domain.NewServerRuntime("127.0.0.1:25565", 1024)
 	require.NoError(t, err)
 
 	err = runner.Run(server)

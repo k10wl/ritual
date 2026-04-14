@@ -26,16 +26,14 @@ func TestLibrarianService_GetLocalManifest(t *testing.T) {
 			storageData: []byte(`{
 				"ritual_version": "1.0.0",
 				"locked_by": "",
-				"instance_version": "test-instance",
-				"backups": [],
+				"worlds": {"backups": []},
 				"updated_at": "2023-01-01T00:00:00Z"
 			}`),
 			storageError: nil,
 			expectedResult: &domain.Manifest{
 				RitualVersion:   "1.0.0",
 				LockedBy:        "",
-				InstanceVersion: "test-instance",
-				Backups:    []domain.World{},
+				Worlds: domain.WorldsManifest{Backups: []domain.World{}},
 			},
 			expectedError: false,
 		},
@@ -91,8 +89,7 @@ func TestLibrarianService_GetLocalManifest(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.expectedResult.RitualVersion, result.RitualVersion)
 				assert.Equal(t, tt.expectedResult.LockedBy, result.LockedBy)
-				assert.Equal(t, tt.expectedResult.InstanceVersion, result.InstanceVersion)
-				assert.Equal(t, tt.expectedResult.Backups, result.Backups)
+				assert.Equal(t, tt.expectedResult.Worlds.Backups, result.Worlds.Backups)
 			}
 		})
 	}
@@ -111,16 +108,14 @@ func TestLibrarianService_GetRemoteManifest(t *testing.T) {
 			storageData: []byte(`{
 				"ritual_version": "1.0.0",
 				"locked_by": "user::1234567890",
-				"instance_version": "test-instance",
-				"backups": [],
+				"worlds": {"backups": []},
 				"updated_at": "2023-01-01T00:00:00Z"
 			}`),
 			storageError: nil,
 			expectedResult: &domain.Manifest{
 				RitualVersion:   "1.0.0",
 				LockedBy:        "user::1234567890",
-				InstanceVersion: "test-instance",
-				Backups:    []domain.World{},
+				Worlds: domain.WorldsManifest{Backups: []domain.World{}},
 			},
 			expectedError: false,
 		},
@@ -169,8 +164,7 @@ func TestLibrarianService_GetRemoteManifest(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.expectedResult.RitualVersion, result.RitualVersion)
 				assert.Equal(t, tt.expectedResult.LockedBy, result.LockedBy)
-				assert.Equal(t, tt.expectedResult.InstanceVersion, result.InstanceVersion)
-				assert.Equal(t, tt.expectedResult.Backups, result.Backups)
+				assert.Equal(t, tt.expectedResult.Worlds.Backups, result.Worlds.Backups)
 			}
 		})
 	}
@@ -188,7 +182,6 @@ func TestLibrarianService_SaveLocalManifest(t *testing.T) {
 			manifest: &domain.Manifest{
 				RitualVersion:   "1.0.0",
 				LockedBy:        "",
-				InstanceVersion: "test-instance",
 			},
 			storageError:  nil,
 			expectedError: false,
@@ -197,7 +190,6 @@ func TestLibrarianService_SaveLocalManifest(t *testing.T) {
 			name: "storage error",
 			manifest: &domain.Manifest{
 				RitualVersion:   "1.0.0",
-				InstanceVersion: "test-instance",
 			},
 			storageError:  errors.New("storage error"),
 			expectedError: true,
@@ -259,7 +251,6 @@ func TestLibrarianService_SaveRemoteManifest(t *testing.T) {
 			manifest: &domain.Manifest{
 				RitualVersion:   "1.0.0",
 				LockedBy:        "user::1234567890",
-				InstanceVersion: "test-instance",
 			},
 			storageError:  nil,
 			expectedError: false,
@@ -268,7 +259,6 @@ func TestLibrarianService_SaveRemoteManifest(t *testing.T) {
 			name: "storage error",
 			manifest: &domain.Manifest{
 				RitualVersion:   "1.0.0",
-				InstanceVersion: "test-instance",
 			},
 			storageError:  errors.New("storage error"),
 			expectedError: true,
@@ -363,12 +353,11 @@ func TestLibrarianService_Integration(t *testing.T) {
 	assert.NoError(t, err)
 
 	manifest := &domain.Manifest{
-		RitualVersion:   "1.0.0",
-		LockedBy:        "user::1234567890",
-		InstanceVersion: "test-instance",
-		Backups: []domain.World{
+		RitualVersion: "1.0.0",
+		LockedBy:      "user::1234567890",
+		Worlds: domain.WorldsManifest{Backups: []domain.World{
 			{URI: "world1", CreatedAt: time.Now()},
-		},
+		}},
 	}
 
 	var localCallCount, remoteCallCount int
