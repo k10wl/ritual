@@ -41,3 +41,15 @@ func ParseTimestampTar(key string) time.Time {
 	}
 	return t
 }
+
+// ChainStrategies composes multiple parse strategies. First non-zero result wins.
+func ChainStrategies(strategies ...ParseStrategy) ParseStrategy {
+	return func(key string) time.Time {
+		for _, s := range strategies {
+			if t := s(key); !t.IsZero() {
+				return t
+			}
+		}
+		return time.Time{}
+	}
+}

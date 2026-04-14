@@ -67,3 +67,29 @@ func TestParseTimestampTar_Invalid(t *testing.T) {
 		}
 	}
 }
+
+func TestChainStrategies_FirstMatchWins(t *testing.T) {
+	chain := services.ChainStrategies(services.ParseTimestampDir, services.ParseTimestampTar)
+
+	got := chain("backups/20260414160000/")
+	want := time.Date(2026, 4, 14, 16, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("dir key: got %v, want %v", got, want)
+	}
+
+	got = chain("backups/20260414160000.tar")
+	if !got.Equal(want) {
+		t.Errorf("tar key: got %v, want %v", got, want)
+	}
+
+	if got := chain("backups/unknown"); !got.IsZero() {
+		t.Errorf("unknown key: got %v, want zero", got)
+	}
+}
+
+func TestChainStrategies_Empty(t *testing.T) {
+	chain := services.ChainStrategies()
+	if got := chain("backups/20260414160000/"); !got.IsZero() {
+		t.Errorf("empty chain: got %v, want zero", got)
+	}
+}
