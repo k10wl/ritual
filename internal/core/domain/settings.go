@@ -69,10 +69,10 @@ func (s *Settings) Save() error {
 	return nil
 }
 
-// ToServer creates a Server instance from settings
-func (s *Settings) ToServer() (*Server, error) {
+// ToServerRuntime creates a ServerRuntime instance from settings
+func (s *Settings) ToServerRuntime() (*ServerRuntime, error) {
 	address := fmt.Sprintf("%s:%d", s.IP, s.Port)
-	return NewServer(address, s.Memory)
+	return NewServerRuntime(address, s.Memory)
 }
 
 // Validate checks if settings values are valid

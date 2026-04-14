@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewServer(t *testing.T) {
+func TestNewServerRuntime(t *testing.T) {
 	tests := []struct {
 		name      string
 		address   string
@@ -71,7 +71,7 @@ func TestNewServer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server, err := NewServer(tt.address, tt.memory)
+			server, err := NewServerRuntime(tt.address, tt.memory)
 
 			if tt.wantError {
 				assert.Error(t, err)

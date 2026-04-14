@@ -9,17 +9,15 @@ import (
 type Manifest struct {
 	ManifestVersion string    `json:"manifest_version"`
 	RitualVersion   string    `json:"ritual_version"`
-	LockedBy        string    `json:"locked_by"` // {hostname}::{nanosecond timestamp}, or empty string if not locked
-	InstanceVersion string    `json:"instance_version"`
-	StartScript     string    `json:"start_script"` // path to bat file that starts the server (relative to ritual root)
-	WorldDirs       []string  `json:"world_dirs"`   // directories to archive (relative to instance dir)
-	Backups         []World   `json:"backups"`      // queue of latest backups
-	UpdatedAt       time.Time         `json:"updated_at"`
-	XXHashMap       map[string]string `json:"xxhash_map,omitempty"`    // relative file path → xxhash of file contents
-	XXHashSyncAt    time.Time         `json:"xxhash_sync_at,omitempty"` // when xxhash map was last computed (distinct from UpdatedAt)
-	MinRAMMB        int               `json:"min_ram_mb"`       // minimum free RAM in MB required to run (0 = use config default)
-	MinDiskMB       int       `json:"min_disk_mb"`      // minimum free disk space in MB required (0 = use config default)
-	MinJavaVersion  int       `json:"min_java_version"` // minimum Java version required (0 = use config default)
+	LockedBy        string    `json:"locked_by"`
+	UpdatedAt       time.Time `json:"updated_at"`
+
+	MinRAMMB       int `json:"min_ram_mb"`
+	MinDiskMB      int `json:"min_disk_mb"`
+	MinJavaVersion int `json:"min_java_version"`
+
+	Worlds WorldsManifest `json:"worlds"`
+	Server ServerManifest `json:"server"`
 }
 
 // IsLocked returns true if the manifest is currently locked
@@ -41,20 +39,20 @@ func (m *Manifest) Unlock() {
 
 // AddWorld adds a new world to the stored worlds queue
 func (m *Manifest) AddWorld(world World) {
-	m.Backups = append(m.Backups, world)
+	m.Worlds.Backups = append(m.Worlds.Backups, world)
 	m.UpdatedAt = time.Now()
 }
 
 // GetLatestWorld returns the most recently created world
 func (m *Manifest) GetLatestWorld() *World {
-	if len(m.Backups) == 0 {
+	if len(m.Worlds.Backups) == 0 {
 		return nil
 	}
 
 	var latest *World
-	for i := range m.Backups {
-		if latest == nil || m.Backups[i].CreatedAt.After(latest.CreatedAt) {
-			latest = &m.Backups[i]
+	for i := range m.Worlds.Backups {
+		if latest == nil || m.Worlds.Backups[i].CreatedAt.After(latest.CreatedAt) {
+			latest = &m.Worlds.Backups[i]
 		}
 	}
 	return latest
@@ -70,24 +68,37 @@ func (m *Manifest) Clone() *Manifest {
 		ManifestVersion: m.ManifestVersion,
 		RitualVersion:   m.RitualVersion,
 		LockedBy:        m.LockedBy,
-		InstanceVersion: m.InstanceVersion,
-		StartScript:     m.StartScript,
-		WorldDirs:       make([]string, len(m.WorldDirs)),
-		Backups:         make([]World, len(m.Backups)),
 		UpdatedAt:       time.Now(),
-		XXHashSyncAt:    m.XXHashSyncAt,
 		MinRAMMB:        m.MinRAMMB,
 		MinDiskMB:       m.MinDiskMB,
 		MinJavaVersion:  m.MinJavaVersion,
+		Worlds: WorldsManifest{
+			SyncState: SyncState{
+				XXHashSyncAt: m.Worlds.XXHashSyncAt,
+			},
+			Backups: make([]World, len(m.Worlds.Backups)),
+		},
+		Server: ServerManifest{
+			SyncState: SyncState{
+				XXHashSyncAt: m.Server.XXHashSyncAt,
+			},
+			StartScript: m.Server.StartScript,
+		},
 	}
 
-	copy(clone.WorldDirs, m.WorldDirs)
-	copy(clone.Backups, m.Backups)
+	copy(clone.Worlds.Backups, m.Worlds.Backups)
 
-	if m.XXHashMap != nil {
-		clone.XXHashMap = make(map[string]string, len(m.XXHashMap))
-		for k, v := range m.XXHashMap {
-			clone.XXHashMap[k] = v
+	if m.Worlds.XXHashMap != nil {
+		clone.Worlds.XXHashMap = make(map[string]string, len(m.Worlds.XXHashMap))
+		for k, v := range m.Worlds.XXHashMap {
+			clone.Worlds.XXHashMap[k] = v
+		}
+	}
+
+	if m.Server.XXHashMap != nil {
+		clone.Server.XXHashMap = make(map[string]string, len(m.Server.XXHashMap))
+		for k, v := range m.Server.XXHashMap {
+			clone.Server.XXHashMap[k] = v
 		}
 	}
 
@@ -99,13 +110,13 @@ func (m *Manifest) RemoveOldestWorlds(maxCount int) []World {
 	if maxCount <= 0 {
 		return nil
 	}
-	if len(m.Backups) <= maxCount {
+	if len(m.Worlds.Backups) <= maxCount {
 		return nil
 	}
 
 	// Sort worlds by creation time (oldest first)
-	sortedWorlds := make([]World, len(m.Backups))
-	copy(sortedWorlds, m.Backups)
+	sortedWorlds := make([]World, len(m.Worlds.Backups))
+	copy(sortedWorlds, m.Worlds.Backups)
 
 	for i := 0; i < len(sortedWorlds)-1; i++ {
 		for j := i + 1; j < len(sortedWorlds); j++ {
@@ -115,12 +126,12 @@ func (m *Manifest) RemoveOldestWorlds(maxCount int) []World {
 		}
 	}
 
-	removedCount := len(m.Backups) - maxCount
+	removedCount := len(m.Worlds.Backups) - maxCount
 	removed := make([]World, removedCount)
 	copy(removed, sortedWorlds[:removedCount])
 
 	// Keep only the newest worlds
-	m.Backups = sortedWorlds[removedCount:]
+	m.Worlds.Backups = sortedWorlds[removedCount:]
 	m.UpdatedAt = time.Now()
 
 	return removed

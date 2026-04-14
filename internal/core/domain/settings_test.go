@@ -75,10 +75,10 @@ func TestSettingsValidate(t *testing.T) {
 	}
 }
 
-func TestSettingsToServer(t *testing.T) {
+func TestSettingsToServerRuntime(t *testing.T) {
 	settings := &Settings{IP: "192.168.1.1", Port: 25566, Memory: 8192}
 
-	server, err := settings.ToServer()
+	server, err := settings.ToServerRuntime()
 	if err != nil {
 		t.Fatalf("ToServer() error = %v", err)
 	}

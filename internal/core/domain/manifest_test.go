@@ -41,9 +41,8 @@ func TestManifest_IsLocked(t *testing.T) {
 
 func TestManifest_Lock(t *testing.T) {
 	manifest := Manifest{
-		RitualVersion:   "1.0.0",
-		InstanceVersion: "test-instance",
-		UpdatedAt:       time.Now().Add(-time.Hour), // Set to past time
+		RitualVersion: "1.0.0",
+		UpdatedAt:     time.Now().Add(-time.Hour),
 	}
 
 	lockBy := "PC123::1640995200"
@@ -57,7 +56,7 @@ func TestManifest_Lock(t *testing.T) {
 func TestManifest_Unlock(t *testing.T) {
 	manifest := Manifest{
 		LockedBy:  "PC123::1640995200",
-		UpdatedAt: time.Now().Add(-time.Hour), // Set to past time
+		UpdatedAt: time.Now().Add(-time.Hour),
 	}
 
 	manifest.Unlock()
@@ -69,8 +68,8 @@ func TestManifest_Unlock(t *testing.T) {
 
 func TestManifest_AddWorld(t *testing.T) {
 	manifest := Manifest{
-		Backups: []World{},
-		UpdatedAt:    time.Now().Add(-time.Hour), // Set to past time
+		Worlds:    WorldsManifest{Backups: []World{}},
+		UpdatedAt: time.Now().Add(-time.Hour),
 	}
 
 	world := World{
@@ -80,8 +79,8 @@ func TestManifest_AddWorld(t *testing.T) {
 
 	manifest.AddWorld(world)
 
-	assert.Len(t, manifest.Backups, 1, "AddWorld() should add 1 world")
-	assert.Equal(t, world.URI, manifest.Backups[0].URI)
+	assert.Len(t, manifest.Worlds.Backups, 1, "AddWorld() should add 1 world")
+	assert.Equal(t, world.URI, manifest.Worlds.Backups[0].URI)
 	assert.False(t, manifest.UpdatedAt.IsZero(), "AddWorld() should update UpdatedAt timestamp")
 	assert.True(t, manifest.UpdatedAt.After(time.Now().Add(-time.Minute)), "UpdatedAt should be set to current time")
 }
@@ -95,15 +94,17 @@ func TestManifest_GetLatestWorld(t *testing.T) {
 		{
 			name: "empty worlds list",
 			manifest: Manifest{
-				Backups: []World{},
+				Worlds: WorldsManifest{Backups: []World{}},
 			},
 			expected: nil,
 		},
 		{
 			name: "single world",
 			manifest: Manifest{
-				Backups: []World{
-					{URI: "world1", CreatedAt: time.Now()},
+				Worlds: WorldsManifest{
+					Backups: []World{
+						{URI: "world1", CreatedAt: time.Now()},
+					},
 				},
 			},
 			expected: &World{URI: "world1", CreatedAt: time.Now()},
@@ -111,10 +112,12 @@ func TestManifest_GetLatestWorld(t *testing.T) {
 		{
 			name: "multiple worlds - latest first",
 			manifest: Manifest{
-				Backups: []World{
-					{URI: "world3", CreatedAt: time.Now()},
-					{URI: "world2", CreatedAt: time.Now().Add(-time.Hour)},
-					{URI: "world1", CreatedAt: time.Now().Add(-2 * time.Hour)},
+				Worlds: WorldsManifest{
+					Backups: []World{
+						{URI: "world3", CreatedAt: time.Now()},
+						{URI: "world2", CreatedAt: time.Now().Add(-time.Hour)},
+						{URI: "world1", CreatedAt: time.Now().Add(-2 * time.Hour)},
+					},
 				},
 			},
 			expected: &World{URI: "world3", CreatedAt: time.Now()},
@@ -122,10 +125,12 @@ func TestManifest_GetLatestWorld(t *testing.T) {
 		{
 			name: "multiple worlds - latest in middle",
 			manifest: Manifest{
-				Backups: []World{
-					{URI: "world1", CreatedAt: time.Now().Add(-2 * time.Hour)},
-					{URI: "world3", CreatedAt: time.Now()},
-					{URI: "world2", CreatedAt: time.Now().Add(-time.Hour)},
+				Worlds: WorldsManifest{
+					Backups: []World{
+						{URI: "world1", CreatedAt: time.Now().Add(-2 * time.Hour)},
+						{URI: "world3", CreatedAt: time.Now()},
+						{URI: "world2", CreatedAt: time.Now().Add(-time.Hour)},
+					},
 				},
 			},
 			expected: &World{URI: "world3", CreatedAt: time.Now()},
@@ -151,11 +156,15 @@ func TestManifest_XXHashMap_MarshalRoundtrip(t *testing.T) {
 	original := Manifest{
 		ManifestVersion: "1.0.0",
 		RitualVersion:   "2.0.0",
-		XXHashMap: map[string]string{
-			"world/region/r.0.0.mca": "a1b2c3d4e5f6",
-			"world/level.dat":        "1a2b3c4d5e6f",
+		Worlds: WorldsManifest{
+			SyncState: SyncState{
+				XXHashMap: map[string]string{
+					"world/region/r.0.0.mca": "a1b2c3d4e5f6",
+					"world/level.dat":        "1a2b3c4d5e6f",
+				},
+				XXHashSyncAt: time.Date(2026, 4, 14, 10, 30, 0, 0, time.UTC),
+			},
 		},
-		XXHashSyncAt: time.Date(2026, 4, 14, 10, 30, 0, 0, time.UTC),
 	}
 
 	data, err := json.Marshal(original)
@@ -165,44 +174,50 @@ func TestManifest_XXHashMap_MarshalRoundtrip(t *testing.T) {
 	err = json.Unmarshal(data, &restored)
 	require.NoError(t, err)
 
-	assert.Equal(t, original.XXHashMap, restored.XXHashMap)
-	assert.True(t, original.XXHashSyncAt.Equal(restored.XXHashSyncAt))
+	assert.Equal(t, original.Worlds.XXHashMap, restored.Worlds.XXHashMap)
+	assert.True(t, original.Worlds.XXHashSyncAt.Equal(restored.Worlds.XXHashSyncAt))
 }
 
 func TestManifest_XXHashMap_V1BackwardsCompat(t *testing.T) {
-	v1JSON := `{"manifest_version":"1.0.0","ritual_version":"1.0.0","locked_by":"","instance_version":"paper-1.20","updated_at":"2026-01-01T00:00:00Z"}`
+	v1JSON := `{"manifest_version":"1.0.0","ritual_version":"1.0.0","locked_by":"","updated_at":"2026-01-01T00:00:00Z","worlds":{"backups":null},"server":{}}`
 
 	var manifest Manifest
 	err := json.Unmarshal([]byte(v1JSON), &manifest)
 	require.NoError(t, err)
 
-	assert.Nil(t, manifest.XXHashMap, "v1 manifest should have nil XXHashMap")
-	assert.True(t, manifest.XXHashSyncAt.IsZero(), "v1 manifest should have zero XXHashSyncAt")
+	assert.Nil(t, manifest.Worlds.XXHashMap, "v1 manifest should have nil XXHashMap")
+	assert.True(t, manifest.Worlds.XXHashSyncAt.IsZero(), "v1 manifest should have zero XXHashSyncAt")
 }
 
 func TestManifest_Clone_DeepCopiesXXHashMap(t *testing.T) {
 	original := &Manifest{
-		XXHashMap: map[string]string{
-			"world/level.dat": "abc123",
+		Worlds: WorldsManifest{
+			SyncState: SyncState{
+				XXHashMap: map[string]string{
+					"world/level.dat": "abc123",
+				},
+				XXHashSyncAt: time.Date(2026, 4, 14, 10, 0, 0, 0, time.UTC),
+			},
 		},
-		XXHashSyncAt: time.Date(2026, 4, 14, 10, 0, 0, 0, time.UTC),
 	}
 
 	clone := original.Clone()
 
-	assert.Equal(t, original.XXHashMap, clone.XXHashMap)
-	assert.True(t, original.XXHashSyncAt.Equal(clone.XXHashSyncAt))
+	assert.Equal(t, original.Worlds.XXHashMap, clone.Worlds.XXHashMap)
+	assert.True(t, original.Worlds.XXHashSyncAt.Equal(clone.Worlds.XXHashSyncAt))
 
 	// mutating clone must not affect original
-	clone.XXHashMap["world/level.dat"] = "modified"
-	assert.Equal(t, "abc123", original.XXHashMap["world/level.dat"])
+	clone.Worlds.XXHashMap["world/level.dat"] = "modified"
+	assert.Equal(t, "abc123", original.Worlds.XXHashMap["world/level.dat"])
 }
 
 func TestManifest_Clone_NilXXHashMap(t *testing.T) {
 	original := &Manifest{
-		XXHashMap: nil,
+		Worlds: WorldsManifest{
+			SyncState: SyncState{XXHashMap: nil},
+		},
 	}
 
 	clone := original.Clone()
-	assert.Nil(t, clone.XXHashMap)
+	assert.Nil(t, clone.Worlds.XXHashMap)
 }

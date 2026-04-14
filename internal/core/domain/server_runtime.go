@@ -6,16 +6,16 @@ import (
 	"strconv"
 )
 
-// Server represents a Minecraft server configuration
-type Server struct {
+// ServerRuntime represents a Minecraft server configuration
+type ServerRuntime struct {
 	Address string `json:"address"`
 	IP      string `json:"ip"`
 	Port    int    `json:"port"`
 	Memory  int    `json:"memory"`
 }
 
-// NewServer creates a new Server instance with address parsing
-func NewServer(address string, memory int) (*Server, error) {
+// NewServerRuntime creates a new ServerRuntime instance with address parsing
+func NewServerRuntime(address string, memory int) (*ServerRuntime, error) {
 	if address == "" {
 		return nil, fmt.Errorf("address cannot be empty")
 	}
@@ -28,7 +28,7 @@ func NewServer(address string, memory int) (*Server, error) {
 		return nil, fmt.Errorf("invalid address format: %w", err)
 	}
 
-	server := &Server{
+	server := &ServerRuntime{
 		Address: address,
 		IP:      ip,
 		Port:    port,
