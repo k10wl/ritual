@@ -1,3 +1,5 @@
+// Deprecated: LocalBackupper is superseded by SyncService raw file backups in v2.
+// Kept for molfar_test compatibility. TODO: remove by 2027-01-01.
 package services
 
 import (

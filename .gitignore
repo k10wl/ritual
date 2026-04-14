@@ -47,4 +47,4 @@ Thumbs.db
 *.syso
 cmd/cli/versioninfo.json
 
-nul
+nul.gocache/

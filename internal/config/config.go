@@ -52,7 +52,7 @@ const (
 	MaxLogFiles     = 10
 
 	TimestampFormat = "20060102150405"
-	BackupExtension = ".tar"
+	BackupExtension = ".tar" // legacy v1 format, kept for backwards compat in tests
 	LogExtension    = ".log"
 )
 
