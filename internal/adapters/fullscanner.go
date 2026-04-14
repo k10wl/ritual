@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 
 	"github.com/cespare/xxhash/v2"
 	"ritual/internal/core/ports"
@@ -45,6 +46,20 @@ func (s *FullScanner) Scan(ctx context.Context) (map[string]string, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+// hashFile computes xxhash of a file at an OS path. Used by MtimeScanner.
+func hashFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := xxhash.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%016x", h.Sum64()), nil
 }
 
 func hashFSFile(fsys fs.FS, path string) (string, error) {
