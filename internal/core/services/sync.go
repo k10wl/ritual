@@ -33,6 +33,7 @@ type SyncService struct {
 	librarian  ports.LibrarianService
 	events     chan<- ports.Event
 	worldsRoot string // absolute path to local worlds directory, used for ghost cleanup walk
+	lockID     string // session lock ID, used for sync folder naming
 }
 
 // NewSyncService creates a new sync service with all dependencies injected.
@@ -43,6 +44,7 @@ func NewSyncService(
 	librarian ports.LibrarianService,
 	events chan<- ports.Event,
 	worldsRoot string,
+	lockID string,
 ) (*SyncService, error) {
 	if scanner == nil {
 		return nil, ErrSyncScannerNil
@@ -63,6 +65,7 @@ func NewSyncService(
 		librarian:  librarian,
 		events:     events,
 		worldsRoot: worldsRoot,
+		lockID:     lockID,
 	}, nil
 }
 
@@ -96,7 +99,7 @@ func (s *SyncService) Download(ctx context.Context) error {
 		return nil
 	}
 
-	syncPrefix := fmt.Sprintf("sync/%d", time.Now().UnixNano())
+	syncPrefix := "sync/" + s.lockID
 
 	// P1: Download changed files to local sync staging
 	s.send(ports.StartEvent{Operation: "sync-download-p1"})
@@ -190,7 +193,7 @@ func (s *SyncService) Upload(ctx context.Context) error {
 		return nil
 	}
 
-	syncPrefix := fmt.Sprintf("sync/%d", time.Now().UnixNano())
+	syncPrefix := "sync/" + s.lockID
 
 	// P1: Upload changed files to remote sync staging
 	if len(diff.Upload) > 0 {
@@ -289,7 +292,14 @@ func (s *SyncService) cleanSyncFolder(ctx context.Context, prefix string) {
 	_ = s.local.Delete(ctx, prefix)
 }
 
-// cleanRemoteSyncFolder removes remote sync staging directory
+// cleanRemoteSyncFolder removes remote sync staging — List+Delete for flat storage (R2)
 func (s *SyncService) cleanRemoteSyncFolder(ctx context.Context, prefix string) {
+	keys, err := s.remote.List(ctx, prefix)
+	if err != nil {
+		return
+	}
+	for _, key := range keys {
+		_ = s.remote.Delete(ctx, key)
+	}
 	_ = s.remote.Delete(ctx, prefix)
 }

@@ -19,29 +19,29 @@ func newTestSyncService(
 	librarian *mocks.MockLibrarianService,
 ) (*SyncService, chan ports.Event) {
 	events := make(chan ports.Event, 100)
-	svc, _ := NewSyncService(scanner, local, remote, librarian, events, "")
+	svc, _ := NewSyncService(scanner, local, remote, librarian, events, "", "test-lock")
 	return svc, events
 }
 
 // --- Constructor nil guards ---
 
 func TestNewSyncService_NilScanner(t *testing.T) {
-	_, err := NewSyncService(nil, &mocks.MockStorageRepository{}, &mocks.MockStorageRepository{}, &mocks.MockLibrarianService{}, nil, "")
+	_, err := NewSyncService(nil, &mocks.MockStorageRepository{}, &mocks.MockStorageRepository{}, &mocks.MockLibrarianService{}, nil, "", "test-lock")
 	assert.ErrorIs(t, err, ErrSyncScannerNil)
 }
 
 func TestNewSyncService_NilLocal(t *testing.T) {
-	_, err := NewSyncService(&mocks.MockWorldScanner{}, nil, &mocks.MockStorageRepository{}, &mocks.MockLibrarianService{}, nil, "")
+	_, err := NewSyncService(&mocks.MockWorldScanner{}, nil, &mocks.MockStorageRepository{}, &mocks.MockLibrarianService{}, nil, "", "test-lock")
 	assert.ErrorIs(t, err, ErrSyncLocalNil)
 }
 
 func TestNewSyncService_NilRemote(t *testing.T) {
-	_, err := NewSyncService(&mocks.MockWorldScanner{}, &mocks.MockStorageRepository{}, nil, &mocks.MockLibrarianService{}, nil, "")
+	_, err := NewSyncService(&mocks.MockWorldScanner{}, &mocks.MockStorageRepository{}, nil, &mocks.MockLibrarianService{}, nil, "", "test-lock")
 	assert.ErrorIs(t, err, ErrSyncRemoteNil)
 }
 
 func TestNewSyncService_NilLibrarian(t *testing.T) {
-	_, err := NewSyncService(&mocks.MockWorldScanner{}, &mocks.MockStorageRepository{}, &mocks.MockStorageRepository{}, nil, nil, "")
+	_, err := NewSyncService(&mocks.MockWorldScanner{}, &mocks.MockStorageRepository{}, &mocks.MockStorageRepository{}, nil, nil, "", "test-lock")
 	assert.ErrorIs(t, err, ErrSyncLibrarianNil)
 }
 

@@ -139,7 +139,7 @@ func buildSyncUpload(t *testing.T, env *syncTestEnv) {
 	scanner, err := adapters.NewFullWorldScanner(wPath)
 	require.NoError(t, err)
 
-	svc, err := services.NewSyncService(scanner, env.local, env.remote, env.librarian, nil, wPath)
+	svc, err := services.NewSyncService(scanner, env.local, env.remote, env.librarian, nil, wPath, "test-lock")
 	require.NoError(t, err)
 	require.NoError(t, svc.Upload(env.ctx))
 }
@@ -154,7 +154,7 @@ func buildSyncDownload(t *testing.T, env *syncTestEnv) {
 	scanner, err := adapters.NewFullWorldScanner(wPath)
 	require.NoError(t, err)
 
-	svc, err := services.NewSyncService(scanner, env.local, env.remote, env.librarian, nil, wPath)
+	svc, err := services.NewSyncService(scanner, env.local, env.remote, env.librarian, nil, wPath, "test-lock")
 	require.NoError(t, err)
 	require.NoError(t, svc.Download(env.ctx))
 }
