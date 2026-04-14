@@ -65,7 +65,7 @@ func TestSyncService_Download_P1Failure(t *testing.T) {
 	err := svc.Download(context.Background())
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "download P1 failed")
+	assert.Contains(t, err.Error(), "sync-download-stage")
 }
 
 func TestSyncService_Upload_P1Failure(t *testing.T) {
@@ -92,7 +92,7 @@ func TestSyncService_Upload_P1Failure(t *testing.T) {
 	err := svc.Upload(context.Background())
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "upload P1 failed")
+	assert.Contains(t, err.Error(), "sync-upload-stage")
 }
 
 func TestSyncService_Upload_ScanFailure(t *testing.T) {
