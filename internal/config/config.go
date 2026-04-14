@@ -29,7 +29,8 @@ var AppVersion string
 const (
 	LocalBackups  = "world_backups"
 	RemoteBackups = "worlds"
-	InstanceDir   = "instance"
+	ServerDir     = "server"
+	WorldsDir     = "worlds"
 	TmpDir        = "temp"
 	LogsDir       = "logs"
 )
@@ -37,7 +38,6 @@ const (
 // File names and keys
 const (
 	ManifestFilename    = "manifest.json"
-	InstanceArchiveKey  = "instance.tar"
 	RemoteBinaryKey     = "ritual.exe"
 	ManualWorldFilename = "manual.tar"
 	ServerJarFilename   = "paper.jar"
@@ -52,7 +52,6 @@ const (
 	MaxLogFiles     = 10
 
 	TimestampFormat = "20060102150405"
-	BackupExtension = ".tar" // legacy v1 format, kept for backwards compat in tests
 	LogExtension    = ".log"
 )
 
@@ -76,19 +75,24 @@ const (
 
 // Update file patterns
 const (
-	UpdateFilePattern = "ritual_update_%d.exe"
-	UpdateFileGlob    = "ritual_update_*.exe"
+	UpdateFilePattern = "update_%d.exe"
+	UpdateFileGlob    = "update_*.exe"
 )
+
+// Sync staging patterns
+const (
+	TempRitualDir      = "ritual"
+	SyncStagingPattern = "sync_%d"
+	SyncStagingGlob    = "sync_*"
+)
+
+func TempRitualPath() string {
+	return filepath.Join(os.TempDir(), TempRitualDir)
+}
 
 // Lock ID format
 const (
 	LockIDSeparator = "::"
-)
-
-// S3/R2 configuration
-const (
-	S3PartSize    = 5 * 1024 * 1024 // 5 MB parts for multipart upload
-	S3Concurrency = 1               // Sequential upload to minimize memory
 )
 
 // R2 endpoint format
