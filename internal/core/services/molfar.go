@@ -383,7 +383,7 @@ func (m *MolfarService) Exit() error {
 		for i, retention := range m.retentions {
 			m.send(ports.StartEvent{Operation: "retention"})
 			m.send(ports.UpdateEvent{Operation: "retention", Message: "Running retention", Data: map[string]any{"index": i}})
-			if err := retention.Apply(ctx, updatedManifest); err != nil {
+			if err := retention.Apply(ctx); err != nil {
 				m.send(ports.ErrorEvent{Operation: "retention", Err: err})
 				return fmt.Errorf("retention %d failed: %w", i, err)
 			}

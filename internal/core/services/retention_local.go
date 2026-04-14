@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"ritual/internal/config"
-	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )
 
@@ -45,15 +44,14 @@ func (r *LocalRetention) send(evt ports.Event) {
 }
 
 // Apply removes old local backups exceeding the retention limit
-// Keeps only the latest LocalMaxBackups files regardless of manifest
-func (r *LocalRetention) Apply(ctx context.Context, manifest *domain.Manifest) error {
+// Keeps only the latest LocalMaxBackups files
+func (r *LocalRetention) Apply(ctx context.Context) error {
 	if r == nil {
 		return ErrLocalRetentionNil
 	}
 	if ctx == nil {
 		return errors.New("context cannot be nil")
 	}
-	// manifest parameter kept for interface compatibility but not used
 
 	// List all local backups
 	keys, err := r.localStorage.List(ctx, config.LocalBackups)

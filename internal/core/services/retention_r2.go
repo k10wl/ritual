@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"ritual/internal/config"
-	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )
 
@@ -45,16 +44,13 @@ func (r *R2Retention) send(evt ports.Event) {
 }
 
 // Apply removes old R2 backups exceeding the retention limit
-// Keeps only backups that are in manifest's Backups, up to R2MaxBackups
-func (r *R2Retention) Apply(ctx context.Context, manifest *domain.Manifest) error {
+// TODO(Task 17): this implementation will be replaced; manifest logic removed temporarily
+func (r *R2Retention) Apply(ctx context.Context) error {
 	if r == nil {
 		return ErrR2RetentionNil
 	}
 	if ctx == nil {
 		return errors.New("context cannot be nil")
-	}
-	if manifest == nil {
-		return errors.New("manifest cannot be nil")
 	}
 
 	// List all R2 backups
@@ -66,12 +62,6 @@ func (r *R2Retention) Apply(ctx context.Context, manifest *domain.Manifest) erro
 	// Static bounds check
 	if len(keys) > config.MaxFiles {
 		return fmt.Errorf("too many backup files: %d exceeds limit %d", len(keys), config.MaxFiles)
-	}
-
-	// Build set of valid URIs from manifest
-	validURIs := make(map[string]bool)
-	for _, world := range manifest.Worlds.Backups {
-		validURIs[world.URI] = true
 	}
 
 	// Filter backup entries by timestamp (skip manual and temp files, ignore invalid names)
@@ -90,52 +80,23 @@ func (r *R2Retention) Apply(ctx context.Context, manifest *domain.Manifest) erro
 		return backups[i] > backups[j]
 	})
 
-	// Identify backups to delete:
-	// 1. Dangling backups (not in manifest)
-	// 2. Excess backups beyond retention limit
+	// Apply retention limit
 	var toDelete []string
-
-	// First pass: identify dangling backups
-	var validBackups []string
-	for _, key := range backups {
-		if !validURIs[key] {
-			// Dangling backup - not in manifest
-			r.send(ports.UpdateEvent{Operation: "retention", Message: "Found dangling R2 backup", Data: map[string]any{"key": key}})
-			toDelete = append(toDelete, key)
-		} else {
-			validBackups = append(validBackups, key)
-		}
-	}
-
-	// Second pass: apply retention limit to valid backups
-	if len(validBackups) > config.R2MaxBackups {
+	if len(backups) > config.R2MaxBackups {
 		r.send(ports.UpdateEvent{Operation: "retention", Message: "Applying R2 retention policy", Data: map[string]any{
-			"total_valid": len(validBackups),
+			"total":       len(backups),
 			"max_allowed": config.R2MaxBackups,
-			"to_delete":   len(validBackups) - config.R2MaxBackups,
+			"to_delete":   len(backups) - config.R2MaxBackups,
 		}})
-		toDelete = append(toDelete, validBackups[config.R2MaxBackups:]...)
+		toDelete = backups[config.R2MaxBackups:]
 	}
 
 	// Delete identified backups
-	deletedSet := make(map[string]bool)
 	for _, key := range toDelete {
 		r.send(ports.UpdateEvent{Operation: "retention", Message: "Deleting R2 backup", Data: map[string]any{"key": key}})
 		if err := r.remoteStorage.Delete(ctx, key); err != nil {
 			return fmt.Errorf("failed to delete R2 backup %s: %w", key, err)
 		}
-		deletedSet[key] = true
-	}
-
-	// Update manifest to remove deleted worlds
-	if len(deletedSet) > 0 {
-		var remainingWorlds []domain.World
-		for _, world := range manifest.Worlds.Backups {
-			if !deletedSet[world.URI] {
-				remainingWorlds = append(remainingWorlds, world)
-			}
-		}
-		manifest.Worlds.Backups = remainingWorlds
 	}
 
 	return nil

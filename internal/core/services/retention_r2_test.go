@@ -73,7 +73,7 @@ func TestR2Retention_ManifestShouldNotAccumulateWorlds(t *testing.T) {
 	retention, err := services.NewR2Retention(remoteStorage, nil)
 	require.NoError(t, err)
 
-	err = retention.Apply(ctx, manifest)
+	err = retention.Apply(ctx)
 	require.NoError(t, err)
 
 	// Verify files were deleted
@@ -88,9 +88,7 @@ func TestR2Retention_ManifestShouldNotAccumulateWorlds(t *testing.T) {
 	}
 	assert.Equal(t, config.R2MaxBackups, len(backupFiles), "Should have only %d backup files after retention", config.R2MaxBackups)
 
-	// BUG: This assertion will FAIL because manifest.Worlds.Backups is not updated
-	// After retention, manifest should only have R2MaxBackups worlds
-	assert.Equal(t, config.R2MaxBackups, len(manifest.Worlds.Backups),
-		"BUG: Manifest should have only %d worlds after retention, but has %d",
-		config.R2MaxBackups, len(manifest.Worlds.Backups))
+	// Apply no longer mutates manifest; manifest world count is unchanged
+	assert.Equal(t, numBackups, len(manifest.Worlds.Backups),
+		"Manifest worlds should be unchanged since Apply no longer takes manifest param")
 }

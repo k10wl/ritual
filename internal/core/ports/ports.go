@@ -101,7 +101,7 @@ type UpdaterService interface {
 type RetentionService interface {
 	// Apply removes old backups exceeding the retention limit
 	// Uses manifest's Backups to identify valid backups
-	Apply(ctx context.Context, manifest *domain.Manifest) error
+	Apply(ctx context.Context) error
 }
 
 // ConditionService defines the interface for pre-flight condition checks

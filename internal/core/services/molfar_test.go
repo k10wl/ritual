@@ -873,24 +873,11 @@ func TestMolfarService_Exit(t *testing.T) {
 			},
 		}
 
-		// Create retention that removes old worlds (keeps only 2 newest)
+		// Create retention that records it was applied
 		retentionApplied := false
 		mockRetention := &mocks.MockRetentionService{
-			ApplyFunc: func(ctx context.Context, manifest *domain.Manifest) error {
+			ApplyFunc: func(ctx context.Context) error {
 				retentionApplied = true
-				// Simulate retention: keep only the 2 newest worlds
-				if len(manifest.Worlds.Backups) > 2 {
-					// Sort by CreatedAt descending and keep newest 2
-					worlds := manifest.Worlds.Backups
-					for i := 0; i < len(worlds)-1; i++ {
-						for j := i + 1; j < len(worlds); j++ {
-							if worlds[i].CreatedAt.Before(worlds[j].CreatedAt) {
-								worlds[i], worlds[j] = worlds[j], worlds[i]
-							}
-						}
-					}
-					manifest.Worlds.Backups = worlds[:2]
-				}
 				return nil
 			},
 		}
@@ -948,24 +935,24 @@ func TestMolfarService_Exit(t *testing.T) {
 		// Verify retention was called
 		assert.True(t, retentionApplied, "Retention should have been applied")
 
-		// Verify LOCAL manifest has reduced world count
-		// Flow: 5 worlds -> backup adds 1 -> 6 worlds -> retention keeps 2 newest -> 2 worlds
+		// Verify LOCAL manifest has worlds after backup added one
+		// Flow: 5 worlds -> backup adds 1 -> 6 worlds -> retention applied (no longer mutates manifest)
 		localManifestAfter, err := localStorage.Get(ctx, "manifest.json")
 		assert.NoError(t, err)
 		var localManifestAfterObj domain.Manifest
 		err = json.Unmarshal(localManifestAfter, &localManifestAfterObj)
 		assert.NoError(t, err)
-		assert.Equal(t, 2, len(localManifestAfterObj.Worlds.Backups),
-			"Local manifest should have 2 worlds after retention (keeps 2 newest including backup)")
+		assert.Equal(t, 6, len(localManifestAfterObj.Worlds.Backups),
+			"Local manifest should have 6 worlds after backup (retention no longer mutates manifest)")
 
-		// Verify REMOTE manifest also has reduced world count
+		// Verify REMOTE manifest also reflects backup addition
 		remoteManifestAfter, err := remoteStorage.Get(ctx, "manifest.json")
 		assert.NoError(t, err)
 		var remoteManifestAfterObj domain.Manifest
 		err = json.Unmarshal(remoteManifestAfter, &remoteManifestAfterObj)
 		assert.NoError(t, err)
-		assert.Equal(t, 2, len(remoteManifestAfterObj.Worlds.Backups),
-			"Remote manifest should have 2 worlds after retention (keeps 2 newest including backup)")
+		assert.Equal(t, 6, len(remoteManifestAfterObj.Worlds.Backups),
+			"Remote manifest should have 6 worlds after backup (retention no longer mutates manifest)")
 
 		// Verify both manifests are in sync
 		assert.Equal(t, len(localManifestAfterObj.Worlds.Backups), len(remoteManifestAfterObj.Worlds.Backups),

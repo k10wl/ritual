@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"ritual/internal/config"
-	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )
 
@@ -45,15 +44,13 @@ func (r *LogRetention) send(evt ports.Event) {
 }
 
 // Apply removes old log files exceeding the retention limit
-// Manifest is not used for logs - retention is based on file count only
-func (r *LogRetention) Apply(ctx context.Context, manifest *domain.Manifest) error {
+func (r *LogRetention) Apply(ctx context.Context) error {
 	if r == nil {
 		return ErrLogRetentionNil
 	}
 	if ctx == nil {
 		return errors.New("context cannot be nil")
 	}
-	// manifest is not used for log retention
 
 	// List all log files
 	keys, err := r.localStorage.List(ctx, config.LogsDir)
