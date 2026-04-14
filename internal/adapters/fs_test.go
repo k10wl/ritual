@@ -533,10 +533,10 @@ func TestFSRepository_Security(t *testing.T) {
 
 	t.Run("path traversal prevention", func(t *testing.T) {
 		maliciousKeys := []string{
-			"../../../etc/passwd",
-			"..\\..\\windows\\system32",
-			"../manifest.json",
-			"..\\config.json",
+			filepath.FromSlash("../../../etc/passwd"),
+			filepath.FromSlash("../../windows/system32"),
+			filepath.FromSlash("../manifest.json"),
+			filepath.FromSlash("../config.json"),
 		}
 
 		for _, key := range maliciousKeys {
