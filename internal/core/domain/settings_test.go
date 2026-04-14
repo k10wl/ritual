@@ -171,7 +171,13 @@ func TestSettingsSavePrettyPrints(t *testing.T) {
 	expected := `{
   "ip": "0.0.0.0",
   "port": 25565,
-  "memory": 4096
+  "memory": 4096,
+  "local_retention": {
+    "keep_last": 0,
+    "keep_daily": 0,
+    "keep_weekly": 0,
+    "keep_monthly": 0
+  }
 }`
 	if string(content) != expected {
 		t.Errorf("expected pretty printed JSON:\n%s\n\ngot:\n%s", expected, string(content))

@@ -16,8 +16,9 @@ type Manifest struct {
 	MinDiskMB      int `json:"min_disk_mb"`
 	MinJavaVersion int `json:"min_java_version"`
 
-	Worlds WorldsManifest `json:"worlds"`
-	Server ServerManifest `json:"server"`
+	Worlds          WorldsManifest `json:"worlds"`
+	Server          ServerManifest `json:"server"`
+	RemoteRetention RetentionRules `json:"remote_retention"`
 }
 
 // IsLocked returns true if the manifest is currently locked
@@ -84,6 +85,7 @@ func (m *Manifest) Clone() *Manifest {
 			},
 			StartScript: m.Server.StartScript,
 		},
+		RemoteRetention: m.RemoteRetention,
 	}
 
 	copy(clone.Worlds.Backups, m.Worlds.Backups)
@@ -171,5 +173,8 @@ func (m *Manifest) ApplyDefaults() {
 	}
 	if m.MinJavaVersion <= 0 {
 		m.MinJavaVersion = config.DefaultMinJavaVersion
+	}
+	if m.RemoteRetention == (RetentionRules{}) {
+		m.RemoteRetention = DefaultRetentionRules()
 	}
 }

@@ -13,17 +13,19 @@ const SettingsFilename = "settings.json"
 
 // Settings represents user-configurable server settings
 type Settings struct {
-	IP     string `json:"ip"`
-	Port   int    `json:"port"`
-	Memory int    `json:"memory"`
+	IP             string         `json:"ip"`
+	Port           int            `json:"port"`
+	Memory         int            `json:"memory"`
+	LocalRetention RetentionRules `json:"local_retention"`
 }
 
 // DefaultSettings returns default settings values
 func DefaultSettings() *Settings {
 	return &Settings{
-		IP:     "0.0.0.0",
-		Port:   25565,
-		Memory: 4096,
+		IP:             "0.0.0.0",
+		Port:           25565,
+		Memory:         4096,
+		LocalRetention: DefaultRetentionRules(),
 	}
 }
 

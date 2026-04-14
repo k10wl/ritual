@@ -27,8 +27,9 @@ var AppVersion string
 
 // Directory names
 const (
-	LocalBackups  = "world_backups"
-	RemoteBackups = "worlds"
+	LocalBackups  = "world_backups" // legacy; kept until v1 tar callers removed
+	RemoteBackups = "worlds"        // legacy
+	BackupsDir    = "backups"       // v2 unified local/R2 backup prefix
 	ServerDir     = "server"
 	WorldsDir     = "worlds"
 	TmpDir        = "temp"
