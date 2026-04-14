@@ -102,7 +102,7 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 	exitUpdaters := []ports.UpdaterService{}
 
 	// Create local retention service
-	localRetention, err := services.NewLocalRetention(localStorage, nil)
+	localRetention, err := services.NewRetention(localStorage, domain.RetentionRules{KeepLast: 2}, config.BackupsDir, services.ParseTimestampDir)
 	assert.NoError(t, err)
 
 	retentions := []ports.RetentionService{localRetention}
@@ -686,7 +686,7 @@ func TestMolfarService_Exit(t *testing.T) {
 		err = os.WriteFile(filepath.Join(worldsPath, "level.dat"), []byte("world-data"), 0644)
 		assert.NoError(t, err)
 
-		localRetention, err := services.NewLocalRetention(localStorage, nil)
+		localRetention, err := services.NewRetention(localStorage, domain.RetentionRules{KeepLast: 2}, config.BackupsDir, services.ParseTimestampDir)
 		assert.NoError(t, err)
 
 		molfar, err := services.NewMolfarService(
