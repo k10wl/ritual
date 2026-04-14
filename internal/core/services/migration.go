@@ -16,7 +16,7 @@ type Migration struct {
 }
 
 var migrations = []Migration{
-	{Version: "3.0.0", Run: migrateV3},
+	{Version: "2.0.0", Run: migrateV2},
 }
 
 // RunMigrations executes pending migrations based on ManifestVersion.
@@ -40,8 +40,8 @@ func RunMigrationsWithList(rootPath string, manifest *domain.Manifest, list []Mi
 	return nil
 }
 
-// migrateV3: delete instance/ directory, create worlds/.ritualsync with "*"
-func migrateV3(rootPath string) error {
+// migrateV2: delete instance/ directory, create worlds/.ritualsync with "*"
+func migrateV2(rootPath string) error {
 	os.RemoveAll(filepath.Join(rootPath, "instance"))
 
 	ritualSync := filepath.Join(rootPath, config.WorldsDir, ".ritualsync")
