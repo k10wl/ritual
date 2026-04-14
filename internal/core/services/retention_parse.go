@@ -27,3 +27,17 @@ func ParseTimestampDir(key string) time.Time {
 	}
 	return time.Time{}
 }
+
+// ParseTimestampTar recognizes v1 tar-format backups: {prefix}/{ts}.tar
+func ParseTimestampTar(key string) time.Time {
+	base := path.Base(key)
+	if path.Ext(base) != ".tar" {
+		return time.Time{}
+	}
+	stem := strings.TrimSuffix(base, ".tar")
+	t, err := time.ParseInLocation(config.TimestampFormat, stem, time.UTC)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}

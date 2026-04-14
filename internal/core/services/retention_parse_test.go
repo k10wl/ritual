@@ -44,3 +44,26 @@ func TestParseTimestampDir_Invalid(t *testing.T) {
 		}
 	}
 }
+
+func TestParseTimestampTar_Valid(t *testing.T) {
+	got := services.ParseTimestampTar("backups/20260414160000.tar")
+	want := time.Date(2026, 4, 14, 16, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("ParseTimestampTar = %v, want %v", got, want)
+	}
+}
+
+func TestParseTimestampTar_Invalid(t *testing.T) {
+	cases := []string{
+		"",
+		"backups/20260414160000/",
+		"backups/20260414160000",
+		"backups/manual.tar",
+		"backups/abc.tar",
+	}
+	for _, k := range cases {
+		if got := services.ParseTimestampTar(k); !got.IsZero() {
+			t.Errorf("ParseTimestampTar(%q) = %v, want zero", k, got)
+		}
+	}
+}
