@@ -139,7 +139,7 @@ func makeSyncService(t *testing.T, env *syncTestEnv) ports.SyncService {
 	scanner := adapters.NewFullScanner(os.DirFS(wPath))
 	staging := t.TempDir()
 
-	return services.NewDeltaSyncService(
+	return services.NewSyncService(
 		scanner, env.local, env.remote, nil,
 		services.SyncConfig{Prefix: "worlds", LocalDir: wPath},
 		filepath.Join(staging, "local"),

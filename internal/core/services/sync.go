@@ -30,7 +30,7 @@ type syncService struct {
 
 var _ ports.SyncService = (*syncService)(nil)
 
-func NewDeltaSyncService(
+func NewSyncService(
 	scanner ports.DirectoryScanner,
 	local, remote ports.StorageRepository,
 	events chan<- ports.Event,

@@ -16,7 +16,7 @@ import (
 
 func TestSyncService_Download_EmptyDiff(t *testing.T) {
 	state := domain.SyncState{XXHashMap: map[string]string{"a": "h1"}}
-	svc := services.NewDeltaSyncService(nil, nil, nil, nil,
+	svc := services.NewSyncService(nil, nil, nil, nil,
 		services.SyncConfig{Prefix: "test", LocalDir: t.TempDir()},
 		t.TempDir(), "sync/test",
 	)
@@ -34,7 +34,7 @@ func TestSyncService_Upload_EmptyDiff(t *testing.T) {
 	}
 	remote := domain.SyncState{XXHashMap: hashMap}
 
-	svc := services.NewDeltaSyncService(mockScanner, nil, nil, nil,
+	svc := services.NewSyncService(mockScanner, nil, nil, nil,
 		services.SyncConfig{Prefix: "test", LocalDir: t.TempDir()},
 		t.TempDir(), "sync/test",
 	)
@@ -54,7 +54,7 @@ func TestSyncService_Download_ValueSemantics(t *testing.T) {
 		},
 	}
 
-	svc := services.NewDeltaSyncService(nil, nil, mockRemote, nil,
+	svc := services.NewSyncService(nil, nil, mockRemote, nil,
 		services.SyncConfig{Prefix: "test", LocalDir: t.TempDir()},
 		t.TempDir(), "sync/test",
 	)
@@ -73,7 +73,7 @@ func TestSyncService_Download_StageFailure(t *testing.T) {
 		},
 	}
 
-	svc := services.NewDeltaSyncService(nil, nil, mockRemote, nil,
+	svc := services.NewSyncService(nil, nil, mockRemote, nil,
 		services.SyncConfig{Prefix: "test", LocalDir: t.TempDir()},
 		t.TempDir(), "sync/test",
 	)

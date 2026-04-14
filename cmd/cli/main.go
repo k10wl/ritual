@@ -157,13 +157,13 @@ func main() {
 	serverScanner := adapters.NewFilteredScanner(adapters.NewFullScanner(serverFS), serverFilter)
 
 	// Two sync services — same code, different config
-	worldSync := services.NewDeltaSyncService(
+	worldSync := services.NewSyncService(
 		worldScanner, localStorage, retryRemote, events,
 		services.SyncConfig{Prefix: config.WorldsDir, LocalDir: worldsPath},
 		filepath.Join(localStagingBase, config.WorldsDir),
 		remoteStagingBase+"/"+config.WorldsDir,
 	)
-	serverSync := services.NewDeltaSyncService(
+	serverSync := services.NewSyncService(
 		serverScanner, localStorage, retryRemote, events,
 		services.SyncConfig{Prefix: config.ServerDir, LocalDir: serverPath},
 		filepath.Join(localStagingBase, config.ServerDir),
