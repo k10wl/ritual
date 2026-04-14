@@ -58,12 +58,12 @@ ritual/
     │   └── checksum_test.go         # Checksum tests
     └── core/
         ├── domain/
-        │   ├── manifest.go      # Manifest entity
-        │   ├── manifest_test.go # Manifest entity tests
-        │   ├── server.go        # Server entity
-        │   ├── server_test.go   # Server entity tests
-        │   ├── world.go         # World entity
-        │   └── world_test.go    # World entity tests
+        │   ├── manifest.go           # Manifest entity
+        │   ├── manifest_test.go      # Manifest entity tests
+        │   ├── server.go             # Server entity
+        │   ├── server_test.go        # Server entity tests
+        │   ├── retention_rules.go    # RetentionRules struct
+        │   └── retention_rules_test.go # RetentionRules tests
         ├── ports/
         │   ├── ports.go         # Interface definitions
         │   └── mocks/           # Mock implementations for testing
@@ -79,27 +79,33 @@ ritual/
         │       ├── serverrunner_test.go # ServerRunner mock tests
         │       ├── commandexecutor.go  # Mock CommandExecutor implementation
         │       ├── commandexecutor_test.go # CommandExecutor mock tests
-        │       ├── backupper.go        # Mock BackupperService implementation
-        │       ├── backupper_test.go   # BackupperService mock tests
         │       ├── updater.go          # Mock UpdaterService implementation
         │       └── updater_test.go     # UpdaterService mock tests
         └── services/
-            ├── molfar.go            # Main orchestration service
-            ├── molfar_test.go       # MolfarService tests
-            ├── librarian.go         # Manifest management service
-            ├── librarian_test.go    # LibrarianService tests
-            ├── validator.go         # Validation service
-            ├── validator_test.go    # ValidatorService tests
-            ├── backupper_local.go   # Local backup service (streaming)
-            ├── backupper_local_test.go # LocalBackupper tests
-            ├── backupper_r2.go      # R2 backup service (streaming)
-            ├── backupper_r2_test.go # R2Backupper tests
-            ├── updater_ritual.go    # Ritual self-update service
-            ├── updater_ritual_test.go # RitualUpdater tests
-            ├── updater_instance.go  # Instance update service
-            ├── updater_instance_test.go # InstanceUpdater tests
-            ├── updater_worlds.go    # Worlds update service
-            └── updater_worlds_test.go # WorldsUpdater tests
+            ├── molfar.go                    # Main orchestration service
+            ├── molfar_test.go               # MolfarService tests
+            ├── librarian.go                 # Manifest management service
+            ├── librarian_test.go            # LibrarianService tests
+            ├── validator.go                 # Validation service
+            ├── validator_test.go            # ValidatorService tests
+            ├── backup.go                    # CreateBackup function
+            ├── backup_test.go               # Backup tests
+            ├── backup_integration_test.go   # Backup integration tests
+            ├── dirty.go                     # ShouldBackup pure function
+            ├── dirty_test.go                # ShouldBackup tests
+            ├── retention.go                 # Generic retention service
+            ├── retention_test.go            # Retention tests
+            ├── retention_mark.go            # Mark pure function
+            ├── retention_mark_test.go       # Mark tests
+            ├── retention_parse.go           # ParseStrategy + strategies
+            ├── retention_parse_test.go      # ParseStrategy tests
+            ├── retention_integration_test.go # Retention integration tests
+            ├── updater_ritual.go            # Ritual self-update service
+            ├── updater_ritual_test.go       # RitualUpdater tests
+            ├── updater_instance.go          # Instance update service
+            ├── updater_instance_test.go     # InstanceUpdater tests
+            ├── updater_worlds.go            # Worlds update service
+            └── updater_worlds_test.go       # WorldsUpdater tests
 ```
 
 ## Architecture Layers
@@ -255,7 +261,7 @@ Contains the core business entities:
 
 - **`manifest.go`** - Central manifest tracking ritual/instance versions, locks, and world backups
 - **`server.go`** - Server configuration entity with address parsing and validation
-- **`world.go`** - World data entity with URI validation and timestamp tracking
+- **`retention_rules.go`** - RetentionRules struct for configuring backup retention policies
 
 #### Domain Entity Examples
 
@@ -290,7 +296,6 @@ Defines interfaces for external dependencies and provides comprehensive mock imp
   - `ValidatorService` - Validation interface
   - `CommandExecutor` - Command execution interface
   - `ServerRunner` - Server execution interface
-  - `BackupperService` - Backup orchestration interface
   - `UpdaterService` - Update operations interface
 
 - **Mock Implementations** (`mocks/` folder) - Complete mock implementations with test coverage
@@ -300,7 +305,6 @@ Defines interfaces for external dependencies and provides comprehensive mock imp
   - `validator.go` - MockValidatorService with configurable validation results
   - `serverrunner.go` - MockServerRunner with server execution simulation
   - `commandexecutor.go` - MockCommandExecutor with command simulation
-  - `backupper.go` - MockBackupperService with backup operation simulation
   - `updater.go` - MockUpdaterService with update operation simulation
 
 - **Test Coverage** (`mocks/` folder) - Each mock includes comprehensive test suites
@@ -347,10 +351,6 @@ type ServerRunner interface {
     Run(server *domain.Server) error
 }
 
-type BackupperService interface {
-    Run(ctx context.Context) (string, error)
-}
-
 type UpdaterService interface {
     Run(ctx context.Context) error
 }
@@ -363,8 +363,11 @@ Implements core business logic:
 - **`molfar.go`** - Central orchestration engine coordinating all operations
 - **`librarian.go`** - Manifest synchronization and management
 - **`validator.go`** - Instance integrity and conflict validation
-- **`backupper_local.go`** - Local backup service with streaming tar.gz
-- **`backupper_r2.go`** - R2 backup service with streaming tar.gz
+- **`backup.go`** - CreateBackup function for backup orchestration
+- **`dirty.go`** - ShouldBackup pure function for backup decision logic
+- **`retention.go`** - Generic retention service for data lifecycle management
+- **`retention_mark.go`** - Mark pure function for marking backups for cleanup
+- **`retention_parse.go`** - ParseStrategy + retention strategy implementations
 - **`updater_ritual.go`** - Ritual self-update service (compares versions, downloads, replaces)
 - **`updater_instance.go`** - Instance update service (downloads/extracts instance.tar.gz)
 - **`updater_worlds.go`** - Worlds update service (downloads/extracts world backups)
@@ -401,30 +404,27 @@ func (m *MolfarService) Run(server *domain.Server) error
 // Exit runs all backuppers and releases locks
 func (m *MolfarService) Exit() error
 
-// internal/core/services/backupper_local.go
-type LocalBackupper struct {
-    localStorage ports.StorageRepository
-    workRoot     *os.Root
+// internal/core/services/backup.go
+func CreateBackup(ctx context.Context, config BackupConfig) (string, error) {
+    // Orchestrates backup creation with streaming tar.gz
+    // Returns backup key/path on success
 }
 
-func (b *LocalBackupper) Run(ctx context.Context) (string, error) {
-    // Streams world directories directly to tar.gz using streamer.Push
-    // Applies retention policy after successful backup
+// internal/core/services/dirty.go
+func ShouldBackup(rules RetentionRules, lastBackup time.Time) bool {
+    // Pure function determining if backup should be created
+    // Based on retention rules and last backup time
 }
 
-// internal/core/services/backupper_r2.go
-type R2Backupper struct {
-    uploader      streamer.S3StreamUploader
-    remoteStorage ports.StorageRepository
-    bucket        string
-    workRoot      *os.Root
-    localPath     string      // Optional local backup path
-    shouldBackup  func() bool // Condition for local backup
+// internal/core/services/retention.go
+type RetentionService struct {
+    storage ports.StorageRepository
+    rules   RetentionRules
 }
 
-func (b *R2Backupper) Run(ctx context.Context) (string, error) {
-    // Streams world directories directly to R2 with optional local copy
-    // Applies retention policy after successful backup
+func (r *RetentionService) Apply(ctx context.Context, backups []Backup) ([]Backup, error) {
+    // Applies retention policy to backups
+    // Returns backups marked for deletion
 }
 
 // internal/core/services/updater_ritual.go
@@ -603,24 +603,23 @@ Three specialized updaters execute during Prepare phase:
   - Downloads and extracts world archives
   - Handles "no worlds" case for fresh instances
 
-### Backuppers (Backup Services)
-Two specialized backuppers execute during Exit phase:
+### Backup & Retention Services
 
-- **LocalBackupper**: Local filesystem backups
-  - Streams world directories to tar.gz
-  - Applies count-based retention (config.LocalMaxBackups)
-  - Uses streamer.Push with LocalFileWriter
+**Backup Creation**:
+- **CreateBackup**: Orchestrates backup with streaming tar.gz
+- **ShouldBackup**: Pure function determining if backup needed based on rules
 
-- **R2Backupper**: Cloud storage backups
-  - Streams world directories directly to R2
-  - Optional local copy via ShouldBackup condition
-  - Applies count-based retention (config.R2MaxBackups)
+**Retention Management**:
+- **RetentionService**: Generic service applying retention policies to backups
+- **Mark**: Pure function marking backups for cleanup based on strategy
+- **ParseStrategy**: Parses retention configuration into executable strategies
+- **Configured via RetentionRules**: Structured configuration object with scoring/weighting
 
-### Retention (Data Lifecycle Management)
-- **Built into Backuppers**: Each backupper has its own applyRetention() method
-- **Count-Based**: LocalMaxBackups (10) and R2MaxBackups (5)
-- **Sorted by Timestamp**: Newest backups kept, oldest deleted
-- **Bounded Operations**: MaxFiles limit prevents runaway operations
+**Architecture**:
+- Time and count-based retention strategies
+- Sorted by timestamp: newest kept, oldest deleted
+- Bounded operations: MaxFiles limit prevents runaway operations
+- Pure functions enable testing without side effects
 
 
 ### Test Helpers (`internal/testhelpers/`)
