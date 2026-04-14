@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -181,5 +182,20 @@ func TestSettingsSavePrettyPrints(t *testing.T) {
 }`
 	if string(content) != expected {
 		t.Errorf("expected pretty printed JSON:\n%s\n\ngot:\n%s", expected, string(content))
+	}
+}
+
+func TestLoadSettings_MissingRetention_UsesZeroValue(t *testing.T) {
+	data := []byte(`{"ip":"127.0.0.1","port":25565,"memory":8192}`)
+
+	var s Settings
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatalf("should load v1 settings: %v", err)
+	}
+	if s.IP != "127.0.0.1" {
+		t.Errorf("IP=%s, want 127.0.0.1", s.IP)
+	}
+	if s.LocalRetention != (RetentionRules{}) {
+		t.Errorf("LocalRetention = %+v, want zero (missing field)", s.LocalRetention)
 	}
 }
