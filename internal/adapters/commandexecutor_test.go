@@ -1,5 +1,7 @@
 //go:build windows
 
+// TODO: check if build tag is still needed — tests use cmd.exe directly, consider abstracting command execution for cross-platform testing
+
 package adapters
 
 import (
