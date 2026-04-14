@@ -16,8 +16,7 @@ func TestMockLibrarianService(t *testing.T) {
 	}
 
 	testManifest := &domain.Manifest{
-		InstanceVersion: "test-instance",
-		RitualVersion:   "1.0.0",
+		RitualVersion: "1.0.0",
 	}
 
 	mockLibrarian := mock.(*MockLibrarianService)
@@ -29,8 +28,8 @@ func TestMockLibrarianService(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
-	if result.InstanceVersion != testManifest.InstanceVersion {
-		t.Errorf("Expected instance %s, got %s", testManifest.InstanceVersion, result.InstanceVersion)
+	if result.RitualVersion != testManifest.RitualVersion {
+		t.Errorf("Expected version %s, got %s", testManifest.RitualVersion, result.RitualVersion)
 	}
 
 	mockLibrarian.GetRemoteManifestFunc = func(ctx context.Context) (*domain.Manifest, error) {
@@ -41,13 +40,13 @@ func TestMockLibrarianService(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
-	if result.InstanceVersion != testManifest.InstanceVersion {
-		t.Errorf("Expected instance %s, got %s", testManifest.InstanceVersion, result.InstanceVersion)
+	if result.RitualVersion != testManifest.RitualVersion {
+		t.Errorf("Expected version %s, got %s", testManifest.RitualVersion, result.RitualVersion)
 	}
 
 	mockLibrarian.SaveLocalManifestFunc = func(ctx context.Context, manifest *domain.Manifest) error {
-		if manifest.InstanceVersion != testManifest.InstanceVersion {
-			t.Errorf("Expected instance %s, got %s", testManifest.InstanceVersion, manifest.InstanceVersion)
+		if manifest.RitualVersion != testManifest.RitualVersion {
+			t.Errorf("Expected version %s, got %s", testManifest.RitualVersion, manifest.RitualVersion)
 		}
 		return nil
 	}
@@ -58,8 +57,8 @@ func TestMockLibrarianService(t *testing.T) {
 	}
 
 	mockLibrarian.SaveRemoteManifestFunc = func(ctx context.Context, manifest *domain.Manifest) error {
-		if manifest.InstanceVersion != testManifest.InstanceVersion {
-			t.Errorf("Expected instance %s, got %s", testManifest.InstanceVersion, manifest.InstanceVersion)
+		if manifest.RitualVersion != testManifest.RitualVersion {
+			t.Errorf("Expected version %s, got %s", testManifest.RitualVersion, manifest.RitualVersion)
 		}
 		return nil
 	}

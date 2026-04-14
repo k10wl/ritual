@@ -20,7 +20,7 @@ type MtimeWorldScanner struct {
 	previous map[string]string
 }
 
-var _ ports.WorldScanner = (*MtimeWorldScanner)(nil)
+var _ ports.DirectoryScanner = (*MtimeWorldScanner)(nil)
 
 // NewMtimeWorldScanner creates a scanner that hashes only recently modified files.
 // root: worlds directory path

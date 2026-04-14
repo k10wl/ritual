@@ -13,7 +13,7 @@ import (
 )
 
 func newTestSyncService(
-	scanner *mocks.MockWorldScanner,
+	scanner *mocks.MockDirectoryScanner,
 	local *mocks.MockStorageRepository,
 	remote *mocks.MockStorageRepository,
 	librarian *mocks.MockLibrarianService,
@@ -31,17 +31,17 @@ func TestNewSyncService_NilScanner(t *testing.T) {
 }
 
 func TestNewSyncService_NilLocal(t *testing.T) {
-	_, err := NewSyncService(&mocks.MockWorldScanner{}, nil, &mocks.MockStorageRepository{}, &mocks.MockLibrarianService{}, nil, "", "test-lock")
+	_, err := NewSyncService(&mocks.MockDirectoryScanner{}, nil, &mocks.MockStorageRepository{}, &mocks.MockLibrarianService{}, nil, "", "test-lock")
 	assert.ErrorIs(t, err, ErrSyncLocalNil)
 }
 
 func TestNewSyncService_NilRemote(t *testing.T) {
-	_, err := NewSyncService(&mocks.MockWorldScanner{}, &mocks.MockStorageRepository{}, nil, &mocks.MockLibrarianService{}, nil, "", "test-lock")
+	_, err := NewSyncService(&mocks.MockDirectoryScanner{}, &mocks.MockStorageRepository{}, nil, &mocks.MockLibrarianService{}, nil, "", "test-lock")
 	assert.ErrorIs(t, err, ErrSyncRemoteNil)
 }
 
 func TestNewSyncService_NilLibrarian(t *testing.T) {
-	_, err := NewSyncService(&mocks.MockWorldScanner{}, &mocks.MockStorageRepository{}, &mocks.MockStorageRepository{}, nil, nil, "", "test-lock")
+	_, err := NewSyncService(&mocks.MockDirectoryScanner{}, &mocks.MockStorageRepository{}, &mocks.MockStorageRepository{}, nil, nil, "", "test-lock")
 	assert.ErrorIs(t, err, ErrSyncLibrarianNil)
 }
 
@@ -61,7 +61,7 @@ func TestSyncService_Download_P1Failure(t *testing.T) {
 		return nil, errors.New("network error")
 	}
 
-	svc, _ := newTestSyncService(&mocks.MockWorldScanner{}, &mocks.MockStorageRepository{}, remote, librarian)
+	svc, _ := newTestSyncService(&mocks.MockDirectoryScanner{}, &mocks.MockStorageRepository{}, remote, librarian)
 	err := svc.Download(context.Background())
 
 	assert.Error(t, err)
@@ -69,7 +69,7 @@ func TestSyncService_Download_P1Failure(t *testing.T) {
 }
 
 func TestSyncService_Upload_P1Failure(t *testing.T) {
-	scanner := &mocks.MockWorldScanner{}
+	scanner := &mocks.MockDirectoryScanner{}
 	scanner.ScanFunc = func(ctx context.Context) (map[string]string, error) {
 		return map[string]string{"a.dat": "new_hash"}, nil
 	}
@@ -96,7 +96,7 @@ func TestSyncService_Upload_P1Failure(t *testing.T) {
 }
 
 func TestSyncService_Upload_ScanFailure(t *testing.T) {
-	scanner := &mocks.MockWorldScanner{}
+	scanner := &mocks.MockDirectoryScanner{}
 	scanner.ScanFunc = func(ctx context.Context) (map[string]string, error) {
 		return nil, errors.New("walk error")
 	}

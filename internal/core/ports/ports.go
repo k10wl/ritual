@@ -17,6 +17,9 @@ type StorageRepository interface {
 	// Delete removes data by key
 	Delete(ctx context.Context, key string) error
 
+	// DeleteBatch removes multiple keys in a single operation
+	DeleteBatch(ctx context.Context, keys []string) error
+
 	// List returns all keys with the given prefix
 	List(ctx context.Context, prefix string) ([]string, error)
 
@@ -31,7 +34,7 @@ type MolfarService interface {
 	Prepare() error
 
 	// Run executes the main server orchestration process
-	Run(server *domain.Server) error
+	Run(server *domain.ServerRuntime) error
 
 	// Exit gracefully shuts down the server and cleans up resources
 	Exit() error
@@ -56,9 +59,6 @@ type LibrarianService interface {
 // ValidatorService defines the validation interface
 // Validator ensures instance integrity and validates data consistency
 type ValidatorService interface {
-	// CheckInstance validates manifest structure and content
-	CheckInstance(local *domain.Manifest, remote *domain.Manifest) error
-
 	// CheckWorld validates world data integrity
 	CheckWorld(local *domain.Manifest, remote *domain.Manifest) error
 
@@ -77,7 +77,7 @@ type CommandExecutor interface {
 // ServerRunner handles the execution of Minecraft server processes
 type ServerRunner interface {
 	// Run executes the server process with the given server configuration
-	Run(server *domain.Server) error
+	Run(server *domain.ServerRuntime) error
 }
 
 // BackupperService defines the backup orchestration interface
@@ -112,8 +112,14 @@ type ConditionService interface {
 	Check(ctx context.Context) error
 }
 
-// WorldScanner produces an xxhash map of all files in the worlds directory.
+// DirectoryScanner produces an xxhash map of all files in the worlds directory.
 // Implementations determine scanning strategy (full walk vs mtime-filtered).
-type WorldScanner interface {
+type DirectoryScanner interface {
 	Scan(ctx context.Context) (map[string]string, error)
+}
+
+// SyncService handles bidirectional synchronization between local and remote states.
+type SyncService interface {
+	Download(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error)
+	Upload(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error)
 }

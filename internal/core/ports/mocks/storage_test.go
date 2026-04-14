@@ -72,3 +72,41 @@ func TestMockStorageRepository(t *testing.T) {
 		t.Errorf("Expected 2 keys, got %d", len(keys))
 	}
 }
+
+func TestMockStorageRepository_DeleteBatch_WithFunc(t *testing.T) {
+	mock := NewMockStorageRepository()
+	mockStorage := mock.(*MockStorageRepository)
+
+	calledWith := []string{}
+	mockStorage.DeleteBatchFunc = func(ctx context.Context, keys []string) error {
+		calledWith = keys
+		return nil
+	}
+
+	err := mockStorage.DeleteBatch(context.Background(), []string{"a", "b", "c"})
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if len(calledWith) != 3 {
+		t.Errorf("Expected 3 keys, got %d", len(calledWith))
+	}
+}
+
+func TestMockStorageRepository_DeleteBatch_FallbackToDelete(t *testing.T) {
+	mock := NewMockStorageRepository()
+	mockStorage := mock.(*MockStorageRepository)
+
+	deleted := []string{}
+	mockStorage.DeleteFunc = func(ctx context.Context, key string) error {
+		deleted = append(deleted, key)
+		return nil
+	}
+
+	err := mockStorage.DeleteBatch(context.Background(), []string{"x", "y"})
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if len(deleted) != 2 {
+		t.Errorf("Expected 2 deletes, got %d", len(deleted))
+	}
+}

@@ -7,11 +7,12 @@ import (
 
 // MockStorageRepository is a mock implementation of StorageRepository for testing
 type MockStorageRepository struct {
-	GetFunc    func(ctx context.Context, key string) ([]byte, error)
-	PutFunc    func(ctx context.Context, key string, data []byte) error
-	DeleteFunc func(ctx context.Context, key string) error
-	ListFunc   func(ctx context.Context, prefix string) ([]string, error)
-	CopyFunc   func(ctx context.Context, sourceKey string, destKey string) error
+	GetFunc         func(ctx context.Context, key string) ([]byte, error)
+	PutFunc         func(ctx context.Context, key string, data []byte) error
+	DeleteFunc      func(ctx context.Context, key string) error
+	DeleteBatchFunc func(ctx context.Context, keys []string) error
+	ListFunc        func(ctx context.Context, prefix string) ([]string, error)
+	CopyFunc        func(ctx context.Context, sourceKey string, destKey string) error
 }
 
 // NewMockStorageRepository creates a new mock storage repository
@@ -39,6 +40,19 @@ func (m *MockStorageRepository) Put(ctx context.Context, key string, data []byte
 func (m *MockStorageRepository) Delete(ctx context.Context, key string) error {
 	if m.DeleteFunc != nil {
 		return m.DeleteFunc(ctx, key)
+	}
+	return nil
+}
+
+// DeleteBatch removes multiple keys in a single operation
+func (m *MockStorageRepository) DeleteBatch(ctx context.Context, keys []string) error {
+	if m.DeleteBatchFunc != nil {
+		return m.DeleteBatchFunc(ctx, keys)
+	}
+	for _, key := range keys {
+		if err := m.Delete(ctx, key); err != nil {
+			return err
+		}
 	}
 	return nil
 }

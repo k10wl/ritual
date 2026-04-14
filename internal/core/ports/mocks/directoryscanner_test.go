@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMockWorldScanner_Scan_Success(t *testing.T) {
-	mock := NewMockWorldScanner()
+func TestMockDirectoryScanner_Scan_Success(t *testing.T) {
+	mock := NewMockDirectoryScanner()
 	ctx := context.Background()
 
 	result, err := mock.Scan(ctx)
@@ -20,8 +20,8 @@ func TestMockWorldScanner_Scan_Success(t *testing.T) {
 	assert.Equal(t, 1, mock.ScanCount)
 }
 
-func TestMockWorldScanner_Scan_MultipleCalls(t *testing.T) {
-	mock := NewMockWorldScanner()
+func TestMockDirectoryScanner_Scan_MultipleCalls(t *testing.T) {
+	mock := NewMockDirectoryScanner()
 	ctx := context.Background()
 
 	_, _ = mock.Scan(ctx)
@@ -32,8 +32,8 @@ func TestMockWorldScanner_Scan_MultipleCalls(t *testing.T) {
 	assert.Equal(t, 3, mock.ScanCount)
 }
 
-func TestMockWorldScanner_Scan_WithFunction(t *testing.T) {
-	mock := NewMockWorldScanner()
+func TestMockDirectoryScanner_Scan_WithFunction(t *testing.T) {
+	mock := NewMockDirectoryScanner()
 	ctx := context.Background()
 	expectedErr := errors.New("scan failed")
 	expectedMap := map[string]string{"a.dat": "hash1"}
@@ -49,8 +49,8 @@ func TestMockWorldScanner_Scan_WithFunction(t *testing.T) {
 	assert.True(t, mock.ScanCalled)
 }
 
-func TestMockWorldScanner_Scan_NilContext(t *testing.T) {
-	mock := NewMockWorldScanner()
+func TestMockDirectoryScanner_Scan_NilContext(t *testing.T) {
+	mock := NewMockDirectoryScanner()
 
 	_, err := mock.Scan(nil)
 
@@ -58,18 +58,18 @@ func TestMockWorldScanner_Scan_NilContext(t *testing.T) {
 	assert.Contains(t, err.Error(), "context cannot be nil")
 }
 
-func TestMockWorldScanner_Scan_NilMock(t *testing.T) {
-	var mock *MockWorldScanner
+func TestMockDirectoryScanner_Scan_NilMock(t *testing.T) {
+	var mock *MockDirectoryScanner
 	ctx := context.Background()
 
 	_, err := mock.Scan(ctx)
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "mock world scanner cannot be nil")
+	assert.Contains(t, err.Error(), "mock directory scanner cannot be nil")
 }
 
-func TestMockWorldScanner_Reset(t *testing.T) {
-	mock := NewMockWorldScanner()
+func TestMockDirectoryScanner_Reset(t *testing.T) {
+	mock := NewMockDirectoryScanner()
 	ctx := context.Background()
 
 	mock.ScanFunc = func(ctx context.Context) (map[string]string, error) {
@@ -87,13 +87,13 @@ func TestMockWorldScanner_Reset(t *testing.T) {
 	assert.Nil(t, mock.ScanFunc)
 }
 
-func TestMockWorldScanner_Reset_Nil(t *testing.T) {
-	var mock *MockWorldScanner
+func TestMockDirectoryScanner_Reset_Nil(t *testing.T) {
+	var mock *MockDirectoryScanner
 	mock.Reset()
 }
 
-func TestMockWorldScanner_ImplementsInterface(t *testing.T) {
-	mock := NewMockWorldScanner()
+func TestMockDirectoryScanner_ImplementsInterface(t *testing.T) {
+	mock := NewMockDirectoryScanner()
 	ctx := context.Background()
 	result, err := mock.Scan(ctx)
 	assert.NoError(t, err)

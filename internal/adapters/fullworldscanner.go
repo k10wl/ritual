@@ -20,7 +20,7 @@ type FullWorldScanner struct {
 	root string
 }
 
-var _ ports.WorldScanner = (*FullWorldScanner)(nil)
+var _ ports.DirectoryScanner = (*FullWorldScanner)(nil)
 
 // NewFullWorldScanner creates a scanner that hashes every file in root.
 func NewFullWorldScanner(root string) (*FullWorldScanner, error) {

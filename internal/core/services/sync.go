@@ -28,7 +28,7 @@ type SyncPhase interface {
 // SyncService orchestrates delta sync as a state machine.
 // Each operation builds a chain of SyncPhase implementations and runs them sequentially.
 type SyncService struct {
-	scanner    ports.WorldScanner
+	scanner    ports.DirectoryScanner
 	local      ports.StorageRepository
 	remote     ports.StorageRepository
 	librarian  ports.LibrarianService
@@ -38,7 +38,7 @@ type SyncService struct {
 }
 
 func NewSyncService(
-	scanner ports.WorldScanner,
+	scanner ports.DirectoryScanner,
 	local ports.StorageRepository,
 	remote ports.StorageRepository,
 	librarian ports.LibrarianService,
