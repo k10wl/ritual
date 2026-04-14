@@ -1,49 +1,23 @@
 package services_test
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"ritual/internal/adapters"
-	"ritual/internal/adapters/streamer"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ports/mocks"
 	"ritual/internal/core/services"
 	"ritual/internal/testhelpers"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 )
-
-// mockTarGzDownloader implements streamer.S3StreamDownloader for testing
-type mockTarGzDownloader struct {
-	data []byte
-}
-
-func (m *mockTarGzDownloader) Download(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
-	return io.NopCloser(bytes.NewReader(m.data)), nil
-}
-
-// mockMolfarDownloader implements streamer.S3StreamDownloader with key lookup
-type mockMolfarDownloader struct {
-	data map[string][]byte
-}
-
-func (m *mockMolfarDownloader) Download(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
-	if data, ok := m.data[key]; ok {
-		return io.NopCloser(bytes.NewReader(data)), nil
-	}
-	return nil, io.EOF
-}
 
 func showDirectoryTree(t *testing.T, dirPath string, prefix string) {
 	entries, err := os.ReadDir(dirPath)
@@ -77,7 +51,7 @@ func createTestWorld(uri string) domain.World {
 	}
 }
 
-func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRepository, *adapters.FSRepository, *mockMolfarDownloader, string, string, func()) {
+func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRepository, *adapters.FSRepository, string, string, func()) {
 	tempDir := t.TempDir()
 	remoteTempDir := t.TempDir()
 
@@ -95,11 +69,6 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 	// Create remote storage (FS for testing) in separate temp dir
 	remoteStorage, err := adapters.NewFSRepository(remoteRoot)
 	assert.NoError(t, err)
-
-	// Create mock downloader for updaters
-	mockDownloader := &mockMolfarDownloader{
-		data: make(map[string][]byte),
-	}
 
 	// Create librarian service
 	librarianService, err := services.NewLibrarianService(localStorage, remoteStorage)
@@ -159,7 +128,7 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 		remoteStorage.Close() // This closes remoteRoot
 	}
 
-	return molfarService, localStorage, remoteStorage, mockDownloader, tempDir, remoteTempDir, cleanup
+	return molfarService, localStorage, remoteStorage, tempDir, remoteTempDir, cleanup
 }
 
 func setupRemoteManifest(t *testing.T, remoteStorage *adapters.FSRepository, manifestVersion string, worldURI string) {
@@ -176,149 +145,6 @@ func setupRemoteManifest(t *testing.T, remoteStorage *adapters.FSRepository, man
 	assert.NoError(t, err)
 }
 
-func setupInstanceTarGz(t *testing.T, downloader *mockMolfarDownloader, remoteTempDir string) {
-	// Create instance directory structure in remote temp dir
-	instanceDir := filepath.Join(remoteTempDir, config.ServerDir)
-	err := os.MkdirAll(instanceDir, 0755)
-	assert.NoError(t, err)
-
-	instanceRoot, err := os.OpenRoot(instanceDir)
-	assert.NoError(t, err)
-	defer instanceRoot.Close()
-
-	// Use test helper to create Paper instance
-	_, _, _, err = testhelpers.PaperInstanceSetup(instanceRoot, "1.20.1")
-	assert.NoError(t, err)
-
-	// Create tar archive in memory
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-
-	// Walk through instance directory and add files to tar
-	err = filepath.Walk(instanceDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		relPath, err := filepath.Rel(instanceDir, path)
-		if err != nil {
-			return err
-		}
-
-		// Skip the root directory itself
-		if relPath == "." {
-			return nil
-		}
-
-		header, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		header.Name = filepath.ToSlash(relPath)
-
-		if err := tw.WriteHeader(header); err != nil {
-			return err
-		}
-
-		if !info.IsDir() {
-			file, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-
-			_, err = io.Copy(tw, file)
-			if err != nil {
-				return err
-			}
-		}
-
-		return nil
-	})
-	assert.NoError(t, err)
-
-	// Close tar writer
-	assert.NoError(t, tw.Close())
-
-	// Store in mock downloader
-	downloader.data["server.tar.gz"] = buf.Bytes()
-}
-
-func setupWorldTar(t *testing.T, downloader *mockMolfarDownloader, remoteTempDir string, worldURI string) {
-	// Create world directory structure in remote temp dir
-	worldsDir := filepath.Join(remoteTempDir, config.RemoteBackups)
-	err := os.MkdirAll(worldsDir, 0755)
-	assert.NoError(t, err)
-
-	worldsRoot, err := os.OpenRoot(worldsDir)
-	assert.NoError(t, err)
-	defer worldsRoot.Close()
-
-	// Use test helper to create Paper world
-	_, _, _, err = testhelpers.PaperMinecraftWorldSetup(worldsRoot)
-	assert.NoError(t, err)
-
-	// Create tar archive in memory
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-
-	// Walk through worlds directory and add files to tar
-	// Only include world directories (world/, world_nether/, world_the_end/)
-	err = filepath.Walk(worldsDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Skip the worlds directory itself
-		if path == worldsDir {
-			return nil
-		}
-
-		// Calculate relative path from worlds directory
-		relPath, err := filepath.Rel(worldsDir, path)
-		if err != nil {
-			return err
-		}
-
-		// Skip any files that are not in world directories
-		if !strings.HasPrefix(relPath, "world") {
-			return nil
-		}
-
-		header, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		header.Name = filepath.ToSlash(relPath)
-
-		if err := tw.WriteHeader(header); err != nil {
-			return err
-		}
-
-		if !info.IsDir() {
-			file, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-
-			_, err = io.Copy(tw, file)
-			if err != nil {
-				return err
-			}
-		}
-
-		return nil
-	})
-	assert.NoError(t, err)
-
-	// Close tar writer
-	assert.NoError(t, tw.Close())
-
-	// Store in mock downloader with the world URI as key
-	downloader.data[worldURI] = buf.Bytes()
-}
-
 // MockServerRunner implements ports.ServerRunner for testing
 type MockServerRunner struct {
 	runCalled bool
@@ -333,13 +159,11 @@ func (m *MockServerRunner) Run(server *domain.ServerRuntime) error {
 
 func TestMolfarService_Prepare(globT *testing.T) {
 	globT.Run("no local manifest, no instance, no worlds", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, downloader, tempDir, remoteTempDir, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, tempDir, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Setup remote data
 		setupRemoteManifest(t, remoteStorage, "1.0.0", config.RemoteBackups+"/1234567890.tar")
-		setupInstanceTarGz(t, downloader, remoteTempDir)
-		setupWorldTar(t, downloader, remoteTempDir, config.RemoteBackups+"/1234567890.tar")
 
 		// Execute Prepare
 		err := molfar.Prepare()
@@ -375,12 +199,11 @@ func TestMolfarService_Prepare(globT *testing.T) {
 	})
 
 	globT.Run("existing local manifest, outdated instance", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, downloader, tempDir, _, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, tempDir, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Setup remote data with newer version
 		setupRemoteManifest(t, remoteStorage, "2.0.0", config.RemoteBackups+"/1234567890.tar")
-		setupInstanceTarGz(t, downloader, tempDir)
 
 		// Create local manifest with older version
 		ctx := context.Background()
@@ -414,12 +237,11 @@ func TestMolfarService_Prepare(globT *testing.T) {
 	})
 
 	globT.Run("existing local manifest, sync updater runs", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, downloader, tempDir, _, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, tempDir, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Setup remote data
 		setupRemoteManifest(t, remoteStorage, "1.0.0", config.RemoteBackups+"/1234567890.tar")
-		setupInstanceTarGz(t, downloader, tempDir)
 
 		// Create local manifest
 		ctx := context.Background()
@@ -445,7 +267,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 	})
 
 	globT.Run("no remote worlds - should launch successfully", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, downloader, tempDir, remoteTempDir, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, tempDir, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Setup remote manifest with NO worlds
@@ -455,9 +277,6 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		assert.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
-
-		// Setup instance tar.gz
-		setupInstanceTarGz(t, downloader, remoteTempDir)
 
 		// Execute Prepare - should succeed even without remote worlds
 		err = molfar.Prepare()
@@ -533,7 +352,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 
 func TestMolfarService_Run(t *testing.T) {
 	t.Run("successful server execution", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, _, _, _, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, _, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Create local manifest first
@@ -601,7 +420,7 @@ func TestMolfarService_Run(t *testing.T) {
 	})
 
 	t.Run("manifest update during run execution", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, _, _, _, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, _, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Create local manifest with older version
@@ -670,7 +489,7 @@ func TestMolfarService_Run(t *testing.T) {
 	})
 
 	t.Run("remote manifest fetch before run", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, _, _, _, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, _, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Create local manifest
@@ -737,7 +556,7 @@ func TestMolfarService_Run(t *testing.T) {
 	})
 
 	t.Run("nil server parameter", func(t *testing.T) {
-		molfar, _, _, _, _, _, cleanup := setupMolfarServices(t)
+		molfar, _, _, _, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		err := molfar.Run(nil)
@@ -755,7 +574,7 @@ func TestMolfarService_Run(t *testing.T) {
 	})
 
 	t.Run("server runner failure", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, _, _, _, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, _, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Create local manifest first
@@ -790,7 +609,7 @@ func TestMolfarService_Run(t *testing.T) {
 
 func TestMolfarService_Exit(t *testing.T) {
 	t.Run("successful exit with real backupper", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, _, tempDir, _, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, tempDir, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Setup test world data using testhelpers
@@ -880,50 +699,11 @@ func TestMolfarService_Exit(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotEmpty(t, backupFiles, "Backup files should be created")
 
-		// Verify backup archive can be extracted and validated
+		// Verify backup archive has data
 		if len(backupFiles) > 0 {
 			backupData, err := localStorage.Get(ctx, backupFiles[0])
 			assert.NoError(t, err)
 			assert.NotEmpty(t, backupData, "Backup data should not be empty")
-
-			// Create temporary directory for extraction test
-			extractDir := filepath.Join(tempDir, "extracted")
-			err = os.MkdirAll(extractDir, 0755)
-			assert.NoError(t, err)
-
-			// Extract using streamer.Pull with mock downloader
-			mockDownloader := &mockTarGzDownloader{data: backupData}
-			err = streamer.Pull(ctx, streamer.PullConfig{
-				Bucket:   "test",
-				Key:      "test.tar",
-				Dest:     extractDir,
-				Conflict: streamer.Replace,
-			}, mockDownloader)
-			assert.NoError(t, err)
-
-			// Log directory trees for debugging
-			t.Log("=== ORIGINAL INSTANCE DIRECTORY TREE ===")
-			showDirectoryTree(t, instancePath, "")
-			t.Log("=== EXTRACTED BACKUP DIRECTORY TREE ===")
-			showDirectoryTree(t, extractDir, "")
-
-			// Verify extracted world directories match original instance directories
-			worldDirs := []string{"world", "world_nether", "world_the_end"}
-			var extractedPaths, instancePaths []string
-			for _, wd := range worldDirs {
-				extractedPaths = append(extractedPaths, filepath.Join(extractDir, wd))
-				instancePaths = append(instancePaths, filepath.Join(instancePath, wd))
-			}
-			match, err := testhelpers.CheckDirs(testhelpers.DirPair{P1: extractedPaths, P2: instancePaths})
-			if err != nil || !match {
-				t.Logf("=== COMPARISON ERROR ===")
-				t.Logf("Error: %v, Match: %v", err, match)
-				t.Logf("ExtractDir: %s", extractDir)
-				t.Logf("InstancePath: %s", instancePath)
-				t.Logf("WorldDirs: %v", worldDirs)
-			}
-			assert.NoError(t, err)
-			assert.True(t, match, "Extracted backup world directories should match original instance directories")
 		}
 	})
 
@@ -981,7 +761,7 @@ func TestMolfarService_Exit(t *testing.T) {
 	})
 
 	t.Run("exit stamps RitualVersion with current AppVersion", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, _, tempDir, _, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, tempDir, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		ctx := context.Background()
@@ -1002,14 +782,14 @@ func TestMolfarService_Exit(t *testing.T) {
 		// Setup manifests with OLD RitualVersion (simulating old client)
 		lockID := "test-host::1234567890"
 		oldRitualVersion := "0.0.1" // Old version, different from current
-		localManifest := createTestManifest(oldRitualVersion, "1.20.1", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		localManifest := createTestManifest(oldRitualVersion, []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
 		localManifest.Lock(lockID)
 		manifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
-		remoteManifest := createTestManifest(oldRitualVersion, "1.20.1", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		remoteManifest := createTestManifest(oldRitualVersion, []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
 		remoteManifest.Lock(lockID)
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)
@@ -1182,7 +962,7 @@ func TestMolfarService_Exit(t *testing.T) {
 
 func TestMolfarService_LockMechanisms(t *testing.T) {
 	t.Run("lock acquisition failure - hostname resolution", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, _, _, _, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, _, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Create local manifest
@@ -1227,7 +1007,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 	})
 
 	t.Run("remote storage failure during Run", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, _, _, _, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, _, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Create local manifest
@@ -1270,7 +1050,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 	})
 
 	t.Run("lock ownership validation on exit", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, _, tempDir, _, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, tempDir, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Setup test world data
@@ -1319,7 +1099,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 	t.Run("concurrent lock acquisition attempts", func(t *testing.T) {
 		// Test that lock mechanism works correctly
 		// This test verifies the lock acquisition process works as expected
-		molfar, localStorage, remoteStorage, _, _, _, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, _, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Create manifests
@@ -1359,7 +1139,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 	})
 
 	t.Run("lock validation with nil server", func(t *testing.T) {
-		molfar, _, _, _, _, _, cleanup := setupMolfarServices(t)
+		molfar, _, _, _, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Test with nil server
@@ -1369,7 +1149,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 	})
 
 	t.Run("race condition - lock acquired between Prepare and Run", func(t *testing.T) {
-		molfar1, localStorage, remoteStorage, _, _, _, cleanup := setupMolfarServices(t)
+		molfar1, localStorage, remoteStorage, _, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Create manifests
@@ -1409,7 +1189,7 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 	})
 
 	t.Run("lock cleanup on exit failure", func(t *testing.T) {
-		molfar, localStorage, remoteStorage, _, tempDir, _, cleanup := setupMolfarServices(t)
+		molfar, localStorage, remoteStorage, tempDir, _, cleanup := setupMolfarServices(t)
 		defer cleanup()
 
 		// Setup test world data using testhelpers

@@ -3,14 +3,14 @@ package adapters
 import (
 	"bytes"
 	"context"
-	"errors"
+	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"path/filepath"
 	"sync/atomic"
 	"time"
 
-	"ritual/internal/adapters/streamer"
 	appconfig "ritual/internal/config"
 	"ritual/internal/core/ports"
 
@@ -18,12 +18,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 type S3Client interface {
 	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 	DeleteObject(ctx context.Context, params *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
+	DeleteObjects(ctx context.Context, params *s3.DeleteObjectsInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error)
 	ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
 	CopyObject(ctx context.Context, params *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error)
 }
@@ -92,10 +94,13 @@ func (r *R2Repository) Get(ctx context.Context, key string) ([]byte, error) {
 
 func (r *R2Repository) Put(ctx context.Context, key string, data []byte) error {
 	key = filepath.ToSlash(key)
+	md5sum := md5.Sum(data)
+	contentMD5 := base64.StdEncoding.EncodeToString(md5sum[:])
 	_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(r.bucket),
-		Key:    aws.String(key),
-		Body:   bytes.NewReader(data),
+		Bucket:     aws.String(r.bucket),
+		Key:        aws.String(key),
+		Body:       bytes.NewReader(data),
+		ContentMD5: &contentMD5,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to put object %s: %w", key, err)
@@ -177,6 +182,30 @@ func (r *R2Repository) Copy(ctx context.Context, sourceKey string, destKey strin
 	return nil
 }
 
+func (r *R2Repository) DeleteBatch(ctx context.Context, keys []string) error {
+	const maxBatch = 1000
+	for i := 0; i < len(keys); i += maxBatch {
+		end := i + maxBatch
+		if end > len(keys) {
+			end = len(keys)
+		}
+		batch := keys[i:end]
+		objects := make([]types.ObjectIdentifier, len(batch))
+		for j, key := range batch {
+			k := key
+			objects[j] = types.ObjectIdentifier{Key: &k}
+		}
+		_, err := r.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+			Bucket: &r.bucket,
+			Delete: &types.Delete{Objects: objects, Quiet: aws.Bool(true)},
+		})
+		if err != nil {
+			return fmt.Errorf("batch delete failed: %w", err)
+		}
+	}
+	return nil
+}
+
 var _ ports.StorageRepository = (*R2Repository)(nil)
 
 // progressReadCloser wraps a ReadCloser and emits download progress events
@@ -242,37 +271,4 @@ func (pr *progressReadCloser) Close() error {
 	return pr.reader.Close()
 }
 
-// Download streams content from R2 as an io.ReadCloser
-// Implements streamer.S3StreamDownloader interface
-func (r *R2Repository) Download(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
-	if ctx == nil {
-		return nil, errors.New("context cannot be nil")
-	}
-	if r == nil {
-		return nil, errors.New("R2 repository cannot be nil")
-	}
-
-	if bucket == "" {
-		bucket = r.bucket
-	}
-
-	key = filepath.ToSlash(key)
-
-	result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to download %s: %w", key, err)
-	}
-
-	var contentLength int64
-	if result.ContentLength != nil {
-		contentLength = *result.ContentLength
-	}
-
-	return newProgressReadCloser(result.Body, key, contentLength, r.events), nil
-}
-
-var _ streamer.S3StreamDownloader = (*R2Repository)(nil)
 

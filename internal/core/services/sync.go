@@ -2,233 +2,221 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"time"
 
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )
 
-var (
-	ErrSyncScannerNil   = errors.New("world scanner cannot be nil")
-	ErrSyncLocalNil     = errors.New("local storage cannot be nil")
-	ErrSyncRemoteNil    = errors.New("remote storage cannot be nil")
-	ErrSyncLibrarianNil = errors.New("librarian service cannot be nil")
-	ErrSyncNil          = errors.New("sync service cannot be nil")
-)
-
-// SyncPhase represents one atomic step in a sync operation.
-type SyncPhase interface {
-	Execute(ctx context.Context) error
-	Verify(ctx context.Context) error
-	Name() string
+// SyncConfig holds the identity of a sync target.
+type SyncConfig struct {
+	Prefix   string // "worlds" or "server"
+	LocalDir string // absolute path to final destination
 }
 
-// SyncService orchestrates delta sync as a state machine.
-// Each operation builds a chain of SyncPhase implementations and runs them sequentially.
-type SyncService struct {
-	scanner    ports.DirectoryScanner
-	local      ports.StorageRepository
-	remote     ports.StorageRepository
-	librarian  ports.LibrarianService
-	events     chan<- ports.Event
-	worldsRoot string
-	lockID     string
+type syncService struct {
+	scanner       ports.DirectoryScanner
+	local         ports.StorageRepository
+	remote        ports.StorageRepository
+	events        chan<- ports.Event
+	config        SyncConfig
+	localStaging  string
+	remoteStaging string
 }
 
-func NewSyncService(
+var _ ports.SyncService = (*syncService)(nil)
+
+func NewDeltaSyncService(
 	scanner ports.DirectoryScanner,
-	local ports.StorageRepository,
-	remote ports.StorageRepository,
-	librarian ports.LibrarianService,
+	local, remote ports.StorageRepository,
 	events chan<- ports.Event,
-	worldsRoot string,
-	lockID string,
-) (*SyncService, error) {
-	if scanner == nil {
-		return nil, ErrSyncScannerNil
+	config SyncConfig,
+	localStaging string,
+	remoteStaging string,
+) *syncService {
+	return &syncService{
+		scanner:       scanner,
+		local:         local,
+		remote:        remote,
+		events:        events,
+		config:        config,
+		localStaging:  localStaging,
+		remoteStaging: remoteStaging,
 	}
-	if local == nil {
-		return nil, ErrSyncLocalNil
+}
+
+func (s *syncService) Download(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error) {
+	diff := domain.ComputeDiff(local.XXHashMap, remote.XXHashMap)
+	if len(diff.Download) == 0 {
+		return local, nil
 	}
-	if remote == nil {
-		return nil, ErrSyncRemoteNil
+
+	defer os.RemoveAll(s.localStaging)
+
+	s.send(ports.StartEvent{Operation: "sync-" + s.config.Prefix})
+
+	if err := s.stageDownload(ctx, diff.Download); err != nil {
+		return local, fmt.Errorf("stage: %w", err)
 	}
-	if librarian == nil {
-		return nil, ErrSyncLibrarianNil
+	if err := s.commitDownload(); err != nil {
+		return local, fmt.Errorf("commit: %w", err)
 	}
-	return &SyncService{
-		scanner:    scanner,
-		local:      local,
-		remote:     remote,
-		librarian:  librarian,
-		events:     events,
-		worldsRoot: worldsRoot,
-		lockID:     lockID,
+	s.cleanLocalGhosts(remote.XXHashMap)
+
+	s.send(ports.FinishEvent{Operation: "sync-" + s.config.Prefix})
+
+	return domain.SyncState{
+		XXHashMap:    remote.XXHashMap,
+		XXHashSyncAt: remote.XXHashSyncAt,
 	}, nil
 }
 
-func (s *SyncService) send(evt ports.Event) {
+func (s *syncService) Upload(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error) {
+	newMap, err := s.scanner.Scan(ctx)
+	if err != nil {
+		return local, fmt.Errorf("scan: %w", err)
+	}
+	now := time.Now()
+
+	diff := domain.ComputeDiff(newMap, remote.XXHashMap)
+	if len(diff.Upload) == 0 && len(diff.Delete) == 0 {
+		return domain.SyncState{XXHashMap: newMap, XXHashSyncAt: now}, nil
+	}
+
+	s.send(ports.StartEvent{Operation: "sync-" + s.config.Prefix})
+
+	if len(diff.Upload) > 0 {
+		if err := s.stageUpload(ctx, diff.Upload); err != nil {
+			return local, fmt.Errorf("stage: %w", err)
+		}
+		if err := s.commitUpload(ctx, diff.Upload); err != nil {
+			return local, fmt.Errorf("commit: %w", err)
+		}
+	}
+	if len(diff.Delete) > 0 {
+		s.cleanRemoteOrphans(ctx, diff.Delete)
+	}
+	s.cleanRemoteStaging(ctx)
+
+	s.send(ports.FinishEvent{Operation: "sync-" + s.config.Prefix})
+
+	return domain.SyncState{XXHashMap: newMap, XXHashSyncAt: now}, nil
+}
+
+func (s *syncService) send(evt ports.Event) {
 	ports.SendEvent(s.events, evt)
 }
 
-func (s *SyncService) runPhases(ctx context.Context, phases []SyncPhase) error {
-	for _, p := range phases {
-		s.send(ports.StartEvent{Operation: p.Name()})
-		if err := p.Execute(ctx); err != nil {
-			return fmt.Errorf("%s: %w", p.Name(), err)
-		}
-		if err := p.Verify(ctx); err != nil {
-			return fmt.Errorf("%s verification: %w", p.Name(), err)
-		}
-		s.send(ports.FinishEvent{Operation: p.Name()})
-	}
-	return nil
-}
-
-// Download fetches changed files from remote, stages locally, commits to worlds, cleans ghosts.
-func (s *SyncService) Download(ctx context.Context) error {
-	if s == nil {
-		return ErrSyncNil
-	}
-
-	s.send(ports.StartEvent{Operation: "sync-download"})
-
-	localManifest, err := s.librarian.GetLocalManifest(ctx)
-	if err != nil {
-		return fmt.Errorf("get local manifest: %w", err)
-	}
-	remoteManifest, err := s.librarian.GetRemoteManifest(ctx)
-	if err != nil {
-		return fmt.Errorf("get remote manifest: %w", err)
-	}
-
-	diff := domain.ComputeDiff(localManifest.XXHashMap, remoteManifest.XXHashMap)
-	if len(diff.Download) == 0 {
-		s.send(ports.FinishEvent{Operation: "sync-download"})
-		return nil
-	}
-
-	syncPrefix := "sync/" + s.lockID
-
-	phases := []SyncPhase{
-		&StagePhase{
-			source:     s.remote,
-			dest:       s.local,
-			files:      diff.Download,
-			syncPrefix: syncPrefix,
-			worldsKey:  "worlds",
-			events:     s.events,
-			operation:  "sync-download",
-		},
-		&CommitDownloadPhase{
-			local:          s.local,
-			librarian:      s.librarian,
-			files:          diff.Download,
-			syncPrefix:     syncPrefix,
-			localManifest:  localManifest,
-			remoteManifest: remoteManifest,
-		},
-		&CleanupDownloadPhase{
-			local:      s.local,
-			worldsRoot: s.worldsRoot,
-			xxhashMap:  remoteManifest.XXHashMap,
-			syncPrefix: syncPrefix,
-		},
-	}
-
-	if err := s.runPhases(ctx, phases); err != nil {
-		return err
-	}
-
-	s.send(ports.FinishEvent{Operation: "sync-download"})
-	return nil
-}
-
-// Upload scans local worlds, stages changes to remote, commits to remote worlds, deletes orphans.
-func (s *SyncService) Upload(ctx context.Context) error {
-	if s == nil {
-		return ErrSyncNil
-	}
-
-	s.send(ports.StartEvent{Operation: "sync-upload"})
-
-	newMap, err := s.scanner.Scan(ctx)
-	if err != nil {
-		return fmt.Errorf("scan worlds: %w", err)
-	}
-
-	localManifest, err := s.librarian.GetLocalManifest(ctx)
-	if err != nil {
-		return fmt.Errorf("get local manifest: %w", err)
-	}
-	localManifest.XXHashMap = newMap
-	localManifest.XXHashSyncAt = time.Now()
-	if err := s.librarian.SaveLocalManifest(ctx, localManifest); err != nil {
-		return fmt.Errorf("save local manifest after scan: %w", err)
-	}
-
-	remoteManifest, err := s.librarian.GetRemoteManifest(ctx)
-	if err != nil {
-		return fmt.Errorf("get remote manifest: %w", err)
-	}
-
-	diff := domain.ComputeDiff(newMap, remoteManifest.XXHashMap)
-	if len(diff.Upload) == 0 && len(diff.Delete) == 0 {
-		s.send(ports.FinishEvent{Operation: "sync-upload"})
-		return nil
-	}
-
-	syncPrefix := "sync/" + s.lockID
-
-	var phases []SyncPhase
-
-	if len(diff.Upload) > 0 {
-		phases = append(phases,
-			&StagePhase{
-				source:     s.local,
-				dest:       s.remote,
-				files:      diff.Upload,
-				syncPrefix: syncPrefix,
-				worldsKey:  "worlds",
-				events:     s.events,
-				operation:  "sync-upload",
-			},
-			&CommitUploadPhase{
-				remote:         s.remote,
-				librarian:      s.librarian,
-				files:          diff.Upload,
-				syncPrefix:     syncPrefix,
-				newMap:         newMap,
-				syncAt:         localManifest.XXHashSyncAt,
-				remoteManifest: remoteManifest,
-			},
-		)
-	} else {
-		// Delete-only: still need manifest update
-		phases = append(phases, &CommitUploadPhase{
-			remote:         s.remote,
-			librarian:      s.librarian,
-			files:          nil,
-			syncPrefix:     syncPrefix,
-			newMap:         newMap,
-			syncAt:         localManifest.XXHashSyncAt,
-			remoteManifest: remoteManifest,
+// stageDownload downloads files from remote to local staging dir.
+func (s *syncService) stageDownload(ctx context.Context, files []string) error {
+	for i, file := range files {
+		s.send(ports.UpdateEvent{
+			Operation: "sync-" + s.config.Prefix,
+			Message:   "Downloading",
+			Data:      map[string]any{"file": file, "progress": i + 1, "total": len(files)},
 		})
+		srcKey := s.config.Prefix + "/" + file
+		data, err := s.remote.Get(ctx, srcKey)
+		if err != nil {
+			return fmt.Errorf("get %s: %w", file, err)
+		}
+		dstPath := filepath.Join(s.localStaging, filepath.FromSlash(file))
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", file, err)
+		}
+		if err := os.WriteFile(dstPath, data, 0644); err != nil {
+			return fmt.Errorf("write staging %s: %w", file, err)
+		}
 	}
-
-	phases = append(phases, &CleanupUploadPhase{
-		remote:     s.remote,
-		files:      diff.Delete,
-		syncPrefix: syncPrefix,
-		events:     s.events,
-	})
-
-	if err := s.runPhases(ctx, phases); err != nil {
-		return err
-	}
-
-	s.send(ports.FinishEvent{Operation: "sync-upload"})
 	return nil
+}
+
+// commitDownload walks staging dir and writes files to local target dir.
+func (s *syncService) commitDownload() error {
+	return fs.WalkDir(os.DirFS(s.localStaging), ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || path == "." {
+			return err
+		}
+		data, readErr := os.ReadFile(filepath.Join(s.localStaging, path))
+		if readErr != nil {
+			return readErr
+		}
+		dstPath := filepath.Join(s.config.LocalDir, filepath.FromSlash(path))
+		if mkErr := os.MkdirAll(filepath.Dir(dstPath), 0755); mkErr != nil {
+			return mkErr
+		}
+		return os.WriteFile(dstPath, data, 0644)
+	})
+}
+
+// cleanLocalGhosts removes local files not present in the remote hash map.
+func (s *syncService) cleanLocalGhosts(xxhashMap map[string]string) {
+	filepath.WalkDir(s.config.LocalDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, relErr := filepath.Rel(s.config.LocalDir, path)
+		if relErr != nil {
+			return nil
+		}
+		if _, exists := xxhashMap[filepath.ToSlash(rel)]; !exists {
+			os.Remove(path)
+		}
+		return nil
+	})
+}
+
+// stageUpload uploads files from local storage to remote staging prefix.
+func (s *syncService) stageUpload(ctx context.Context, files []string) error {
+	for i, file := range files {
+		s.send(ports.UpdateEvent{
+			Operation: "sync-" + s.config.Prefix,
+			Message:   "Uploading",
+			Data:      map[string]any{"file": file, "progress": i + 1, "total": len(files)},
+		})
+		srcKey := s.config.Prefix + "/" + file
+		data, err := s.local.Get(ctx, srcKey)
+		if err != nil {
+			return fmt.Errorf("get local %s: %w", file, err)
+		}
+		dstKey := s.remoteStaging + "/" + file
+		if err := s.remote.Put(ctx, dstKey, data); err != nil {
+			return fmt.Errorf("stage %s: %w", file, err)
+		}
+	}
+	return nil
+}
+
+// commitUpload moves files from remote staging to final remote prefix.
+func (s *syncService) commitUpload(ctx context.Context, files []string) error {
+	for _, file := range files {
+		src := s.remoteStaging + "/" + file
+		dst := s.config.Prefix + "/" + file
+		if err := s.remote.Copy(ctx, src, dst); err != nil {
+			return fmt.Errorf("copy %s: %w", file, err)
+		}
+		_ = s.remote.Delete(ctx, src)
+	}
+	return nil
+}
+
+// cleanRemoteOrphans batch-deletes orphaned files from remote.
+func (s *syncService) cleanRemoteOrphans(ctx context.Context, files []string) {
+	keys := make([]string, len(files))
+	for i, file := range files {
+		keys[i] = s.config.Prefix + "/" + file
+	}
+	_ = s.remote.DeleteBatch(ctx, keys)
+}
+
+// cleanRemoteStaging batch-deletes remaining staging keys.
+func (s *syncService) cleanRemoteStaging(ctx context.Context) {
+	keys, err := s.remote.List(ctx, s.remoteStaging)
+	if err == nil && len(keys) > 0 {
+		_ = s.remote.DeleteBatch(ctx, keys)
+	}
 }

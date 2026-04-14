@@ -77,3 +77,9 @@ func (r *RetryStorageRepository) Copy(ctx context.Context, sourceKey string, des
 		return r.inner.Copy(ctx, sourceKey, destKey)
 	}, r.retryOpts(ctx)...)
 }
+
+func (r *RetryStorageRepository) DeleteBatch(ctx context.Context, keys []string) error {
+	return retry.Do(func() error {
+		return r.inner.DeleteBatch(ctx, keys)
+	}, r.retryOpts(ctx)...)
+}

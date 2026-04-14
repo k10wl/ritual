@@ -44,6 +44,11 @@ func (m *MockS3Client) CopyObject(ctx context.Context, params *s3.CopyObjectInpu
 	return args.Get(0).(*s3.CopyObjectOutput), args.Error(1)
 }
 
+func (m *MockS3Client) DeleteObjects(ctx context.Context, params *s3.DeleteObjectsInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	return args.Get(0).(*s3.DeleteObjectsOutput), args.Error(1)
+}
+
 func TestR2Repository_SuccessCases(t *testing.T) {
 	mockClient := new(MockS3Client)
 	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
@@ -116,6 +121,17 @@ func TestR2Repository_SuccessCases(t *testing.T) {
 		assert.NoError(t, err)
 		mockClient.AssertExpectations(t)
 	})
+
+	t.Run("delete batch success", func(t *testing.T) {
+		keys := []string{"key1", "key2", "key3"}
+
+		mockClient.On("DeleteObjects", mock.Anything, mock.Anything, mock.Anything).Return(&s3.DeleteObjectsOutput{}, nil)
+
+		err := repo.DeleteBatch(context.Background(), keys)
+
+		assert.NoError(t, err)
+		mockClient.AssertExpectations(t)
+	})
 }
 
 func TestR2Repository_ErrorConditions(t *testing.T) {
@@ -181,6 +197,18 @@ func TestR2Repository_ErrorConditions(t *testing.T) {
 		mockClient.On("CopyObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.CopyObjectOutput{}, mockErr)
 
 		err := repo.Copy(context.Background(), sourceKey, destKey)
+
+		assert.Error(t, err)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("delete batch error", func(t *testing.T) {
+		keys := []string{"key1", "key2"}
+		mockErr := errors.New("s3 batch delete error")
+
+		mockClient.On("DeleteObjects", mock.Anything, mock.Anything, mock.Anything).Return(&s3.DeleteObjectsOutput{}, mockErr)
+
+		err := repo.DeleteBatch(context.Background(), keys)
 
 		assert.Error(t, err)
 		mockClient.AssertExpectations(t)
