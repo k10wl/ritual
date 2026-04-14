@@ -276,11 +276,11 @@ func main() {
 
 	retentions := []ports.RetentionService{localRetention, r2Retention, logRetention}
 
-	// Backuppers — only worlds upload on exit
-	worldSyncUploader := services.NewSyncUploadBackupper(worldSync, librarian, func(m *domain.Manifest) *domain.SyncState {
+	// Exit updaters — only worlds upload on exit
+	worldSyncUploader := services.NewSyncUploader(worldSync, librarian, func(m *domain.Manifest) *domain.SyncState {
 		return &m.Worlds.SyncState
 	})
-	backuppers := []ports.BackupperService{worldSyncUploader}
+	exitUpdaters := []ports.UpdaterService{worldSyncUploader}
 
 	// Create server runner
 	commandExecutor := adapters.NewCommandExecutorAdapter()
@@ -293,7 +293,7 @@ func main() {
 	}
 
 	// Create Molfar service
-	molfar, err := services.NewMolfarService(conditions, updaters, backuppers, retentions, serverRunner, librarian, events, workRoot)
+	molfar, err := services.NewMolfarService(conditions, updaters, exitUpdaters, retentions, serverRunner, librarian, localStorage, remoteStorage, events, workRoot)
 	if err != nil {
 		fmt.Printf("Failed to create molfar service: %v\n", err)
 		close(events)

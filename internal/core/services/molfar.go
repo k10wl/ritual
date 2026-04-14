@@ -25,10 +25,12 @@ var (
 type MolfarService struct {
 	conditions    []ports.ConditionService
 	updaters      []ports.UpdaterService
-	backuppers    []ports.BackupperService
+	exitUpdaters  []ports.UpdaterService
 	retentions    []ports.RetentionService
 	serverRunner  ports.ServerRunner
 	librarian     ports.LibrarianService
+	localStorage  ports.StorageRepository
+	remoteStorage ports.StorageRepository
 	events        chan<- ports.Event
 	workRoot      *os.Root
 	currentLockID string // Tracks the current lock ID for ownership validation (internal use only)
@@ -39,10 +41,12 @@ type MolfarService struct {
 func NewMolfarService(
 	conditions []ports.ConditionService,
 	updaters []ports.UpdaterService,
-	backuppers []ports.BackupperService,
+	exitUpdaters []ports.UpdaterService,
 	retentions []ports.RetentionService,
 	serverRunner ports.ServerRunner,
 	librarian ports.LibrarianService,
+	localStorage ports.StorageRepository,
+	remoteStorage ports.StorageRepository,
 	events chan<- ports.Event,
 	workRoot *os.Root,
 ) (*MolfarService, error) {
@@ -62,12 +66,12 @@ func NewMolfarService(
 			return nil, fmt.Errorf("updater at index %d cannot be nil", i)
 		}
 	}
-	if backuppers == nil {
-		return nil, errors.New("backuppers slice cannot be nil")
+	if exitUpdaters == nil {
+		return nil, errors.New("exitUpdaters slice cannot be nil")
 	}
-	for i, b := range backuppers {
-		if b == nil {
-			return nil, fmt.Errorf("backupper at index %d cannot be nil", i)
+	for i, u := range exitUpdaters {
+		if u == nil {
+			return nil, fmt.Errorf("exit updater at index %d cannot be nil", i)
 		}
 	}
 	if retentions == nil {
@@ -84,19 +88,27 @@ func NewMolfarService(
 	if librarian == nil {
 		return nil, ErrLibrarianNil
 	}
+	if localStorage == nil {
+		return nil, errors.New("localStorage cannot be nil")
+	}
+	if remoteStorage == nil {
+		return nil, errors.New("remoteStorage cannot be nil")
+	}
 	if workRoot == nil {
 		return nil, errors.New("workRoot cannot be nil")
 	}
 
 	molfar := &MolfarService{
-		conditions:   conditions,
-		updaters:     updaters,
-		backuppers:   backuppers,
-		retentions:   retentions,
-		serverRunner: serverRunner,
-		librarian:    librarian,
-		events:       events,
-		workRoot:     workRoot,
+		conditions:    conditions,
+		updaters:      updaters,
+		exitUpdaters:  exitUpdaters,
+		retentions:    retentions,
+		serverRunner:  serverRunner,
+		librarian:     librarian,
+		localStorage:  localStorage,
+		remoteStorage: remoteStorage,
+		events:        events,
+		workRoot:      workRoot,
 	}
 
 	return molfar, nil
@@ -331,8 +343,8 @@ func (m *MolfarService) executeServer(ctx context.Context, server *domain.Server
 	return nil
 }
 
-// Exit gracefully shuts down the server and cleans up resources
-// Runs all backuppers in sequence only if we own the lock
+// Exit gracefully shuts down: delta-sync upload, snapshot (if dirty), retention, unlock.
+// Only runs if we own the lock.
 func (m *MolfarService) Exit() error {
 	if m == nil {
 		return ErrMolfarNil
@@ -343,120 +355,73 @@ func (m *MolfarService) Exit() error {
 
 	m.send(ports.StartEvent{Operation: "exit"})
 	m.send(ports.UpdateEvent{Operation: "exit", Message: "Starting exit phase"})
-	ctx := context.Background()
+	defer m.send(ports.FinishEvent{Operation: "exit"})
 
-	// Skip backup and unlock if we don't own the lock
 	if m.currentLockID == "" {
-		m.send(ports.UpdateEvent{Operation: "exit", Message: "No lock owned, skipping backup and unlock"})
-		m.send(ports.FinishEvent{Operation: "exit"})
+		m.send(ports.UpdateEvent{Operation: "exit", Message: "No lock owned, skipping exit flow"})
 		return nil
 	}
 
-	// Run all backuppers and collect archive names
-	var lastArchiveName string
-	for i, backupper := range m.backuppers {
-		m.send(ports.StartEvent{Operation: "backup"})
-		m.send(ports.UpdateEvent{Operation: "backup", Message: "Running backupper", Data: map[string]any{"index": i}})
-		archiveName, err := backupper.Run(ctx)
-		if err != nil {
-			m.send(ports.ErrorEvent{Operation: "backup", Err: err})
-			return fmt.Errorf("backupper %d failed: %w", i, err)
-		}
-		m.send(ports.UpdateEvent{Operation: "backup", Message: "Backupper completed", Data: map[string]any{"index": i, "archive_name": archiveName}})
-		m.send(ports.FinishEvent{Operation: "backup"})
-		lastArchiveName = archiveName
+	ctx := context.Background()
+
+	// Snapshot sync state BEFORE exit updaters mutate it — for dirty check.
+	localBefore, err := m.librarian.GetLocalManifest(ctx)
+	if err != nil {
+		m.send(ports.ErrorEvent{Operation: "exit", Err: err})
+		return fmt.Errorf("get local manifest: %w", err)
+	}
+	remoteBefore, err := m.librarian.GetRemoteManifest(ctx)
+	if err != nil {
+		m.send(ports.ErrorEvent{Operation: "exit", Err: err})
+		return fmt.Errorf("get remote manifest: %w", err)
 	}
 
-	// Update manifests with last archive name (from any backupper)
-	var updatedManifest *domain.Manifest
-	if lastArchiveName != "" {
-		manifest, err := m.updateManifestsWithArchive(ctx, lastArchiveName)
+	// Delta sync upload.
+	for i, u := range m.exitUpdaters {
+		m.send(ports.StartEvent{Operation: "exit-updater"})
+		m.send(ports.UpdateEvent{Operation: "exit-updater", Message: "Running exit updater", Data: map[string]any{"index": i}})
+		if err := u.Run(ctx); err != nil {
+			m.send(ports.ErrorEvent{Operation: "exit-updater", Err: err})
+			return fmt.Errorf("exit updater %d: %w", i, err)
+		}
+		m.send(ports.FinishEvent{Operation: "exit-updater"})
+	}
+
+	// Snapshot backups only if worlds were dirty before sync.
+	if ShouldBackup(localBefore.Worlds.SyncState, remoteBefore.Worlds.SyncState) {
+		manifestAfter, err := m.librarian.GetLocalManifest(ctx)
 		if err != nil {
 			m.send(ports.ErrorEvent{Operation: "exit", Err: err})
-			return err
+			return fmt.Errorf("get manifest for backup: %w", err)
 		}
-		updatedManifest = manifest
+
+		m.send(ports.StartEvent{Operation: "backup"})
+		m.send(ports.UpdateEvent{Operation: "backup", Message: "Creating local snapshot"})
+		if err := CreateBackup(ctx, m.localStorage, config.WorldsDir, config.BackupsDir, manifestAfter); err != nil {
+			m.send(ports.ErrorEvent{Operation: "backup", Err: err})
+			return fmt.Errorf("local backup: %w", err)
+		}
+		m.send(ports.UpdateEvent{Operation: "backup", Message: "Creating R2 snapshot"})
+		if err := CreateBackup(ctx, m.remoteStorage, config.WorldsDir, config.BackupsDir, manifestAfter); err != nil {
+			m.send(ports.ErrorEvent{Operation: "backup", Err: err})
+			return fmt.Errorf("r2 backup: %w", err)
+		}
+		m.send(ports.FinishEvent{Operation: "backup"})
+	} else {
+		m.send(ports.UpdateEvent{Operation: "backup", Message: "Worlds clean, skipping snapshot"})
 	}
 
-	// Apply retention policies after manifest is updated
-	if updatedManifest != nil {
-		for i, retention := range m.retentions {
-			m.send(ports.StartEvent{Operation: "retention"})
-			m.send(ports.UpdateEvent{Operation: "retention", Message: "Running retention", Data: map[string]any{"index": i}})
-			if err := retention.Apply(ctx); err != nil {
-				m.send(ports.ErrorEvent{Operation: "retention", Err: err})
-				return fmt.Errorf("retention %d failed: %w", i, err)
-			}
-			m.send(ports.FinishEvent{Operation: "retention"})
-		}
-
-		// Save manifest after retention policies modified Backups
-		if err := m.librarian.SaveLocalManifest(ctx, updatedManifest); err != nil {
+	// Retentions — always run.
+	for i, r := range m.retentions {
+		m.send(ports.StartEvent{Operation: "retention"})
+		if err := r.Apply(ctx); err != nil {
 			m.send(ports.ErrorEvent{Operation: "retention", Err: err})
-			return fmt.Errorf("failed to save local manifest after retention: %w", err)
+			return fmt.Errorf("retention %d: %w", i, err)
 		}
-		if err := m.librarian.SaveRemoteManifest(ctx, updatedManifest); err != nil {
-			m.send(ports.ErrorEvent{Operation: "retention", Err: err})
-			return fmt.Errorf("failed to save remote manifest after retention: %w", err)
-		}
+		m.send(ports.FinishEvent{Operation: "retention"})
 	}
 
-	// Unlock manifests after successful backup
-	if err := m.unlockManifests(ctx); err != nil {
-		m.send(ports.ErrorEvent{Operation: "exit", Err: err})
-		return err
-	}
-
-	m.send(ports.UpdateEvent{Operation: "exit", Message: "Exit phase completed"})
-	m.send(ports.FinishEvent{Operation: "exit"})
-	return nil
-}
-
-// updateManifestsWithArchive updates both local and remote manifests with the new archive name
-// Returns the updated manifest for use in retention policies
-func (m *MolfarService) updateManifestsWithArchive(ctx context.Context, archiveName string) (*domain.Manifest, error) {
-	if ctx == nil {
-		return nil, errors.New("context cannot be nil")
-	}
-	if archiveName == "" {
-		return nil, errors.New("archive name cannot be empty")
-	}
-	if m.librarian == nil {
-		return nil, ErrLibrarianNil
-	}
-
-	m.send(ports.UpdateEvent{Operation: "exit", Message: "Updating manifests with new archive", Data: map[string]any{"archive_name": archiveName}})
-
-	// Get local manifest
-	localManifest, err := m.librarian.GetLocalManifest(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create new world entry with archive name
-	world, err := domain.NewWorld(archiveName)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add world to manifest
-	localManifest.AddWorld(*world)
-
-	// Stamp RitualVersion before saving manifests
-	localManifest.RitualVersion = config.AppVersion
-
-	// Save updated local manifest
-	if err := m.librarian.SaveLocalManifest(ctx, localManifest); err != nil {
-		return nil, err
-	}
-
-	// Save updated remote manifest
-	if err := m.librarian.SaveRemoteManifest(ctx, localManifest); err != nil {
-		return nil, err
-	}
-
-	m.send(ports.UpdateEvent{Operation: "exit", Message: "Successfully updated manifests with archive", Data: map[string]any{"archive_name": archiveName}})
-	return localManifest, nil
+	return m.unlockManifests(ctx)
 }
 
 // unlockManifests removes locks from both local and remote manifests
