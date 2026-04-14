@@ -6,12 +6,15 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"ritual/internal/adapters"
 	"ritual/internal/config"
+	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/services"
 )
@@ -103,50 +106,10 @@ func main() {
 		return
 	}
 
-	// Create validator service
-	validator, err := services.NewValidatorService()
-	if err != nil {
-		fmt.Printf("Failed to create validator service: %v\n", err)
-		close(events)
-		wg.Wait()
-		return
-	}
-
 	// Create updaters (ritual updater first - must self-update before anything else)
 	ritualUpdater, err := services.NewRitualUpdater(librarian, remoteStorage, config.AppVersion)
 	if err != nil {
 		fmt.Printf("Failed to create ritual updater: %v\n", err)
-		close(events)
-		wg.Wait()
-		return
-	}
-
-	instanceUpdater, err := services.NewInstanceUpdater(librarian, validator, remoteStorage, envBucket, workRoot)
-	if err != nil {
-		fmt.Printf("Failed to create instance updater: %v\n", err)
-		close(events)
-		wg.Wait()
-		return
-	}
-
-	// Create world scanner — full scan if no xxhash map, mtime-filtered otherwise
-	localManifestForScanner, err := librarian.GetLocalManifest(context.Background())
-	if err != nil {
-		fmt.Printf("Failed to get local manifest for scanner: %v\n", err)
-		close(events)
-		wg.Wait()
-		return
-	}
-
-	var worldScanner ports.WorldScanner
-	worldsPath := config.RootPath + string(os.PathSeparator) + "worlds"
-	if len(localManifestForScanner.XXHashMap) == 0 {
-		worldScanner, err = adapters.NewFullWorldScanner(worldsPath)
-	} else {
-		worldScanner, err = adapters.NewMtimeWorldScanner(worldsPath, localManifestForScanner.XXHashSyncAt, localManifestForScanner.XXHashMap)
-	}
-	if err != nil {
-		fmt.Printf("Failed to create world scanner: %v\n", err)
 		close(events)
 		wg.Wait()
 		return
@@ -159,17 +122,62 @@ func main() {
 	hostname, _ := os.Hostname()
 	syncSessionID := fmt.Sprintf("%s%s%d", hostname, config.LockIDSeparator, time.Now().UnixNano())
 
-	// Create sync service for delta world transfers
-	syncService, err := services.NewSyncService(worldScanner, localStorage, retryRemote, librarian, events, worldsPath, syncSessionID)
+	// Staging bases
+	localStagingBase := filepath.Join(config.TempRitualPath(), fmt.Sprintf(config.SyncStagingPattern, time.Now().UnixNano()))
+	remoteStagingBase := "sync/" + syncSessionID
+
+	// Scanners — use fs.Sub for scoped FS per target
+	worldsPath := filepath.Join(config.RootPath, config.WorldsDir)
+	serverPath := filepath.Join(config.RootPath, config.ServerDir)
+
+	// Ensure directories exist
+	os.MkdirAll(worldsPath, config.DirPermission)
+	os.MkdirAll(serverPath, config.DirPermission)
+
+	worldsFS, _ := fs.Sub(workRoot.FS(), config.WorldsDir)
+	serverFS, _ := fs.Sub(workRoot.FS(), config.ServerDir)
+
+	// Parse .ritualsync filters
+	worldsFilter, err := adapters.ParseRitualSync(worldsFS)
 	if err != nil {
-		fmt.Printf("Failed to create sync service: %v\n", err)
+		fmt.Printf("Failed to parse worlds .ritualsync: %v\n", err)
+		close(events)
+		wg.Wait()
+		return
+	}
+	serverFilter, err := adapters.ParseRitualSync(serverFS)
+	if err != nil {
+		fmt.Printf("Failed to parse server .ritualsync: %v\n", err)
 		close(events)
 		wg.Wait()
 		return
 	}
 
-	syncDownloader := services.NewSyncDownloadUpdater(syncService)
-	updaters := []ports.UpdaterService{ritualUpdater, instanceUpdater, syncDownloader}
+	worldScanner := adapters.NewFilteredScanner(adapters.NewFullScanner(worldsFS), worldsFilter)
+	serverScanner := adapters.NewFilteredScanner(adapters.NewFullScanner(serverFS), serverFilter)
+
+	// Two sync services — same code, different config
+	worldSync := services.NewDeltaSyncService(
+		worldScanner, localStorage, retryRemote, events,
+		services.SyncConfig{Prefix: config.WorldsDir, LocalDir: worldsPath},
+		filepath.Join(localStagingBase, config.WorldsDir),
+		remoteStagingBase+"/"+config.WorldsDir,
+	)
+	serverSync := services.NewDeltaSyncService(
+		serverScanner, localStorage, retryRemote, events,
+		services.SyncConfig{Prefix: config.ServerDir, LocalDir: serverPath},
+		filepath.Join(localStagingBase, config.ServerDir),
+		remoteStagingBase+"/"+config.ServerDir,
+	)
+
+	// Updaters
+	worldSyncDownloader := services.NewSyncDownloadUpdater(worldSync, librarian, func(m *domain.Manifest) *domain.SyncState {
+		return &m.Worlds.SyncState
+	})
+	serverSyncDownloader := services.NewSyncDownloadUpdater(serverSync, librarian, func(m *domain.Manifest) *domain.SyncState {
+		return &m.Server.SyncState
+	})
+	updaters := []ports.UpdaterService{ritualUpdater, serverSyncDownloader, worldSyncDownloader}
 
 	// Create conditions (pre-flight checks before updaters run)
 	// Fetch remote manifest to get thresholds for conditions
@@ -252,13 +260,15 @@ func main() {
 
 	retentions := []ports.RetentionService{localRetention, r2Retention, logRetention}
 
-	// Create sync upload backupper for delta world transfers
-	syncUploader := services.NewSyncUploadBackupper(syncService)
-	backuppers := []ports.BackupperService{syncUploader}
+	// Backuppers — only worlds upload on exit
+	worldSyncUploader := services.NewSyncUploadBackupper(worldSync, librarian, func(m *domain.Manifest) *domain.SyncState {
+		return &m.Worlds.SyncState
+	})
+	backuppers := []ports.BackupperService{worldSyncUploader}
 
 	// Create server runner
 	commandExecutor := adapters.NewCommandExecutorAdapter()
-	serverRunner, err := adapters.NewServerRunner(config.RootPath, workRoot, remoteManifestForConditions.StartScript, commandExecutor)
+	serverRunner, err := adapters.NewServerRunner(config.RootPath, workRoot, remoteManifestForConditions.Server.StartScript, commandExecutor)
 	if err != nil {
 		fmt.Printf("Failed to create server runner: %v\n", err)
 		close(events)

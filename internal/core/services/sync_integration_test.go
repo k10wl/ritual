@@ -12,20 +12,21 @@ import (
 
 	"ritual/internal/adapters"
 	"ritual/internal/core/domain"
+	"ritual/internal/core/ports"
 	"ritual/internal/core/services"
 	"ritual/internal/testhelpers"
 )
 
 // syncTestEnv bundles local/remote FS repos, librarian, and temp dirs for integration tests.
 type syncTestEnv struct {
-	localDir    string
-	remoteDir   string
-	localRoot   *os.Root
-	remoteRoot  *os.Root
-	local       *adapters.FSRepository
-	remote      *adapters.FSRepository
-	librarian   *services.LibrarianService
-	ctx         context.Context
+	localDir   string
+	remoteDir  string
+	localRoot  *os.Root
+	remoteRoot *os.Root
+	local      *adapters.FSRepository
+	remote     *adapters.FSRepository
+	librarian  *services.LibrarianService
+	ctx        context.Context
 }
 
 func newSyncTestEnv(t *testing.T) *syncTestEnv {
@@ -129,34 +130,53 @@ func fileExists(rootDir, relPath string) bool {
 	return err == nil
 }
 
-// buildSyncUpload creates a SyncService with a FullWorldScanner over local worlds,
-// runs Upload, returns the updated remote manifest.
-func buildSyncUpload(t *testing.T, env *syncTestEnv) {
+// makeSyncService creates a DeltaSyncService for worlds using an fs.FS-based FullScanner.
+func makeSyncService(t *testing.T, env *syncTestEnv) ports.SyncService {
 	t.Helper()
 	wPath := worldsPath(env.localDir)
-	// ensure worlds dir exists even if empty
 	_ = os.MkdirAll(wPath, 0755)
-	scanner, err := adapters.NewFullWorldScanner(wPath)
-	require.NoError(t, err)
 
-	svc, err := services.NewSyncService(scanner, env.local, env.remote, env.librarian, nil, wPath, "test-lock")
-	require.NoError(t, err)
-	require.NoError(t, svc.Upload(env.ctx))
+	scanner := adapters.NewFullScanner(os.DirFS(wPath))
+	staging := t.TempDir()
+
+	return services.NewDeltaSyncService(
+		scanner, env.local, env.remote, nil,
+		services.SyncConfig{Prefix: "worlds", LocalDir: wPath},
+		filepath.Join(staging, "local"),
+		"sync/test-session/worlds",
+	)
 }
 
-// buildSyncDownload creates a SyncService with a dummy scanner (not used in download),
-// runs Download.
-func buildSyncDownload(t *testing.T, env *syncTestEnv) {
+// buildSyncUpload creates a sync service, loads manifests, runs Upload, saves results.
+func buildSyncUpload(t *testing.T, env *syncTestEnv) {
 	t.Helper()
-	wPath := worldsPath(env.localDir)
-	_ = os.MkdirAll(wPath, 0755)
-	// Scanner unused during download — full scanner as placeholder
-	scanner, err := adapters.NewFullWorldScanner(wPath)
+	svc := makeSyncService(t, env)
+
+	lm := env.loadLocalManifest(t)
+	rm := env.loadRemoteManifest(t)
+
+	newState, err := svc.Upload(env.ctx, lm.Worlds.SyncState, rm.Worlds.SyncState)
 	require.NoError(t, err)
 
-	svc, err := services.NewSyncService(scanner, env.local, env.remote, env.librarian, nil, wPath, "test-lock")
+	lm.Worlds.SyncState = newState
+	rm.Worlds.SyncState = newState
+	env.saveLocalManifest(t, lm)
+	env.saveRemoteManifest(t, rm)
+}
+
+// buildSyncDownload creates a sync service, loads manifests, runs Download, saves results.
+func buildSyncDownload(t *testing.T, env *syncTestEnv) {
+	t.Helper()
+	svc := makeSyncService(t, env)
+
+	lm := env.loadLocalManifest(t)
+	rm := env.loadRemoteManifest(t)
+
+	newState, err := svc.Download(env.ctx, lm.Worlds.SyncState, rm.Worlds.SyncState)
 	require.NoError(t, err)
-	require.NoError(t, svc.Download(env.ctx))
+
+	lm.Worlds.SyncState = newState
+	env.saveLocalManifest(t, lm)
 }
 
 // --- Integration Tests ---
@@ -176,8 +196,8 @@ func TestSyncIntegration_FullUploadThenDownload(t *testing.T) {
 
 	// Verify remote manifest has xxhash map
 	rm := env.loadRemoteManifest(t)
-	assert.NotEmpty(t, rm.XXHashMap, "remote manifest should have xxhash map after upload")
-	assert.False(t, rm.XXHashSyncAt.IsZero(), "remote xxhash_sync_at should be set")
+	assert.NotEmpty(t, rm.Worlds.XXHashMap, "remote manifest should have xxhash map after upload")
+	assert.False(t, rm.Worlds.XXHashSyncAt.IsZero(), "remote xxhash_sync_at should be set")
 
 	// Verify remote worlds/ directory has files
 	assert.True(t, fileExists(env.remoteDir, "worlds/world/level.dat"))
@@ -217,7 +237,7 @@ func TestSyncIntegration_FullUploadThenDownload(t *testing.T) {
 
 	// Verify local2 manifest matches remote
 	lm2 := env2.loadLocalManifest(t)
-	assert.Equal(t, rm.XXHashMap, lm2.XXHashMap)
+	assert.Equal(t, rm.Worlds.XXHashMap, lm2.Worlds.XXHashMap)
 }
 
 func TestSyncIntegration_DeltaUpload_OnlyChangedFiles(t *testing.T) {
@@ -233,7 +253,7 @@ func TestSyncIntegration_DeltaUpload_OnlyChangedFiles(t *testing.T) {
 	buildSyncUpload(t, env)
 
 	rm1 := env.loadRemoteManifest(t)
-	assert.Len(t, rm1.XXHashMap, 2)
+	assert.Len(t, rm1.Worlds.XXHashMap, 2)
 
 	// Modify one file locally
 	writeFile(t, env.localDir, "worlds/world/level.dat", []byte("modified"))
@@ -242,7 +262,7 @@ func TestSyncIntegration_DeltaUpload_OnlyChangedFiles(t *testing.T) {
 	buildSyncUpload(t, env)
 
 	rm2 := env.loadRemoteManifest(t)
-	assert.Len(t, rm2.XXHashMap, 2)
+	assert.Len(t, rm2.Worlds.XXHashMap, 2)
 
 	// Verify remote level.dat has new content
 	data := readFile(t, env.remoteDir, "worlds/world/level.dat")
@@ -272,7 +292,7 @@ func TestSyncIntegration_FileDeletedLocally_RemovedFromRemote(t *testing.T) {
 	buildSyncUpload(t, env)
 
 	rm := env.loadRemoteManifest(t)
-	assert.Len(t, rm.XXHashMap, 1, "only level.dat should remain in manifest")
+	assert.Len(t, rm.Worlds.XXHashMap, 1, "only level.dat should remain in manifest")
 	assert.False(t, fileExists(env.remoteDir, "worlds/world/region/r.0.0.mca"), "deleted file should be gone from remote")
 	assert.True(t, fileExists(env.remoteDir, "worlds/world/level.dat"), "untouched file should remain")
 }
@@ -301,27 +321,33 @@ func TestSyncIntegration_DownloadDeletesLocalGhosts(t *testing.T) {
 	env := newSyncTestEnv(t)
 
 	// Remote has one file
-	remoteMap := map[string]string{}
 	writeFile(t, env.remoteDir, "worlds/world/level.dat", []byte("level"))
 
 	// Compute hash for remote manifest
-	scanner, err := adapters.NewFullWorldScanner(worldsPath(env.remoteDir))
-	require.NoError(t, err)
-	remoteMap, err = scanner.Scan(env.ctx)
+	scanner := adapters.NewFullScanner(os.DirFS(worldsPath(env.remoteDir)))
+	remoteMap, err := scanner.Scan(env.ctx)
 	require.NoError(t, err)
 
 	env.saveRemoteManifest(t, &domain.Manifest{
-		XXHashMap:    remoteMap,
-		XXHashSyncAt: time.Now(),
+		Worlds: domain.WorldsManifest{
+			SyncState: domain.SyncState{
+				XXHashMap:    remoteMap,
+				XXHashSyncAt: time.Now(),
+			},
+		},
 	})
 
 	// Local has two files (one is ghost)
 	writeFile(t, env.localDir, "worlds/world/level.dat", []byte("old level"))
 	writeFile(t, env.localDir, "worlds/world/ghost.dat", []byte("should be deleted"))
 	env.saveLocalManifest(t, &domain.Manifest{
-		XXHashMap: map[string]string{
-			"world/level.dat": "stale_hash",
-			"world/ghost.dat": "ghost_hash",
+		Worlds: domain.WorldsManifest{
+			SyncState: domain.SyncState{
+				XXHashMap: map[string]string{
+					"world/level.dat": "stale_hash",
+					"world/ghost.dat": "ghost_hash",
+				},
+			},
 		},
 	})
 
@@ -332,7 +358,7 @@ func TestSyncIntegration_DownloadDeletesLocalGhosts(t *testing.T) {
 	assert.False(t, fileExists(env.localDir, "worlds/world/ghost.dat"), "ghost file should be deleted after download")
 
 	lm := env.loadLocalManifest(t)
-	_, hasGhost := lm.XXHashMap["world/ghost.dat"]
+	_, hasGhost := lm.Worlds.XXHashMap["world/ghost.dat"]
 	assert.False(t, hasGhost, "ghost should not be in local manifest")
 }
 
@@ -340,8 +366,16 @@ func TestSyncIntegration_EmptyDiff_NoTransfers(t *testing.T) {
 	env := newSyncTestEnv(t)
 
 	hashMap := map[string]string{"world/level.dat": "abc123"}
-	env.saveLocalManifest(t, &domain.Manifest{XXHashMap: hashMap})
-	env.saveRemoteManifest(t, &domain.Manifest{XXHashMap: hashMap})
+	env.saveLocalManifest(t, &domain.Manifest{
+		Worlds: domain.WorldsManifest{
+			SyncState: domain.SyncState{XXHashMap: hashMap},
+		},
+	})
+	env.saveRemoteManifest(t, &domain.Manifest{
+		Worlds: domain.WorldsManifest{
+			SyncState: domain.SyncState{XXHashMap: hashMap},
+		},
+	})
 
 	writeFile(t, env.localDir, "worlds/world/level.dat", []byte("level"))
 
@@ -367,7 +401,7 @@ func TestSyncIntegration_FirstRunNoRemoteManifest_FullUpload(t *testing.T) {
 	buildSyncUpload(t, env)
 
 	rm := env.loadRemoteManifest(t)
-	assert.Len(t, rm.XXHashMap, 2)
+	assert.Len(t, rm.Worlds.XXHashMap, 2)
 	assert.True(t, fileExists(env.remoteDir, "worlds/world/level.dat"))
 	assert.True(t, fileExists(env.remoteDir, "worlds/world/region/r.0.0.mca"))
 }
@@ -379,14 +413,17 @@ func TestSyncIntegration_FirstRunNoLocalManifest_FullDownload(t *testing.T) {
 	writeFile(t, env.remoteDir, "worlds/world/level.dat", []byte("remote level"))
 	writeFile(t, env.remoteDir, "worlds/world/region/r.0.0.mca", []byte("remote region"))
 
-	scanner, err := adapters.NewFullWorldScanner(worldsPath(env.remoteDir))
-	require.NoError(t, err)
+	scanner := adapters.NewFullScanner(os.DirFS(worldsPath(env.remoteDir)))
 	remoteMap, err := scanner.Scan(env.ctx)
 	require.NoError(t, err)
 
 	env.saveRemoteManifest(t, &domain.Manifest{
-		XXHashMap:    remoteMap,
-		XXHashSyncAt: time.Now(),
+		Worlds: domain.WorldsManifest{
+			SyncState: domain.SyncState{
+				XXHashMap:    remoteMap,
+				XXHashSyncAt: time.Now(),
+			},
+		},
 	})
 	env.saveLocalManifest(t, &domain.Manifest{}) // empty
 
@@ -398,7 +435,7 @@ func TestSyncIntegration_FirstRunNoLocalManifest_FullDownload(t *testing.T) {
 	assert.Equal(t, []byte("remote level"), data)
 
 	lm := env.loadLocalManifest(t)
-	assert.Equal(t, remoteMap, lm.XXHashMap)
+	assert.Equal(t, remoteMap, lm.Worlds.XXHashMap)
 }
 
 func TestSyncIntegration_UploadP3_StaleFilesClearedAfterDeletion(t *testing.T) {
@@ -424,8 +461,8 @@ func TestSyncIntegration_UploadP3_StaleFilesClearedAfterDeletion(t *testing.T) {
 	assert.False(t, fileExists(env.remoteDir, "worlds/c.dat"))
 
 	rm := env.loadRemoteManifest(t)
-	assert.Len(t, rm.XXHashMap, 1)
-	_, hasB := rm.XXHashMap["b.dat"]
+	assert.Len(t, rm.Worlds.XXHashMap, 1)
+	_, hasB := rm.Worlds.XXHashMap["b.dat"]
 	assert.True(t, hasB)
 }
 
@@ -474,7 +511,6 @@ func TestSyncIntegration_ManifestBackwardsCompat_V1EmptyXXHash(t *testing.T) {
 	v1Manifest := &domain.Manifest{
 		ManifestVersion: "1.0.0",
 		RitualVersion:   "1.3.5",
-		InstanceVersion: "paper-1.20",
 		UpdatedAt:       time.Now(),
 	}
 	env.saveLocalManifest(t, v1Manifest)
@@ -487,8 +523,8 @@ func TestSyncIntegration_ManifestBackwardsCompat_V1EmptyXXHash(t *testing.T) {
 	buildSyncUpload(t, env)
 
 	rm := env.loadRemoteManifest(t)
-	assert.NotNil(t, rm.XXHashMap, "migration should populate xxhash map")
-	assert.Len(t, rm.XXHashMap, 1)
+	assert.NotNil(t, rm.Worlds.XXHashMap, "migration should populate xxhash map")
+	assert.Len(t, rm.Worlds.XXHashMap, 1)
 	assert.True(t, fileExists(env.remoteDir, "worlds/world/level.dat"))
 }
 
@@ -504,7 +540,7 @@ func TestSyncIntegration_EmptyWorldDir_EmptyManifest(t *testing.T) {
 
 	rm := env.loadRemoteManifest(t)
 	// Empty map or nil — no files
-	assert.Empty(t, rm.XXHashMap)
+	assert.Empty(t, rm.Worlds.XXHashMap)
 }
 
 func TestSyncIntegration_SyncFolderCleaned(t *testing.T) {
@@ -515,10 +551,10 @@ func TestSyncIntegration_SyncFolderCleaned(t *testing.T) {
 	writeFile(t, env.localDir, "worlds/a.dat", []byte("data"))
 	buildSyncUpload(t, env)
 
-	// Verify no sync/ folder lingers on remote
-	keys, err := env.remote.List(env.ctx, "sync")
+	// Verify no sync staging files linger on remote (directory entries may remain in FS-backed repos)
+	keys, err := env.remote.List(env.ctx, "sync/test-session/worlds")
 	require.NoError(t, err)
-	assert.Empty(t, keys, "sync staging folder should be cleaned after upload")
+	assert.Empty(t, keys, "sync staging files should be cleaned after upload")
 }
 
 func TestSyncIntegration_RetentionMixedFormats(t *testing.T) {
@@ -559,8 +595,7 @@ func TestSyncIntegration_DiffEngine_CorrectSetsFromRealFiles(t *testing.T) {
 	writeFile(t, env.localDir, "worlds/b.dat", []byte("same"))
 	writeFile(t, env.localDir, "worlds/c.dat", []byte("brand new"))
 
-	localScanner, err := adapters.NewFullWorldScanner(worldsPath(env.localDir))
-	require.NoError(t, err)
+	localScanner := adapters.NewFullScanner(os.DirFS(worldsPath(env.localDir)))
 	localMap, err := localScanner.Scan(env.ctx)
 	require.NoError(t, err)
 
@@ -569,8 +604,7 @@ func TestSyncIntegration_DiffEngine_CorrectSetsFromRealFiles(t *testing.T) {
 	writeFile(t, env.remoteDir, "worlds/b.dat", []byte("same"))
 	writeFile(t, env.remoteDir, "worlds/d.dat", []byte("orphan"))
 
-	remoteScanner, err := adapters.NewFullWorldScanner(worldsPath(env.remoteDir))
-	require.NoError(t, err)
+	remoteScanner := adapters.NewFullScanner(os.DirFS(worldsPath(env.remoteDir)))
 	remoteMap, err := remoteScanner.Scan(env.ctx)
 	require.NoError(t, err)
 
