@@ -2,6 +2,7 @@ package services_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -617,4 +618,277 @@ func TestSyncIntegration_DiffEngine_CorrectSetsFromRealFiles(t *testing.T) {
 	assert.Contains(t, diff.Delete, "d.dat", "orphan should be in delete set")
 	assert.NotContains(t, diff.Delete, "a.dat")
 	assert.NotContains(t, diff.Delete, "b.dat")
+}
+
+// serverPath returns the absolute path to the server dir inside the given root dir.
+func serverPath(rootDir string) string {
+	return filepath.Join(rootDir, "server")
+}
+
+// buildServerSyncUpload creates a sync service for server/ prefix using FilteredScanner + ParseRitualSync, runs Upload.
+func buildServerSyncUpload(t *testing.T, env *syncTestEnv) {
+	t.Helper()
+	sPath := serverPath(env.localDir)
+	_ = os.MkdirAll(sPath, 0755)
+
+	fsys := os.DirFS(sPath)
+	inner := adapters.NewFullScanner(fsys)
+	filter, err := adapters.ParseRitualSync(fsys)
+	require.NoError(t, err)
+
+	scanner := adapters.NewFilteredScanner(inner, filter)
+	staging := t.TempDir()
+
+	svc := services.NewSyncService(
+		scanner, env.local, env.remote, nil,
+		services.SyncConfig{Prefix: "server", LocalDir: sPath},
+		filepath.Join(staging, "local"),
+		"sync/test-lock/server",
+	)
+
+	lm := env.loadLocalManifest(t)
+	rm := env.loadRemoteManifest(t)
+
+	newState, err := svc.Upload(env.ctx, lm.Server.SyncState, rm.Server.SyncState)
+	require.NoError(t, err)
+
+	lm.Server.SyncState = newState
+	rm.Server.SyncState = newState
+	env.saveLocalManifest(t, lm)
+	env.saveRemoteManifest(t, rm)
+}
+
+// buildServerSyncDownload creates a sync service for server/ prefix, runs Download.
+func buildServerSyncDownload(t *testing.T, env *syncTestEnv) {
+	t.Helper()
+	sPath := serverPath(env.localDir)
+	_ = os.MkdirAll(sPath, 0755)
+
+	fsys := os.DirFS(sPath)
+	inner := adapters.NewFullScanner(fsys)
+
+	// For download, .ritualsync may not exist yet; use a pass-all filter.
+	var scanner ports.DirectoryScanner
+	filter, err := adapters.ParseRitualSync(fsys)
+	if err != nil {
+		scanner = inner
+	} else {
+		scanner = adapters.NewFilteredScanner(inner, filter)
+	}
+
+	staging := t.TempDir()
+
+	svc := services.NewSyncService(
+		scanner, env.local, env.remote, nil,
+		services.SyncConfig{Prefix: "server", LocalDir: sPath},
+		filepath.Join(staging, "local"),
+		"sync/test-lock/server",
+	)
+
+	lm := env.loadLocalManifest(t)
+	rm := env.loadRemoteManifest(t)
+
+	newState, err := svc.Download(env.ctx, lm.Server.SyncState, rm.Server.SyncState)
+	require.NoError(t, err)
+
+	lm.Server.SyncState = newState
+	env.saveLocalManifest(t, lm)
+}
+
+func TestSyncIntegration_TwoTargetsSameLock(t *testing.T) {
+	env := newSyncTestEnv(t)
+	env.saveLocalManifest(t, &domain.Manifest{})
+	env.saveRemoteManifest(t, &domain.Manifest{})
+
+	// Create worlds files
+	writeFile(t, env.localDir, "worlds/world/level.dat", []byte("level data"))
+
+	// Create server files with .ritualsync allowing everything
+	writeFile(t, env.localDir, "server/server.jar", []byte("server binary"))
+	writeFile(t, env.localDir, "server/config/a.cfg", []byte("config data"))
+	writeFile(t, env.localDir, "server/.ritualsync", []byte("*\n"))
+
+	// Upload worlds with prefix "worlds"
+	buildSyncUpload(t, env)
+
+	// Upload server with prefix "server"
+	buildServerSyncUpload(t, env)
+
+	// Verify remote has both targets' files
+	assert.True(t, fileExists(env.remoteDir, "worlds/world/level.dat"), "worlds file should exist on remote")
+	assert.True(t, fileExists(env.remoteDir, "server/server.jar"), "server.jar should exist on remote")
+	assert.True(t, fileExists(env.remoteDir, "server/config/a.cfg"), "config file should exist on remote")
+
+	// Verify no cross-contamination
+	assert.False(t, fileExists(env.remoteDir, "server/world/level.dat"), "worlds file should not appear under server/")
+	assert.False(t, fileExists(env.remoteDir, "worlds/server.jar"), "server file should not appear under worlds/")
+
+	// Verify staging cleaned
+	worldsStaging, err := env.remote.List(env.ctx, "sync/test-session/worlds")
+	require.NoError(t, err)
+	assert.Empty(t, worldsStaging, "worlds staging should be cleaned")
+
+	serverStaging, err := env.remote.List(env.ctx, "sync/test-lock/server")
+	require.NoError(t, err)
+	assert.Empty(t, serverStaging, "server staging should be cleaned")
+}
+
+func TestSyncIntegration_RitualSyncWhitelist(t *testing.T) {
+	env := newSyncTestEnv(t)
+	env.saveLocalManifest(t, &domain.Manifest{})
+	env.saveRemoteManifest(t, &domain.Manifest{})
+
+	// Create server files
+	writeFile(t, env.localDir, "server/server.jar", []byte("server binary"))
+	writeFile(t, env.localDir, "server/config/a.cfg", []byte("config data"))
+	writeFile(t, env.localDir, "server/logs/latest.log", []byte("log data"))
+	writeFile(t, env.localDir, "server/.ritualsync", []byte("server.jar\nconfig/\n"))
+
+	// Upload with filtered scanner
+	buildServerSyncUpload(t, env)
+
+	// Verify allowed files present
+	assert.True(t, fileExists(env.remoteDir, "server/server.jar"), "server.jar should be on remote")
+	assert.True(t, fileExists(env.remoteDir, "server/config/a.cfg"), "config file should be on remote")
+
+	// Verify filtered file absent
+	assert.False(t, fileExists(env.remoteDir, "server/logs/latest.log"), "logs should be filtered out")
+
+	// Verify .ritualsync itself is uploaded (exempt from own filter)
+	assert.True(t, fileExists(env.remoteDir, "server/.ritualsync"), ".ritualsync should be on remote")
+}
+
+func TestSyncIntegration_RitualSyncContracted(t *testing.T) {
+	env := newSyncTestEnv(t)
+	env.saveLocalManifest(t, &domain.Manifest{})
+	env.saveRemoteManifest(t, &domain.Manifest{})
+
+	// Create server files with broad whitelist
+	writeFile(t, env.localDir, "server/server.jar", []byte("server binary"))
+	writeFile(t, env.localDir, "server/mods/mod.jar", []byte("mod data"))
+	writeFile(t, env.localDir, "server/.ritualsync", []byte("server.jar\nmods/\n"))
+
+	// Upload — both files go to remote
+	buildServerSyncUpload(t, env)
+	assert.True(t, fileExists(env.remoteDir, "server/server.jar"))
+	assert.True(t, fileExists(env.remoteDir, "server/mods/mod.jar"))
+
+	// Contract .ritualsync — remove mods/
+	writeFile(t, env.localDir, "server/.ritualsync", []byte("server.jar\n"))
+
+	// Upload again — mods/mod.jar should be orphaned and deleted
+	buildServerSyncUpload(t, env)
+
+	assert.True(t, fileExists(env.remoteDir, "server/server.jar"), "server.jar should remain")
+	assert.False(t, fileExists(env.remoteDir, "server/mods/mod.jar"), "mod.jar should be deleted after whitelist contraction")
+}
+
+func TestSyncIntegration_RitualSyncRemoteWins(t *testing.T) {
+	// Host A: upload with broad .ritualsync
+	envA := newSyncTestEnv(t)
+	envA.saveLocalManifest(t, &domain.Manifest{})
+	envA.saveRemoteManifest(t, &domain.Manifest{})
+
+	writeFile(t, envA.localDir, "server/server.jar", []byte("server binary"))
+	writeFile(t, envA.localDir, "server/config/a.cfg", []byte("config"))
+	writeFile(t, envA.localDir, "server/mods/mod.jar", []byte("mod"))
+	writeFile(t, envA.localDir, "server/.ritualsync", []byte("server.jar\nconfig/\nmods/\n"))
+
+	buildServerSyncUpload(t, envA)
+
+	// Host B: different local .ritualsync, shared remote
+	envB := newSyncTestEnv(t)
+	envB.remote = envA.remote
+	envB.remoteDir = envA.remoteDir
+	libB, err := services.NewLibrarianService(envB.local, envB.remote)
+	require.NoError(t, err)
+	envB.librarian = libB
+	envB.saveLocalManifest(t, &domain.Manifest{})
+
+	// Host B has narrower .ritualsync locally
+	writeFile(t, envB.localDir, "server/.ritualsync", []byte("server.jar\n"))
+
+	// Host B downloads from remote
+	buildServerSyncDownload(t, envB)
+
+	// Verify Host B's .ritualsync now matches Host A's (remote wins)
+	data := readFile(t, envB.localDir, "server/.ritualsync")
+	assert.Equal(t, "server.jar\nconfig/\nmods/\n", string(data), ".ritualsync should match remote (Host A)")
+}
+
+func TestSyncIntegration_EmptyRemotePrefix(t *testing.T) {
+	env := newSyncTestEnv(t)
+	env.saveLocalManifest(t, &domain.Manifest{})
+	env.saveRemoteManifest(t, &domain.Manifest{})
+
+	// Empty server dir — nothing on remote, nothing local
+	require.NoError(t, os.MkdirAll(serverPath(env.localDir), 0755))
+
+	sPath := serverPath(env.localDir)
+	scanner := adapters.NewFullScanner(os.DirFS(sPath))
+	staging := t.TempDir()
+
+	svc := services.NewSyncService(
+		scanner, env.local, env.remote, nil,
+		services.SyncConfig{Prefix: "server", LocalDir: sPath},
+		filepath.Join(staging, "local"),
+		"sync/test-lock/server",
+	)
+
+	emptyState := domain.SyncState{}
+	newState, err := svc.Download(env.ctx, emptyState, emptyState)
+	require.NoError(t, err)
+
+	// Should return empty/unchanged state, no crash
+	assert.Empty(t, newState.XXHashMap, "empty remote should produce empty state")
+
+	// No files should be created in local server dir
+	entries, err := os.ReadDir(sPath)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "no files should appear in empty download")
+}
+
+func TestSyncIntegration_DeleteBatchIntegration(t *testing.T) {
+	env := newSyncTestEnv(t)
+	env.saveLocalManifest(t, &domain.Manifest{})
+	env.saveRemoteManifest(t, &domain.Manifest{})
+
+	// Create 20 files + .ritualsync
+	writeFile(t, env.localDir, "server/.ritualsync", []byte("*\n"))
+	for i := 0; i < 20; i++ {
+		name := fmt.Sprintf("server/file_%02d.txt", i)
+		writeFile(t, env.localDir, name, []byte(fmt.Sprintf("content %d", i)))
+	}
+
+	// Upload all
+	buildServerSyncUpload(t, env)
+
+	// Verify all 20 + .ritualsync on remote
+	rm := env.loadRemoteManifest(t)
+	assert.Len(t, rm.Server.XXHashMap, 21, "20 files + .ritualsync should be on remote")
+
+	// Delete 15 files locally (keep file_00 through file_04)
+	for i := 5; i < 20; i++ {
+		name := filepath.Join(env.localDir, fmt.Sprintf("server/file_%02d.txt", i))
+		require.NoError(t, os.Remove(name))
+	}
+
+	// Upload again — 15 orphans should be deleted
+	buildServerSyncUpload(t, env)
+
+	rm2 := env.loadRemoteManifest(t)
+	// 5 files + .ritualsync = 6
+	assert.Len(t, rm2.Server.XXHashMap, 6, "5 kept files + .ritualsync should remain")
+
+	// Verify kept files exist
+	for i := 0; i < 5; i++ {
+		name := fmt.Sprintf("server/file_%02d.txt", i)
+		assert.True(t, fileExists(env.remoteDir, name), "kept file %s should exist", name)
+	}
+
+	// Verify deleted files are gone
+	for i := 5; i < 20; i++ {
+		name := fmt.Sprintf("server/file_%02d.txt", i)
+		assert.False(t, fileExists(env.remoteDir, name), "deleted file %s should not exist", name)
+	}
 }
