@@ -50,6 +50,9 @@ func NewSyncService(
 }
 
 func (s *syncService) Download(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error) {
+	// Clean leftover staging from previous sessions
+	os.RemoveAll(s.localStaging)
+
 	diff := domain.ComputeDiff(local.XXHashMap, remote.XXHashMap)
 	if len(diff.Download) == 0 {
 		return local, nil
@@ -76,6 +79,9 @@ func (s *syncService) Download(ctx context.Context, local, remote domain.SyncSta
 }
 
 func (s *syncService) Upload(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error) {
+	// Clean leftover remote staging from previous sessions
+	s.cleanRemoteStaging(ctx)
+
 	newMap, err := s.scanner.Scan(ctx)
 	if err != nil {
 		return local, fmt.Errorf("scan: %w", err)
@@ -215,6 +221,9 @@ func (s *syncService) cleanRemoteOrphans(ctx context.Context, files []string) {
 
 // cleanRemoteStaging batch-deletes remaining staging keys.
 func (s *syncService) cleanRemoteStaging(ctx context.Context) {
+	if s.remote == nil {
+		return
+	}
 	keys, err := s.remote.List(ctx, s.remoteStaging)
 	if err == nil && len(keys) > 0 {
 		_ = s.remote.DeleteBatch(ctx, keys)
