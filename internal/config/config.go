@@ -27,30 +27,25 @@ var AppVersion string
 
 // Directory names
 const (
-	LocalBackups  = "world_backups" // legacy; kept until v1 tar callers removed
-	RemoteBackups = "worlds"        // legacy
-	BackupsDir    = "backups"       // v2 unified local/R2 backup prefix
-	ServerDir     = "server"
-	WorldsDir     = "worlds"
-	TmpDir        = "temp"
-	LogsDir       = "logs"
+	BackupsDir = "backups" // unified local/R2 backup prefix
+	ServerDir  = "server"
+	WorldsDir  = "worlds"
+	TmpDir     = "temp"
+	LogsDir    = "logs"
 )
 
 // File names and keys
 const (
-	ManifestFilename    = "manifest.json"
-	RemoteBinaryKey     = "ritual.exe"
-	ManualWorldFilename = "manual.tar"
-	ServerJarFilename   = "paper.jar"
-	ServerLogFilename   = "server.log"
+	ManifestFilename  = "manifest.json"
+	RemoteBinaryKey   = "ritual.exe"
+	ServerJarFilename = "paper.jar"
+	ServerLogFilename = "server.log"
 )
 
 // Backup configuration
 const (
-	R2MaxBackups    = 2
-	LocalMaxBackups = 2
-	MaxFiles        = 1000
-	MaxLogFiles     = 10
+	MaxFiles    = 1000
+	MaxLogFiles = 10
 
 	TimestampFormat = "20060102150405"
 	LogExtension    = ".log"

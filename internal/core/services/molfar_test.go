@@ -125,7 +125,7 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 	return molfarService, localStorage, remoteStorage, tempDir, remoteTempDir, cleanup
 }
 
-func setupRemoteManifest(t *testing.T, remoteStorage *adapters.FSRepository, manifestVersion string, _ string) {
+func setupRemoteManifest(t *testing.T, remoteStorage *adapters.FSRepository, manifestVersion string) {
 	ctx := context.Background()
 
 	remoteManifest := createTestManifest(manifestVersion)
@@ -154,7 +154,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		defer cleanup()
 
 		// Setup remote data
-		setupRemoteManifest(t, remoteStorage, "1.0.0", config.RemoteBackups+"/1234567890.tar")
+		setupRemoteManifest(t, remoteStorage, "1.0.0")
 
 		// Execute Prepare
 		err := molfar.Prepare()
@@ -194,7 +194,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		defer cleanup()
 
 		// Setup remote data with newer version
-		setupRemoteManifest(t, remoteStorage, "2.0.0", config.RemoteBackups+"/1234567890.tar")
+		setupRemoteManifest(t, remoteStorage, "2.0.0")
 
 		// Create local manifest with older version
 		ctx := context.Background()
@@ -231,7 +231,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 		defer cleanup()
 
 		// Setup remote data
-		setupRemoteManifest(t, remoteStorage, "1.0.0", config.RemoteBackups+"/1234567890.tar")
+		setupRemoteManifest(t, remoteStorage, "1.0.0")
 
 		// Create local manifest
 		ctx := context.Background()
