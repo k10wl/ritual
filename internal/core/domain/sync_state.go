@@ -8,10 +8,9 @@ type SyncState struct {
 	XXHashSyncAt time.Time        `json:"xxhash_sync_at,omitempty"`
 }
 
-// WorldsManifest holds sync state and backup history for worlds.
+// WorldsManifest holds sync state for worlds.
 type WorldsManifest struct {
 	SyncState
-	Backups []World `json:"backups"`
 }
 
 // ServerManifest holds sync state and server configuration.

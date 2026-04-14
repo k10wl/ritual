@@ -36,18 +36,10 @@ func showDirectoryTree(t *testing.T, dirPath string, prefix string) {
 	}
 }
 
-func createTestManifest(ritualVersion string, worlds []domain.World) *domain.Manifest {
+func createTestManifest(ritualVersion string) *domain.Manifest {
 	return &domain.Manifest{
 		RitualVersion: ritualVersion,
-		Worlds:        domain.WorldsManifest{Backups: worlds},
 		UpdatedAt:     time.Now(),
-	}
-}
-
-func createTestWorld(uri string) domain.World {
-	return domain.World{
-		URI:       uri,
-		CreatedAt: time.Now(),
 	}
 }
 
@@ -133,14 +125,11 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 	return molfarService, localStorage, remoteStorage, tempDir, remoteTempDir, cleanup
 }
 
-func setupRemoteManifest(t *testing.T, remoteStorage *adapters.FSRepository, manifestVersion string, worldURI string) {
+func setupRemoteManifest(t *testing.T, remoteStorage *adapters.FSRepository, manifestVersion string, _ string) {
 	ctx := context.Background()
 
-	// Create remote manifest
-	world := createTestWorld(worldURI)
-	remoteManifest := createTestManifest(manifestVersion, []domain.World{world})
+	remoteManifest := createTestManifest(manifestVersion)
 
-	// Save remote manifest
 	manifestData, err := json.Marshal(remoteManifest)
 	assert.NoError(t, err)
 	err = remoteStorage.Put(ctx, "manifest.json", manifestData)
@@ -209,8 +198,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 
 		// Create local manifest with older version
 		ctx := context.Background()
-		oldWorld := createTestWorld(config.RemoteBackups + "/old.tar")
-		oldManifest := createTestManifest("1.0.0", []domain.World{oldWorld})
+		oldManifest := createTestManifest("1.0.0")
 		manifestData, err := json.Marshal(oldManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
@@ -247,8 +235,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 
 		// Create local manifest
 		ctx := context.Background()
-		oldWorld := createTestWorld(config.RemoteBackups + "/old.tar")
-		oldManifest := createTestManifest("1.0.0", []domain.World{oldWorld})
+		oldManifest := createTestManifest("1.0.0")
 		manifestData, err := json.Marshal(oldManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
@@ -274,7 +261,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 
 		// Setup remote manifest with NO worlds
 		ctx := context.Background()
-		remoteManifest := createTestManifest("1.0.0", []domain.World{}) // Empty worlds
+		remoteManifest := createTestManifest("1.0.0") // Empty worlds
 		manifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", manifestData)
@@ -324,7 +311,7 @@ func TestMolfarService_Prepare(globT *testing.T) {
 
 		// Create unlocked remote manifest so Prepare can proceed to updaters
 		ctx := context.Background()
-		manifest := createTestManifest("1.0.0", []domain.World{})
+		manifest := createTestManifest("1.0.0")
 		manifestData, err := json.Marshal(manifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
@@ -361,15 +348,14 @@ func TestMolfarService_Run(t *testing.T) {
 
 		// Create local manifest first
 		ctx := context.Background()
-		world := createTestWorld(config.RemoteBackups + "/1234567890.tar")
-		localManifest := createTestManifest("1.0.0", []domain.World{world})
+		localManifest := createTestManifest("1.0.0")
 		manifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
 		// Create remote manifest
-		remoteManifest := createTestManifest("1.0.0", []domain.World{world})
+		remoteManifest := createTestManifest("1.0.0")
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
@@ -429,16 +415,14 @@ func TestMolfarService_Run(t *testing.T) {
 
 		// Create local manifest with older version
 		ctx := context.Background()
-		oldWorld := createTestWorld(config.RemoteBackups + "/old.tar")
-		localManifest := createTestManifest("1.0.0", []domain.World{oldWorld})
+		localManifest := createTestManifest("1.0.0")
 		manifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
 		// Create remote manifest with newer version
-		newWorld := createTestWorld(config.RemoteBackups + "/new.tar")
-		remoteManifest := createTestManifest("2.0.0", []domain.World{newWorld})
+		remoteManifest := createTestManifest("2.0.0")
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
@@ -498,15 +482,14 @@ func TestMolfarService_Run(t *testing.T) {
 
 		// Create local manifest
 		ctx := context.Background()
-		world := createTestWorld(config.RemoteBackups + "/1234567890.tar")
-		localManifest := createTestManifest("1.0.0", []domain.World{world})
+		localManifest := createTestManifest("1.0.0")
 		manifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
 		// Create remote manifest with different timestamp
-		remoteManifest := createTestManifest("1.0.0", []domain.World{world})
+		remoteManifest := createTestManifest("1.0.0")
 		remoteManifest.UpdatedAt = time.Now().Add(time.Hour) // Different timestamp
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)
@@ -583,15 +566,14 @@ func TestMolfarService_Run(t *testing.T) {
 
 		// Create local manifest first
 		ctx := context.Background()
-		world := createTestWorld(config.RemoteBackups + "/1234567890.tar")
-		localManifest := createTestManifest("1.0.0", []domain.World{world})
+		localManifest := createTestManifest("1.0.0")
 		manifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
 		// Create remote manifest
-		remoteManifest := createTestManifest("1.0.0", []domain.World{world})
+		remoteManifest := createTestManifest("1.0.0")
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
@@ -620,14 +602,14 @@ func TestMolfarService_Exit(t *testing.T) {
 
 		// Setup manifests with locks to simulate running state
 		lockID := "test-host::1234567890"
-		localManifest := createTestManifest("1.0.0", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		localManifest := createTestManifest("1.0.0")
 		localManifest.Lock(lockID)
 		manifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
-		remoteManifest := createTestManifest("1.0.0", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		remoteManifest := createTestManifest("1.0.0")
 		remoteManifest.Lock(lockID)
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)
@@ -706,7 +688,7 @@ func TestMolfarService_Exit(t *testing.T) {
 		lockID := "test-host::1234567890"
 
 		// Build manifests with DIFFERENT xxhash maps to trigger ShouldBackup
-		localManifest := createTestManifest("1.0.0", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		localManifest := createTestManifest("1.0.0")
 		localManifest.Worlds.SyncState.XXHashMap = map[string]string{"level.dat": "abc123"}
 		localManifest.Lock(lockID)
 		manifestData, err := json.Marshal(localManifest)
@@ -714,7 +696,7 @@ func TestMolfarService_Exit(t *testing.T) {
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
-		remoteManifest := createTestManifest("1.0.0", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		remoteManifest := createTestManifest("1.0.0")
 		remoteManifest.Worlds.SyncState.XXHashMap = map[string]string{"level.dat": "def456"} // different
 		remoteManifest.Lock(lockID)
 		remoteManifestData, err := json.Marshal(remoteManifest)
@@ -770,7 +752,7 @@ func TestMolfarService_Exit(t *testing.T) {
 
 		// Save manifests so GetLocalManifest/GetRemoteManifest succeed
 		ctx := context.Background()
-		manifest := createTestManifest("1.0.0", []domain.World{})
+		manifest := createTestManifest("1.0.0")
 		lockID := "test-lock-id"
 		manifest.Lock(lockID)
 		manifestData, err := json.Marshal(manifest)
@@ -810,14 +792,14 @@ func TestMolfarService_Exit(t *testing.T) {
 		// Setup manifests with OLD RitualVersion (simulating old client)
 		lockID := "test-host::1234567890"
 		oldRitualVersion := "0.0.1" // Old version, different from current
-		localManifest := createTestManifest(oldRitualVersion, []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		localManifest := createTestManifest(oldRitualVersion)
 		localManifest.Lock(lockID)
 		manifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
-		remoteManifest := createTestManifest(oldRitualVersion, []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		remoteManifest := createTestManifest(oldRitualVersion)
 		remoteManifest.Lock(lockID)
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)
@@ -877,14 +859,14 @@ func TestMolfarService_Exit(t *testing.T) {
 		}
 
 		lockID := "test-host::1234567890"
-		localManifest := createTestManifest("1.0.0", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		localManifest := createTestManifest("1.0.0")
 		localManifest.Lock(lockID)
 		manifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
-		remoteManifest := createTestManifest("1.0.0", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		remoteManifest := createTestManifest("1.0.0")
 		remoteManifest.Lock(lockID)
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)
@@ -932,15 +914,14 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 
 		// Create local manifest
 		ctx := context.Background()
-		world := createTestWorld(config.RemoteBackups + "/1234567890.tar")
-		localManifest := createTestManifest("1.0.0", []domain.World{world})
+		localManifest := createTestManifest("1.0.0")
 		manifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
 		// Create remote manifest
-		remoteManifest := createTestManifest("1.0.0", []domain.World{world})
+		remoteManifest := createTestManifest("1.0.0")
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
@@ -977,15 +958,14 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 
 		// Create local manifest
 		ctx := context.Background()
-		world := createTestWorld(config.RemoteBackups + "/1234567890.tar")
-		localManifest := createTestManifest("1.0.0", []domain.World{world})
+		localManifest := createTestManifest("1.0.0")
 		manifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
 		// Create remote manifest
-		remoteManifest := createTestManifest("1.0.0", []domain.World{world})
+		remoteManifest := createTestManifest("1.0.0")
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)
 		err = remoteStorage.Put(ctx, "manifest.json", remoteManifestData)
@@ -1037,14 +1017,14 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 		instanceRoot.Close()
 
 		// Setup manifests with locks by another process
-		localManifest := createTestManifest("1.0.0", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		localManifest := createTestManifest("1.0.0")
 		localManifest.Lock("other-process::1234567890")
 		manifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
-		remoteManifest := createTestManifest("1.0.0", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		remoteManifest := createTestManifest("1.0.0")
 		remoteManifest.Lock("other-process::1234567890")
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)
@@ -1069,9 +1049,8 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 
 		// Create manifests
 		ctx := context.Background()
-		world := createTestWorld(config.RemoteBackups + "/1234567890.tar")
-		localManifest := createTestManifest("1.0.0", []domain.World{world})
-		remoteManifest := createTestManifest("1.0.0", []domain.World{world})
+		localManifest := createTestManifest("1.0.0")
+		remoteManifest := createTestManifest("1.0.0")
 
 		// Setup storage
 		manifestData, err := json.Marshal(localManifest)
@@ -1119,9 +1098,8 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 
 		// Create manifests
 		ctx := context.Background()
-		world := createTestWorld(config.RemoteBackups + "/1234567890.tar")
-		localManifest := createTestManifest("1.0.0", []domain.World{world})
-		remoteManifest := createTestManifest("1.0.0", []domain.World{world})
+		localManifest := createTestManifest("1.0.0")
+		remoteManifest := createTestManifest("1.0.0")
 
 		// Setup storage
 		manifestData, err := json.Marshal(localManifest)
@@ -1173,14 +1151,14 @@ func TestMolfarService_LockMechanisms(t *testing.T) {
 
 		// Setup manifests with locks to simulate running state
 		lockID := "test-host::1234567890"
-		localManifest := createTestManifest("1.0.0", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		localManifest := createTestManifest("1.0.0")
 		localManifest.Lock(lockID)
 		manifestData, err := json.Marshal(localManifest)
 		assert.NoError(t, err)
 		err = localStorage.Put(ctx, "manifest.json", manifestData)
 		assert.NoError(t, err)
 
-		remoteManifest := createTestManifest("1.0.0", []domain.World{createTestWorld(config.RemoteBackups + "/test-world")})
+		remoteManifest := createTestManifest("1.0.0")
 		remoteManifest.Lock(lockID)
 		remoteManifestData, err := json.Marshal(remoteManifest)
 		assert.NoError(t, err)

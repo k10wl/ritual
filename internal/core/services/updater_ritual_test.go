@@ -60,7 +60,6 @@ func setupRitualUpdaterServices(t *testing.T) (
 func createRitualTestManifest(ritualVersion string) *domain.Manifest {
 	return &domain.Manifest{
 		RitualVersion: ritualVersion,
-		Worlds:        domain.WorldsManifest{Backups: []domain.World{}},
 		UpdatedAt:     time.Now(),
 	}
 }

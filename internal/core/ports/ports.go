@@ -59,9 +59,6 @@ type LibrarianService interface {
 // ValidatorService defines the validation interface
 // Validator ensures instance integrity and validates data consistency
 type ValidatorService interface {
-	// CheckWorld validates world data integrity
-	CheckWorld(local *domain.Manifest, remote *domain.Manifest) error
-
 	// CheckLock validates lock mechanism compliance
 	CheckLock(local *domain.Manifest, remote *domain.Manifest) error
 }

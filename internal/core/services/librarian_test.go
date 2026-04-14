@@ -8,7 +8,6 @@ import (
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ports/mocks"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -31,9 +30,8 @@ func TestLibrarianService_GetLocalManifest(t *testing.T) {
 			}`),
 			storageError: nil,
 			expectedResult: &domain.Manifest{
-				RitualVersion:   "1.0.0",
-				LockedBy:        "",
-				Worlds: domain.WorldsManifest{Backups: []domain.World{}},
+				RitualVersion: "1.0.0",
+				LockedBy:      "",
 			},
 			expectedError: false,
 		},
@@ -89,8 +87,7 @@ func TestLibrarianService_GetLocalManifest(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.expectedResult.RitualVersion, result.RitualVersion)
 				assert.Equal(t, tt.expectedResult.LockedBy, result.LockedBy)
-				assert.Equal(t, tt.expectedResult.Worlds.Backups, result.Worlds.Backups)
-			}
+				}
 		})
 	}
 }
@@ -113,9 +110,8 @@ func TestLibrarianService_GetRemoteManifest(t *testing.T) {
 			}`),
 			storageError: nil,
 			expectedResult: &domain.Manifest{
-				RitualVersion:   "1.0.0",
-				LockedBy:        "user::1234567890",
-				Worlds: domain.WorldsManifest{Backups: []domain.World{}},
+				RitualVersion: "1.0.0",
+				LockedBy:      "user::1234567890",
 			},
 			expectedError: false,
 		},
@@ -164,7 +160,6 @@ func TestLibrarianService_GetRemoteManifest(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.expectedResult.RitualVersion, result.RitualVersion)
 				assert.Equal(t, tt.expectedResult.LockedBy, result.LockedBy)
-				assert.Equal(t, tt.expectedResult.Worlds.Backups, result.Worlds.Backups)
 			}
 		})
 	}
@@ -355,9 +350,6 @@ func TestLibrarianService_Integration(t *testing.T) {
 	manifest := &domain.Manifest{
 		RitualVersion: "1.0.0",
 		LockedBy:      "user::1234567890",
-		Worlds: domain.WorldsManifest{Backups: []domain.World{
-			{URI: "world1", CreatedAt: time.Now()},
-		}},
 	}
 
 	var localCallCount, remoteCallCount int

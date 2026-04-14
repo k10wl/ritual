@@ -9,16 +9,9 @@ import (
 // Validation error constants
 var (
 	ErrOutdatedManifest              = errors.New("outdated manifest")
-	ErrOutdatedWorld                 = errors.New("outdated world")
 	ErrLocalManifestNil              = errors.New("local manifest cannot be nil")
 	ErrRemoteManifestNil             = errors.New("remote manifest cannot be nil")
 	ErrRemoteManifestVersionEmpty    = errors.New("remote manifest version cannot be empty")
-	ErrNoLocalWorlds                 = errors.New("local manifest has no stored worlds")
-	ErrNoRemoteWorlds                = errors.New("remote manifest has no stored worlds")
-	ErrLocalWorldURIEmpty            = errors.New("local world URI cannot be empty")
-	ErrLocalWorldTimestampZero       = errors.New("local world created timestamp cannot be zero")
-	ErrRemoteWorldURIEmpty           = errors.New("remote world URI cannot be empty")
-	ErrRemoteWorldTimestampZero      = errors.New("remote world created timestamp cannot be zero")
 	ErrLockConflict                  = errors.New("lock conflict")
 	ErrValidatorInitializationFailed = errors.New("validator initialization failed")
 )
@@ -67,54 +60,6 @@ func (v *ValidatorService) CheckManifestVersion(local *domain.Manifest, remote *
 	// Semantic version comparison: local older than remote triggers update
 	if IsVersionOlder(local.ManifestVersion, remote.ManifestVersion) {
 		return ErrOutdatedManifest
-	}
-
-	return nil
-}
-
-// CheckWorld validates world data integrity
-func (v *ValidatorService) CheckWorld(local *domain.Manifest, remote *domain.Manifest) error {
-	if v == nil {
-		return errors.New("validator service cannot be nil")
-	}
-	if local == nil {
-		return ErrLocalManifestNil
-	}
-	if remote == nil {
-		return ErrRemoteManifestNil
-	}
-
-	// Skip world validation if remote has no worlds - allow launching without worlds
-	if len(remote.Worlds.Backups) == 0 {
-		return nil
-	}
-
-	if len(local.Worlds.Backups) == 0 {
-		return ErrNoLocalWorlds
-	}
-
-	for _, world := range local.Worlds.Backups {
-		if strings.TrimSpace(world.URI) == "" {
-			return ErrLocalWorldURIEmpty
-		}
-		if world.CreatedAt.IsZero() {
-			return ErrLocalWorldTimestampZero
-		}
-	}
-
-	for _, world := range remote.Worlds.Backups {
-		if strings.TrimSpace(world.URI) == "" {
-			return ErrRemoteWorldURIEmpty
-		}
-		if world.CreatedAt.IsZero() {
-			return ErrRemoteWorldTimestampZero
-		}
-	}
-
-	// Safe comparison of last world only
-	if remote.Worlds.Backups[len(remote.Worlds.Backups)-1] !=
-		local.Worlds.Backups[len(local.Worlds.Backups)-1] {
-		return ErrOutdatedWorld
 	}
 
 	return nil

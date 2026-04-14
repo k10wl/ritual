@@ -38,27 +38,6 @@ func (m *Manifest) Unlock() {
 	m.UpdatedAt = time.Now()
 }
 
-// AddWorld adds a new world to the stored worlds queue
-func (m *Manifest) AddWorld(world World) {
-	m.Worlds.Backups = append(m.Worlds.Backups, world)
-	m.UpdatedAt = time.Now()
-}
-
-// GetLatestWorld returns the most recently created world
-func (m *Manifest) GetLatestWorld() *World {
-	if len(m.Worlds.Backups) == 0 {
-		return nil
-	}
-
-	var latest *World
-	for i := range m.Worlds.Backups {
-		if latest == nil || m.Worlds.Backups[i].CreatedAt.After(latest.CreatedAt) {
-			latest = &m.Worlds.Backups[i]
-		}
-	}
-	return latest
-}
-
 // Clone creates a deep copy of the manifest
 func (m *Manifest) Clone() *Manifest {
 	if m == nil {
@@ -77,7 +56,6 @@ func (m *Manifest) Clone() *Manifest {
 			SyncState: SyncState{
 				XXHashSyncAt: m.Worlds.XXHashSyncAt,
 			},
-			Backups: make([]World, len(m.Worlds.Backups)),
 		},
 		Server: ServerManifest{
 			SyncState: SyncState{
@@ -87,8 +65,6 @@ func (m *Manifest) Clone() *Manifest {
 		},
 		RemoteRetention: m.RemoteRetention,
 	}
-
-	copy(clone.Worlds.Backups, m.Worlds.Backups)
 
 	if m.Worlds.XXHashMap != nil {
 		clone.Worlds.XXHashMap = make(map[string]string, len(m.Worlds.XXHashMap))
@@ -105,38 +81,6 @@ func (m *Manifest) Clone() *Manifest {
 	}
 
 	return clone
-}
-
-// RemoveOldestWorlds removes the oldest worlds from the manifest, keeping only the specified count
-func (m *Manifest) RemoveOldestWorlds(maxCount int) []World {
-	if maxCount <= 0 {
-		return nil
-	}
-	if len(m.Worlds.Backups) <= maxCount {
-		return nil
-	}
-
-	// Sort worlds by creation time (oldest first)
-	sortedWorlds := make([]World, len(m.Worlds.Backups))
-	copy(sortedWorlds, m.Worlds.Backups)
-
-	for i := 0; i < len(sortedWorlds)-1; i++ {
-		for j := i + 1; j < len(sortedWorlds); j++ {
-			if sortedWorlds[i].CreatedAt.After(sortedWorlds[j].CreatedAt) {
-				sortedWorlds[i], sortedWorlds[j] = sortedWorlds[j], sortedWorlds[i]
-			}
-		}
-	}
-
-	removedCount := len(m.Worlds.Backups) - maxCount
-	removed := make([]World, removedCount)
-	copy(removed, sortedWorlds[:removedCount])
-
-	// Keep only the newest worlds
-	m.Worlds.Backups = sortedWorlds[removedCount:]
-	m.UpdatedAt = time.Now()
-
-	return removed
 }
 
 // GetMinRAMMB returns the minimum RAM requirement in MB
