@@ -153,7 +153,23 @@ func main() {
 		return
 	}
 
-	worldScanner := adapters.NewFilteredScanner(adapters.NewFullScanner(worldsFS), worldsFilter)
+	// World scanner: MtimeScanner if previous hash map exists, FullScanner otherwise
+	var worldInnerScanner ports.DirectoryScanner
+	localManifestForScanner, scannerManifestErr := librarian.GetLocalManifest(context.Background())
+	if scannerManifestErr == nil && len(localManifestForScanner.Worlds.XXHashMap) > 0 {
+		mtimeScanner, err := adapters.NewMtimeScanner(worldsPath, localManifestForScanner.Worlds.XXHashSyncAt, localManifestForScanner.Worlds.XXHashMap)
+		if err != nil {
+			fmt.Printf("Failed to create mtime scanner, falling back to full: %v\n", err)
+			worldInnerScanner = adapters.NewFullScanner(worldsFS)
+		} else {
+			worldInnerScanner = mtimeScanner
+		}
+	} else {
+		worldInnerScanner = adapters.NewFullScanner(worldsFS)
+	}
+	worldScanner := adapters.NewFilteredScanner(worldInnerScanner, worldsFilter)
+
+	// Server scanner: always FullScanner (small file count)
 	serverScanner := adapters.NewFilteredScanner(adapters.NewFullScanner(serverFS), serverFilter)
 
 	// Two sync services — same code, different config
