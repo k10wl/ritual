@@ -77,7 +77,8 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 	// Create mock server runner
 	mockServerRunner := &MockServerRunner{}
 
-	// Mock updater creates server directories to simulate delta download
+	// Mock updater creates server directories and saves a local manifest
+	// to simulate what the real SyncDownloadUpdater does.
 	mockUpdater := mocks.NewMockUpdaterService()
 	mockUpdater.RunFunc = func(ctx context.Context) error {
 		worldDirsToCreate := []string{"world", "world_nether", "world_the_end"}
@@ -87,15 +88,27 @@ func setupMolfarServices(t *testing.T) (*services.MolfarService, *adapters.FSRep
 				return mkErr
 			}
 		}
+		// Save a default local manifest if none exists, matching SyncDownloadUpdater behavior.
+		if _, err := librarianService.GetLocalManifest(ctx); err != nil {
+			defaultManifest := &domain.Manifest{RitualVersion: config.AppVersion, UpdatedAt: time.Now()}
+			if saveErr := librarianService.SaveLocalManifest(ctx, defaultManifest); saveErr != nil {
+				return saveErr
+			}
+		}
 		return nil
 	}
 
 	updaters := []ports.UpdaterService{mockUpdater}
 
-	// Create mock backupper
+	// Create mock backupper that saves a backup file to local storage,
+	// simulating what the real SyncUploadBackupper does.
 	mockBackupper := &mocks.MockBackupperService{
 		RunFunc: func(ctx context.Context) (string, error) {
-			return config.RemoteBackups + "/backup.tar", nil
+			archiveName := config.LocalBackups + "/backup.tar"
+			if putErr := localStorage.Put(ctx, archiveName, []byte("mock-backup-data")); putErr != nil {
+				return "", putErr
+			}
+			return archiveName, nil
 		},
 	}
 

@@ -20,8 +20,8 @@ func TestRunMigrations(t *testing.T) {
 	}{
 		{"nil manifest runs all", "", []string{"2.0.0"}},
 		{"old version runs pending", "1.0.0", []string{"2.0.0"}},
-		{"current version skips all", "2.0.0", []string{}},
-		{"future version skips all", "3.0.0", []string{}},
+		{"current version skips all", "2.0.0", nil},
+		{"future version skips all", "3.0.0", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
