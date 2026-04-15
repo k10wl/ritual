@@ -17,6 +17,7 @@ import (
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/services"
+	"ritual/internal/core/statemachine"
 )
 
 // Injected at build time via ldflags
@@ -332,15 +333,6 @@ func main() {
 		return
 	}
 
-	// Create Molfar service
-	molfar, err := services.NewMolfarService(conditions, updaters, exitUpdaters, retentions, serverRunner, librarian, localStorage, remoteStorage, events, workRoot)
-	if err != nil {
-		fmt.Printf("Failed to create molfar service: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
-	}
-
 	// Prompt for settings and create server config
 	// Pass min RAM from manifest so user can't enter less than required
 	settings, err := services.PromptSettings(bus, prompter, remoteManifestForConditions.GetMinRAMMB())
@@ -359,37 +351,35 @@ func main() {
 		return
 	}
 
-	// Run lifecycle
+	// Build state-machine Deps + factory, run lifecycle.
+	runID := fmt.Sprintf("%s%s%d", hostname, config.LockIDSeparator, time.Now().UnixNano())
+	deps := statemachine.Deps{
+		Bus:             bus,
+		Prompter:        prompter,
+		RunID:           runID,
+		Server:          server,
+		LocalManifests:  localManifests,
+		RemoteManifests: remoteManifests,
+		LocalStore:      localStorage,
+		RemoteStore:     remoteStorage,
+		ServerRunner:    serverRunner,
+		Conditions:      conditions,
+		Updaters:        updaters,
+		ExitUpdaters:    exitUpdaters,
+		Retentions:      retentions,
+	}
+	factory := statemachine.NewFactory(deps)
+	machine := statemachine.NewMachine(factory.Preparing(), bus, factory.RunID())
+
 	fmt.Println("Starting Ritual")
-
-	if err := molfar.Prepare(); err != nil {
-		fmt.Printf("Prepare phase failed: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
-	}
-
-	runErr := molfar.Run(server)
-	if runErr != nil {
-		fmt.Printf("Run phase failed: %v\n", runErr)
-	}
-
-	// Always attempt Exit to unlock manifests, even if Run failed
-	if err := molfar.Exit(); err != nil {
-		fmt.Printf("Exit phase failed: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
-	}
-
-	// Close event channel and wait for consumer to finish
+	runErr := machine.Run(context.Background())
 	shutdown()
 	wg.Wait()
 
 	if runErr != nil {
+		fmt.Printf("Ritual failed: %v\n", runErr)
 		return
 	}
-
 	fmt.Println("Ritual completed successfully")
 	success = true
 }

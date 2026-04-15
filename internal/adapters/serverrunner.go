@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,8 +48,11 @@ func NewServerRunner(homedir string, workRoot *os.Root, startScript string, comm
 	}, nil
 }
 
-// Run executes the Minecraft server process using the configured start script
-func (s *ServerRunner) Run(server *domain.ServerRuntime) error {
+// Run executes the Minecraft server process using the configured start script.
+// ctx cancellation is plumbed into commandExecutor via graceful-stop hooks
+// when available; today the command blocks until the server exits on its own.
+func (s *ServerRunner) Run(ctx context.Context, server *domain.ServerRuntime) error {
+	_ = ctx // graceful-stop wiring lands in a follow-up when ServerRunner tests exist for it
 	if s == nil {
 		return fmt.Errorf("server runner cannot be nil")
 	}

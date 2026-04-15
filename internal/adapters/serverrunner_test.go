@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -123,7 +124,7 @@ func TestServerRunner_Run(t *testing.T) {
 	server, err := domain.NewServerRuntime("127.0.0.1:25565", 1024)
 	require.NoError(t, err)
 
-	err = runner.Run(server)
+	err = runner.Run(context.Background(), server)
 
 	assert.NoError(t, err)
 	mockExecutor.AssertExpectations(t)
@@ -204,7 +205,7 @@ func TestServerRunner_Run_UpdatesServerProperties(t *testing.T) {
 			server, err := domain.NewServerRuntime(address, tc.memory)
 			require.NoError(t, err)
 
-			err = runner.Run(server)
+			err = runner.Run(context.Background(), server)
 
 			assert.NoError(t, err)
 			mockExecutor.AssertExpectations(t)
@@ -249,7 +250,7 @@ func TestServerRunner_Run_CreatesServerPropertiesIfMissing(t *testing.T) {
 	server, err := domain.NewServerRuntime("192.168.1.50:25570", 2048)
 	require.NoError(t, err)
 
-	err = runner.Run(server)
+	err = runner.Run(context.Background(), server)
 
 	assert.NoError(t, err)
 	mockExecutor.AssertExpectations(t)
@@ -267,7 +268,7 @@ func TestServerRunner_Run_NilRunner(t *testing.T) {
 	server, err := domain.NewServerRuntime("127.0.0.1:25565", 1024)
 	require.NoError(t, err)
 
-	err = runner.Run(server)
+	err = runner.Run(context.Background(), server)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "server runner cannot be nil")
@@ -288,7 +289,7 @@ func TestServerRunner_Run_NilServer(t *testing.T) {
 	runner, err := NewServerRunner(tempDir, workRoot, startScript, mockExecutor)
 	require.NoError(t, err)
 
-	err = runner.Run(nil)
+	err = runner.Run(context.Background(), nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "server cannot be nil")
@@ -309,7 +310,7 @@ func TestServerRunner_Run_ScriptNotFound(t *testing.T) {
 	server, err := domain.NewServerRuntime("127.0.0.1:25565", 1024)
 	require.NoError(t, err)
 
-	err = runner.Run(server)
+	err = runner.Run(context.Background(), server)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "start script not found")
@@ -347,7 +348,7 @@ func TestServerRunner_Run_CommandExecutionError(t *testing.T) {
 	server, err := domain.NewServerRuntime("127.0.0.1:25565", 1024)
 	require.NoError(t, err)
 
-	err = runner.Run(server)
+	err = runner.Run(context.Background(), server)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to start server")

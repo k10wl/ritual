@@ -27,19 +27,6 @@ type StorageRepository interface {
 	Copy(ctx context.Context, sourceKey string, destKey string) error
 }
 
-// MolfarService defines the main orchestration interface
-// Molfar coordinates the complete server lifecycle and manages all operations
-type MolfarService interface {
-	// Prepare initializes the environment and validates prerequisites
-	Prepare() error
-
-	// Run executes the main server orchestration process
-	Run(server *domain.ServerRuntime) error
-
-	// Exit gracefully shuts down the server and cleans up resources
-	Exit() error
-}
-
 // LibrarianService defines the manifest management interface
 // Librarian handles synchronization between local and remote manifests
 type LibrarianService interface {
@@ -73,8 +60,10 @@ type CommandExecutor interface {
 // ServerRunner defines the server execution interface
 // ServerRunner handles the execution of Minecraft server processes
 type ServerRunner interface {
-	// Run executes the server process with the given server configuration
-	Run(server *domain.ServerRuntime) error
+	// Run executes the server process with the given server configuration.
+	// Context cancellation triggers a graceful stop (Minecraft "stop" command)
+	// on adapters that support it.
+	Run(ctx context.Context, server *domain.ServerRuntime) error
 }
 
 // UpdaterService defines the interface for update operations
