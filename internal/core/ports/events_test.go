@@ -40,6 +40,7 @@ func TestSendEvent(t *testing.T) {
 		ports.SendEvent(events, ports.UpdateEvent{Operation: "op", Message: "msg", Data: map[string]any{"key": "value"}})
 		ports.SendEvent(events, ports.FinishEvent{Operation: "op"})
 		ports.SendEvent(events, ports.ErrorEvent{Operation: "op", Err: errors.New("error")})
+		ports.SendEvent(events, ports.RetryAttemptInfo{Operation: "r2.Get", Key: "manifest.json", Attempt: 2, Err: errors.New("flaky")})
 
 		close(events)
 
@@ -47,6 +48,6 @@ func TestSendEvent(t *testing.T) {
 		for range events {
 			count++
 		}
-		assert.Equal(t, 4, count)
+		assert.Equal(t, 5, count)
 	})
 }

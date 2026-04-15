@@ -36,11 +36,22 @@ type PromptEvent struct {
 	ResponseChan chan<- any
 }
 
-func (StartEvent) sealed()  {}
-func (UpdateEvent) sealed() {}
-func (FinishEvent) sealed() {}
-func (ErrorEvent) sealed()  {}
-func (PromptEvent) sealed() {}
+// RetryAttemptInfo is emitted on each transient failure that triggers a retry.
+// Operation is adapter-qualified (e.g. "r2.Get"). Key is the object key or
+// prefix when available, empty otherwise. Attempt is 1-indexed.
+type RetryAttemptInfo struct {
+	Operation string
+	Key       string
+	Attempt   uint
+	Err       error
+}
+
+func (StartEvent) sealed()       {}
+func (UpdateEvent) sealed()      {}
+func (FinishEvent) sealed()      {}
+func (ErrorEvent) sealed()       {}
+func (PromptEvent) sealed()      {}
+func (RetryAttemptInfo) sealed() {}
 
 // SendEvent safely sends an event to the channel if it's not nil
 func SendEvent(events chan<- Event, evt Event) {
