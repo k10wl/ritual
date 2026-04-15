@@ -4,6 +4,13 @@
 
 **Goal:** Replace `MolfarService` with explicit state machine over a fan-out `EventBus`. Migrate every legacy `chan<- ports.Event` callsite to `EventBus` *in-sprint* (no bridge scaffolding). Extract user-input RPC from events into a dedicated `Prompter` port.
 
+**Authoritative references for agentic workers — read these before starting:**
+
+- [`docs/event-architecture.md`](../../event-architecture.md) — canonical bus topology (one bus, fan-out, non-blocking), publisher/subscriber rules, event catalog, what does NOT go on the bus. This supersedes any bus description in prior plan revisions.
+- [`docs/superpowers/plans/2026-04-16-manifest-store.md`](./2026-04-16-manifest-store.md) — **prerequisite P-A** (see Phase 0).
+- [`docs/superpowers/plans/2026-04-16-retry-coverage.md`](./2026-04-16-retry-coverage.md) — **prerequisite P-B** (see Phase 0).
+- `internal/adapters/retry/retry.go` — generic retry util (already merged, commit `b6ed020`). `Do[T]` / `DoVoid` / `Fatal` / `IsFatal`. Zero delay under `go test` via `testing.Testing()`.
+
 **LOC target:** ≥ −500 net vs Molfar baseline. Earlier ≥ −600 estimate adjusted after adding GUI-readiness scope (ctx discipline + `ServerRunner.Run(ctx, ...)`). Lower delta accepted in exchange for shipping a Wails-ready core, no future migration debt.
 
 **Design principles (per user memory):** hexagonal, DI, SOLID/ISP, minimal code, tests as docs, expressiveness through ideas, flat code (early returns, no nested ifs, no `else`), patterns are vocabulary not templates.
@@ -56,9 +63,9 @@
 
 | Path | Change |
 |---|---|
-| `internal/core/ports/events.go` | **Rewrite.** `type Event = fmt.Stringer`. Replace sealed-interface variants with `*Info` payload structs that implement `String()`. Add `StateChangedInfo`, `StateFailedInfo`. Delete `PromptEvent`, `SendEvent`. |
+| `internal/core/ports/events.go` | **Rewrite.** `type Event = fmt.Stringer`. Replace sealed-interface variants with `*Info` payload structs that implement `String()`. Add `StateChangedInfo`, `StateFailedInfo`, and promote `RetryAttemptInfo` (introduced by P-B) to Stringer shape. Delete `PromptEvent`, `SendEvent`. |
 | `internal/core/ports/events_test.go` | Delete `SendEvent` tests; keep one `String()` smoke test per payload (asserts format). |
-| `internal/adapters/r2.go` | Field `events chan<- ports.Event` → `bus ports.EventBus`. `send()` → `publish()` calling `bus.Publish`. `*Event` types → `*Info`. Same for `progressReadCloser`. |
+| `internal/adapters/r2.go` | Field `events chan<- ports.Event` → `bus ports.EventBus`. `send()` → `publish()` calling `bus.Publish`. `*Event` types → `*Info`. Same for `progressReadCloser`. **Retry wiring (inline `retry.Do` per method) already landed in P-B.** This migration only swaps the transport from channel to bus at existing publish callsites — including the `RetryAttemptInfo` publish inside each retry closure. |
 | `internal/core/services/sync.go` | Same ctor + field swap; one `SendEvent` callsite → `bus.Publish`. |
 | `internal/core/services/retention_logs.go` | Same. |
 | `internal/core/services/settings.go` | Ctor signature `(bus ports.EventBus, prompter ports.Prompter, minRAMMB int)`. Delete `PromptEvent` round-trip; replace with `prompter.Prompt(ctx, id, prompt, default)`. Validation feedback → `bus.Publish(UpdateInfo{...})`. |
@@ -98,6 +105,67 @@ Doc deletions / rewrites:
 | `docs/event-architecture.md` Phase 1–6 step list (sealed-interface plan) | rewritten for new design | 25 |
 | Molfar component section in `docs/structure.md` | rewritten as state machine + bus + prompter | 26 |
 | Stale `StartEvent` / `SendEvent` / `sealed()` references in any other doc | updated by sweep | 28 |
+
+---
+
+## Phase 0 — Prerequisites
+
+Before any state-machine code lands, **two sibling plans must merge to `main`**. They are independent of each other; can ship in either order or in parallel.
+
+### P-A: Manifest port refactor
+
+Owned by [`docs/superpowers/plans/2026-04-16-manifest-store.md`](./2026-04-16-manifest-store.md).
+
+**Scope (owned by that plan, not this one):**
+
+- Introduce `ports.ManifestStore{Get, Save}` injected twice (local + remote).
+- Move `Manifest.ApplyDefaults` into `UnmarshalJSON` (defaults on decode, not on save).
+- Wire `localManifests` + `remoteManifests` at composition root alongside the surviving Librarian (Molfar keeps using Librarian until this plan's Phase 6).
+- Evaluate `ErrEmptyData` / `ErrNilManifest` reachability; delete if unreachable.
+
+**Impact on this plan:**
+
+- `Deps.Librarian ports.LibrarianService` becomes `Deps.LocalManifests, Deps.RemoteManifests ports.ManifestStore`.
+- Factory transition signatures carry **scalars only** (`lockID string`, `shouldBackup bool`, `cause error`). No `*domain.Manifest` pointers in transitions. `LockingState` computes `shouldBackup = services.ShouldBackup(local.Worlds.SyncState, remote.Worlds.SyncState)` once; `RunningState` carries the bool through unchanged; `ExitingState` consumes the bool.
+- `RunningState` loses its manifest dep entirely — it no longer reads manifests to extract `lockID`; Locking hands it over via transition payload.
+- `ExitingState` / `UnlockingState` share a `releaseLock(ctx, local, remote ports.ManifestStore, lockID string)` helper for the idempotent `LockedBy == lockID` clear-and-save.
+- All Task 1–28 references to `ports.LibrarianService`, `librarian.Get*`, `librarian.Save*`, and `Deps.Librarian` are resolved against `ManifestStore` semantics after P-A merges. State files (Tasks 9, 10, 11, 12) are written directly against `ManifestStore`; no Librarian references appear in new code.
+
+**Acceptance:** `rg "LibrarianService" --type go` returns only the surviving Molfar usage; `ports.ManifestStore` is importable from `internal/core/statemachine/`; `MockManifestStore` exists.
+
+### P-B: Retry coverage for R2
+
+Owned by [`docs/superpowers/plans/2026-04-16-retry-coverage.md`](./2026-04-16-retry-coverage.md).
+
+**Scope (owned by that plan, not this one):**
+
+- Inline `retry.Do` on every `S3Client` call inside `internal/adapters/r2.go`.
+- Add unexported classifier `r2Retryable(err error) bool` in `internal/adapters/r2_classify.go` (permanent: `NoSuchKey`, `NoSuchBucket`, `AccessDenied`, `InvalidAccessKeyId`; retryable: `SlowDown`, `RequestTimeout`, `InternalError`, `ServiceUnavailable`, `net.Error`, 5xx; respects `retry.IsFatal`).
+- Delete `internal/adapters/retrystorage.go` and its composition-root wiring line (`main.go:119`); rename surviving callsites back to `remoteStorage`.
+- Add `RetryAttemptInfo{Operation, Key, Attempt, Err}` event type (channel-compatible during P-B; this plan's Phase 1 converts it to `Stringer` alongside the other events).
+
+**Impact on this plan:**
+
+- All eight gap callsites (Librarian/ManifestStore manifest I/O, RitualUpdater binary download, Retention list/delete, Backup copy/put) retry transparently through R2 starting from P-B merge. No state-machine code needs to know about retries.
+- `RetryAttemptInfo` is part of the event catalog from Phase 1 onwards — add its `String()` smoke test to Task 1's `events_test.go` list and `RetryAttemptInfo` to the events.go rewrite (see Task 1).
+- R2 adapter in Phase 4 (Service migration) will already emit `RetryAttemptInfo` via the legacy channel on entry; the migration replaces the channel with `bus.Publish` at the same callsite. No new retry wiring required in this plan.
+- `FailedState` semantics assume only **exhausted** retries propagate — transient flakes never reach it. P-B is what makes that assumption true.
+
+**Acceptance:** `rg "RetryStorageRepository" --type go` returns empty; `R2Repository` methods are wrapped with `retry.Do` / `retry.DoVoid`; `ports.RetryAttemptInfo` exists and compiles; `go test ./internal/adapters/...` is green and runs in < 2s.
+
+### Sequencing
+
+- **P-A and P-B can merge independently and in any order.** Neither depends on the other (P-A is domain layer, P-B is adapter layer).
+- **Both must be green on `main`** before this plan's Phase 1 begins.
+- P-A's own deletion Phase (Librarian removal) runs after **this plan's** Phase 6 (Molfar deletion), since Molfar still holds the last Librarian reference until then.
+- P-B has no post-state-machine cleanup — it completes entirely before this plan starts.
+
+### Combined acceptance for proceeding past Phase 0
+
+- `rg "LibrarianService" --type go` returns only the surviving Molfar usage.
+- `rg "RetryStorageRepository" --type go` returns empty.
+- `ports.ManifestStore` and `ports.RetryAttemptInfo` both compile.
+- `go test ./...` green; integration tests complete in their baseline duration (< 30s per package) with `testing.Testing()` zeroing retry delays.
 
 ---
 
@@ -168,9 +236,29 @@ type StateFailedInfo struct {
 }
 
 func (s StateFailedInfo) String() string { return fmt.Sprintf("failed in %s: %v", s.State, s.Err) }
+
+// RetryAttemptInfo is published by the R2 adapter on each retry attempt.
+// Introduced by the retry-coverage prereq (P-B) in its channel-compatible form;
+// this task promotes it to a Stringer alongside the other events.
+//
+// Key is the object key (or empty for ops that don't target a single key, e.g. List).
+// Attempt is 1-indexed; Operation is adapter.method (e.g. "r2.Get", "r2.DeleteBatch").
+type RetryAttemptInfo struct {
+    Operation string
+    Key       string
+    Attempt   uint
+    Err       error
+}
+
+func (r RetryAttemptInfo) String() string {
+    if r.Key == "" {
+        return fmt.Sprintf("retry %s attempt=%d err=%v", r.Operation, r.Attempt, r.Err)
+    }
+    return fmt.Sprintf("retry %s key=%s attempt=%d err=%v", r.Operation, r.Key, r.Attempt, r.Err)
+}
 ```
 
-- [ ] Update `internal/core/ports/events_test.go`: delete all `SendEvent` tests; add one `String()` smoke per payload (e.g. `assertEqual(t, "start backup", StartInfo{Operation: "backup"}.String())`).
+- [ ] Update `internal/core/ports/events_test.go`: delete all `SendEvent` tests; add one `String()` smoke per payload (e.g. `assertEqual(t, "start backup", StartInfo{Operation: "backup"}.String())`) — include `RetryAttemptInfo` (two rows: with and without `Key`).
 - [ ] `go build ./...` — expect failures in callers (covered by Phase 4).
 - [ ] Commit: `feat(events): Stringer-based events with *Info payloads`
 
