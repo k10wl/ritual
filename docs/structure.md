@@ -1,5 +1,26 @@
 # R.I.T.U.A.L. Project Structure
 
+> **Note (Sprint 6 — State Machine Migration):** Large parts of this document
+> describe the legacy `MolfarService` + `LibrarianService` design and predate
+> the state-machine migration. See `docs/state-machine.md` +
+> `docs/event-architecture.md` for the current orchestration and observability
+> architecture. The Molfar/Librarian sections below are retained for historical
+> reference only.
+>
+> **Current orchestration:** `internal/core/statemachine/` — `Machine.Run`
+> drives `Preparing → Locking → Running → Exiting` with `Unlocking` as rollback
+> and `Failed` as terminal. Each state is a small struct with constructor
+> injection; `StateFactory` wires transitions.
+>
+> **Current manifest persistence:** `ports.ManifestStore` (2 methods: Get, Save)
+> injected twice — once for local, once for remote. See
+> `internal/adapters/manifest_store.go`. LibrarianService has been removed.
+>
+> **Current observability:** `ports.EventBus` (fan-out, non-blocking) +
+> `ports.Prompter` (synchronous RPC). Events are `fmt.Stringer` payload structs.
+>
+> A full rewrite of this document will land in a dedicated doc sprint.
+
 ## Project Import Structure
 
 All project imports follow the pattern: `ritual/...`

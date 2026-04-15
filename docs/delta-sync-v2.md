@@ -324,7 +324,7 @@ work set).
 Emitted at start of each phase. Contain total work to be done.
 
 ```go
-ports.UpdateEvent{
+ports.UpdateInfo{
     Operation: "sync-upload",
     Message:   "Starting upload phase",
     Data: map[string]any{
@@ -339,7 +339,7 @@ ports.UpdateEvent{
 Emitted for each file operation. Enable progress tracking.
 
 ```go
-ports.UpdateEvent{
+ports.UpdateInfo{
     Operation: "sync-upload",
     Message:   "Uploading file",
     Data: map[string]any{
@@ -353,9 +353,9 @@ ports.UpdateEvent{
 ### Phase transition events
 
 ```go
-ports.StartEvent{Operation: "sync-upload-p1"}
-ports.FinishEvent{Operation: "sync-upload-p1"}
-ports.StartEvent{Operation: "sync-upload-p2"}
+ports.StartInfo{Operation: "sync-upload-p1"}
+ports.FinishInfo{Operation: "sync-upload-p1"}
+ports.StartInfo{Operation: "sync-upload-p2"}
 // ...
 ```
 

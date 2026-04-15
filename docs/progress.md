@@ -71,16 +71,30 @@
 - [x] See spec: `docs/superpowers/specs/2026-04-14-backup-retention-design.md`
 - [x] See plan: `docs/superpowers/plans/2026-04-14-backup-retention.md`
 
+### Sprint 6: State Machine + EventBus Migration (Completed)
+- [x] Retry coverage prereq (P-B): inline retry in R2, r2_classify, decorator deleted, RetryAttemptInfo event
+- [x] Manifest-store prereq (P-A): ports.ManifestStore (2 methods, 2 instances), Manifest.UnmarshalJSON applies defaults on decode
+- [x] EventBus port + adapter (non-blocking Publish, multi-subscriber fan-out; filtering via subscriber-side type switch; Decorator extension point documented)
+- [x] Prompter port (RPC extracted from events)
+- [x] StateName + Handler interface (no hooks — brackets are state pairs)
+- [x] Machine.Run loop with StateChangedInfo emission
+- [x] StateFactory + Deps (ctor injection, no god-struct, no Builder)
+- [x] States: Preparing, Locking, Running, Exiting, Unlocking, Failed (all with per-state tests + factory smoke)
+- [x] Service migrations: r2, sync, retention_logs, settings — all use EventBus; SendEvent + PromptEvent removed
+- [x] cmd/cli cutover — Molfar removed; Librarian removed after consumer migration (SyncDownloadUpdater, SyncUploader, RitualUpdater, ManifestLockCondition)
+- [x] Docs: state-machine.md promoted, event-architecture.md rewritten, progress entry added
+- [x] Plans: `docs/superpowers/plans/2026-04-15-state-machine.md`, `2026-04-16-manifest-store.md`, `2026-04-16-retry-coverage.md`
+
 # >>> We are here
 
-### Sprint 6: Logging Integration (1 week)
+### Sprint 7: Logging Integration (1 week)
 - [ ] Create centralized logging mechanism with structured logging
 - [ ] Implement log level configuration and filtering
 - [ ] Add log rotation and retention policies
 - [ ] Integrate logging across all services and adapters
 - [ ] Create comprehensive logging tests and validation
 
-### Sprint 7: Implementation & Testing (1 week)
+### Sprint 8: Implementation & Testing (1 week)
 - [ ] Create end-to-end tests
 - [ ] Validate system flow
 - [ ] Update documentation

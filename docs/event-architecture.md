@@ -235,9 +235,9 @@ Retries are visible in the log but invisible to the user-facing progress widget 
 
 | Item | State |
 |---|---|
-| Legacy `chan<- ports.Event` model | **Being removed.** All call sites migrate to `EventBus` in the state-machine sprint. |
-| Sealed-interface event types (`sealed()`) | **Being removed.** Replaced by `Event = fmt.Stringer` with `*Info` payload structs. |
-| `PromptEvent` / `SendEvent` / `handlePrompt` | **Being removed.** Replaced by `Prompter` port. |
+| Legacy `chan<- ports.Event` model | \*\*Removed.\*\* All call sites migrate to `EventBus` in the state-machine sprint. |
+| Sealed-interface event types (`sealed()`) | \*\*Removed.\*\* Replaced by `Event = fmt.Stringer` with `*Info` payload structs. |
+| `PromptEvent` / `SendEvent` / `handlePrompt` | \*\*Removed.\*\* Replaced by `Prompter` port. |
 | `RetryAttemptInfo` | **Being added** in retry-coverage sprint; channel-compatible today, bus-native after state-machine sprint. |
 
 See the linked plan files for concrete file-by-file changes.
