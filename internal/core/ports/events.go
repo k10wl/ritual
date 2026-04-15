@@ -75,14 +75,3 @@ func (r RetryAttemptInfo) String() string {
 	}
 	return fmt.Sprintf("retry %s key=%s attempt=%d err=%v", r.Operation, r.Key, r.Attempt, r.Err)
 }
-
-// SendEvent is a transitional helper that publishes evt to bus if non-nil.
-// Removed in state-machine Phase 4 Task 18 after all callers migrate to
-// bus.Publish. Kept for the migration sprint to minimize churn.
-//
-// Deprecated: call bus.Publish directly.
-func SendEvent(bus EventBus, evt Event) {
-	if bus != nil {
-		bus.Publish(evt)
-	}
-}

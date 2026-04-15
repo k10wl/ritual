@@ -10,6 +10,13 @@ import (
 	"ritual/internal/core/ports"
 )
 
+// publishEvt is the nil-safe bus helper local to this file.
+func publishEvt(bus ports.EventBus, evt ports.Event) {
+	if bus != nil {
+		bus.Publish(evt)
+	}
+}
+
 // PromptSettings loads existing settings and prompts the user via the
 // Prompter port for each configurable value. Validation feedback is
 // published to the event bus.
@@ -30,8 +37,8 @@ func PromptSettings(bus ports.EventBus, prompter ports.Prompter, minRAMMB int) (
 		minRAMGB = 1
 	}
 
-	if bus != nil { bus.Publish(ports.StartInfo{Operation: "Settings"}) }
-	ports.SendEvent(bus, ports.UpdateInfo{
+	publishEvt(bus, ports.StartInfo{Operation: "Settings"})
+	publishEvt(bus, ports.UpdateInfo{
 		Operation: "Settings",
 		Message:   "Press Enter to accept default values shown in brackets",
 	})
@@ -70,11 +77,11 @@ func PromptSettings(bus ports.EventBus, prompter ports.Prompter, minRAMMB int) (
 		return nil, fmt.Errorf("failed to save settings: %w", err)
 	}
 
-	ports.SendEvent(bus, ports.UpdateInfo{
+	publishEvt(bus, ports.UpdateInfo{
 		Operation: "Settings",
 		Message:   fmt.Sprintf("Saved: IP=%s, Port=%d, RAM=%dGB", settings.IP, settings.Port, settings.Memory/1024),
 	})
-	if bus != nil { bus.Publish(ports.FinishInfo{Operation: "Settings"}) }
+	publishEvt(bus, ports.FinishInfo{Operation: "Settings"})
 
 	return settings, nil
 }
@@ -87,7 +94,7 @@ func promptWithValidation(ctx context.Context, bus ports.EventBus, prompter port
 			return "", err
 		}
 		if err := validate(response); err != nil {
-			ports.SendEvent(bus, ports.UpdateInfo{
+			publishEvt(bus, ports.UpdateInfo{
 				Operation: "Settings",
 				Message:   fmt.Sprintf("Invalid input: %v", err),
 			})
