@@ -1,44 +1,67 @@
 package ports
 
-// Event is the sealed interface for all event types
-type Event interface {
-	sealed()
+import "fmt"
+
+// Event is any fmt.Stringer. Open set, self-describing, compile-safe.
+//
+// To add a new event type:
+//   1. Define a struct (anywhere in the codebase, no central registry).
+//   2. Implement String() string — used by default consumers and logs.
+//   3. Publish via bus.Publish(MyEvent{...}).
+//
+// Conventions:
+//   - Use UpdateInfo{Operation, Message, Data} for generic progress; only
+//     define a new type when you have unique structured fields.
+//   - Throttle high-frequency publishes at the call site — slow subscribers
+//     drop, and console floods are unfriendly.
+//   - Namespace event names if defined outside core (e.g. gui.ScreenChangedInfo).
+//   - Per-subscriber FIFO is preserved; cross-subscriber order is not.
+//   - Bus delivery is non-blocking and observability-grade. For durable record
+//     (audit, billing), attach a file-writing subscriber — out of scope here,
+//     trivial when needed.
+type Event = fmt.Stringer
+
+type StartInfo struct{ Operation string }
+
+func (s StartInfo) String() string { return fmt.Sprintf("start %s", s.Operation) }
+
+type UpdateInfo struct {
+	Operation, Message string
+	Data               map[string]any
 }
 
-// StartEvent signals the beginning of an operation
-type StartEvent struct {
-	Operation string
+func (u UpdateInfo) String() string {
+	if p, ok := u.Data["percent"]; ok {
+		return fmt.Sprintf("%s: %s (%.1f%%)", u.Operation, u.Message, p)
+	}
+	return fmt.Sprintf("%s: %s", u.Operation, u.Message)
 }
 
-// UpdateEvent provides progress or status information during an operation
-type UpdateEvent struct {
-	Operation string
-	Message   string
-	Data      map[string]any
-}
+type FinishInfo struct{ Operation string }
 
-// FinishEvent signals the successful completion of an operation
-type FinishEvent struct {
-	Operation string
-}
+func (f FinishInfo) String() string { return fmt.Sprintf("finish %s", f.Operation) }
 
-// ErrorEvent signals an error during an operation
-type ErrorEvent struct {
+type ErrorInfo struct {
 	Operation string
 	Err       error
 }
 
-// PromptEvent requests user input
-type PromptEvent struct {
-	ID           string
-	Prompt       string
-	DefaultValue string
-	ResponseChan chan<- any
+func (e ErrorInfo) String() string { return fmt.Sprintf("error %s: %v", e.Operation, e.Err) }
+
+type StateChangedInfo struct{ From, To, RunID string }
+
+func (s StateChangedInfo) String() string { return fmt.Sprintf("%s → %s", s.From, s.To) }
+
+type StateFailedInfo struct {
+	State, RunID string
+	Err          error
 }
 
-// RetryAttemptInfo is emitted on each transient failure that triggers a retry.
-// Operation is adapter-qualified (e.g. "r2.Get"). Key is the object key or
-// prefix when available, empty otherwise. Attempt is 1-indexed.
+func (s StateFailedInfo) String() string { return fmt.Sprintf("failed in %s: %v", s.State, s.Err) }
+
+// RetryAttemptInfo is published by the R2 adapter on each retry attempt.
+// Key is the object key (or empty for ops that don't target a single key, e.g. List).
+// Attempt is 1-indexed; Operation is adapter.method (e.g. "r2.Get", "r2.DeleteBatch").
 type RetryAttemptInfo struct {
 	Operation string
 	Key       string
@@ -46,16 +69,9 @@ type RetryAttemptInfo struct {
 	Err       error
 }
 
-func (StartEvent) sealed()       {}
-func (UpdateEvent) sealed()      {}
-func (FinishEvent) sealed()      {}
-func (ErrorEvent) sealed()       {}
-func (PromptEvent) sealed()      {}
-func (RetryAttemptInfo) sealed() {}
-
-// SendEvent safely sends an event to the channel if it's not nil
-func SendEvent(events chan<- Event, evt Event) {
-	if events != nil {
-		events <- evt
+func (r RetryAttemptInfo) String() string {
+	if r.Key == "" {
+		return fmt.Sprintf("retry %s attempt=%d err=%v", r.Operation, r.Attempt, r.Err)
 	}
+	return fmt.Sprintf("retry %s key=%s attempt=%d err=%v", r.Operation, r.Key, r.Attempt, r.Err)
 }
