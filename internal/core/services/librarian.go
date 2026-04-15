@@ -97,7 +97,6 @@ func (l *LibrarianService) SaveLocalManifest(ctx context.Context, manifest *doma
 		return ErrNilManifest
 	}
 
-	manifest.ApplyDefaults()
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal manifest: %w", err)
@@ -122,7 +121,6 @@ func (l *LibrarianService) SaveRemoteManifest(ctx context.Context, manifest *dom
 		return ErrNilManifest
 	}
 
-	manifest.ApplyDefaults()
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal manifest: %w", err)
