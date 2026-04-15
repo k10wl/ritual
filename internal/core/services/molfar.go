@@ -31,7 +31,7 @@ type MolfarService struct {
 	librarian     ports.LibrarianService
 	localStorage  ports.StorageRepository
 	remoteStorage ports.StorageRepository
-	events        chan<- ports.Event
+	events        ports.EventBus
 	workRoot      *os.Root
 	currentLockID string // Tracks the current lock ID for ownership validation (internal use only)
 }
@@ -47,7 +47,7 @@ func NewMolfarService(
 	librarian ports.LibrarianService,
 	localStorage ports.StorageRepository,
 	remoteStorage ports.StorageRepository,
-	events chan<- ports.Event,
+	events ports.EventBus,
 	workRoot *os.Root,
 ) (*MolfarService, error) {
 	if conditions == nil {
@@ -126,34 +126,34 @@ func (m *MolfarService) Prepare() error {
 		return ErrMolfarNil
 	}
 
-	m.send(ports.StartEvent{Operation: "prepare"})
-	m.send(ports.UpdateEvent{Operation: "prepare", Message: "Starting preparation phase", Data: map[string]any{"workRoot": m.workRoot.Name()}})
+	m.send(ports.StartInfo{Operation: "prepare"})
+	m.send(ports.UpdateInfo{Operation: "prepare", Message: "Starting preparation phase", Data: map[string]any{"workRoot": m.workRoot.Name()}})
 	ctx := context.Background()
 
 	// Run all conditions first (includes manifest lock check)
 	for i, condition := range m.conditions {
-		m.send(ports.StartEvent{Operation: "condition"})
-		m.send(ports.UpdateEvent{Operation: "condition", Message: "Checking condition", Data: map[string]any{"index": i}})
+		m.send(ports.StartInfo{Operation: "condition"})
+		m.send(ports.UpdateInfo{Operation: "condition", Message: "Checking condition", Data: map[string]any{"index": i}})
 		if err := condition.Check(ctx); err != nil {
-			m.send(ports.ErrorEvent{Operation: "condition", Err: err})
+			m.send(ports.ErrorInfo{Operation: "condition", Err: err})
 			return fmt.Errorf("condition %d failed: %w", i, err)
 		}
-		m.send(ports.FinishEvent{Operation: "condition"})
+		m.send(ports.FinishInfo{Operation: "condition"})
 	}
 
 	// Run all updaters
 	for i, updater := range m.updaters {
-		m.send(ports.StartEvent{Operation: "updater"})
-		m.send(ports.UpdateEvent{Operation: "updater", Message: "Running updater", Data: map[string]any{"index": i}})
+		m.send(ports.StartInfo{Operation: "updater"})
+		m.send(ports.UpdateInfo{Operation: "updater", Message: "Running updater", Data: map[string]any{"index": i}})
 		if err := updater.Run(ctx); err != nil {
-			m.send(ports.ErrorEvent{Operation: "updater", Err: err})
+			m.send(ports.ErrorInfo{Operation: "updater", Err: err})
 			return fmt.Errorf("updater %d failed: %w", i, err)
 		}
-		m.send(ports.FinishEvent{Operation: "updater"})
+		m.send(ports.FinishInfo{Operation: "updater"})
 	}
 
-	m.send(ports.UpdateEvent{Operation: "prepare", Message: "Preparation phase completed successfully"})
-	m.send(ports.FinishEvent{Operation: "prepare"})
+	m.send(ports.UpdateInfo{Operation: "prepare", Message: "Preparation phase completed successfully"})
+	m.send(ports.FinishInfo{Operation: "prepare"})
 	return nil
 }
 
@@ -173,8 +173,8 @@ func (m *MolfarService) Run(server *domain.ServerRuntime) error {
 		return ErrLibrarianNil
 	}
 
-	m.send(ports.StartEvent{Operation: "run"})
-	m.send(ports.UpdateEvent{Operation: "run", Message: "Starting execution phase", Data: map[string]any{
+	m.send(ports.StartInfo{Operation: "run"})
+	m.send(ports.UpdateInfo{Operation: "run", Message: "Starting execution phase", Data: map[string]any{
 		"server_address": server.Address,
 		"server_memory":  server.Memory,
 		"server_ip":      server.IP,
@@ -185,28 +185,28 @@ func (m *MolfarService) Run(server *domain.ServerRuntime) error {
 	// Fetch remote manifest before run
 	remoteManifest, err := m.getRemoteManifest(ctx)
 	if err != nil {
-		m.send(ports.ErrorEvent{Operation: "run", Err: err})
+		m.send(ports.ErrorInfo{Operation: "run", Err: err})
 		return err
 	}
 
 	localManifest, err := m.validateAndRetrieveManifest(ctx)
 	if err != nil {
-		m.send(ports.ErrorEvent{Operation: "run", Err: err})
+		m.send(ports.ErrorInfo{Operation: "run", Err: err})
 		return err
 	}
 
 	if err := m.acquireManifestLocks(ctx, localManifest, remoteManifest); err != nil {
-		m.send(ports.ErrorEvent{Operation: "run", Err: err})
+		m.send(ports.ErrorInfo{Operation: "run", Err: err})
 		return err
 	}
 
 	if err := m.executeServer(ctx, server); err != nil {
-		m.send(ports.ErrorEvent{Operation: "run", Err: err})
+		m.send(ports.ErrorInfo{Operation: "run", Err: err})
 		return err
 	}
 
-	m.send(ports.UpdateEvent{Operation: "run", Message: "Execution phase completed"})
-	m.send(ports.FinishEvent{Operation: "run"})
+	m.send(ports.UpdateInfo{Operation: "run", Message: "Execution phase completed"})
+	m.send(ports.FinishInfo{Operation: "run"})
 	return nil
 }
 
@@ -219,22 +219,22 @@ func (m *MolfarService) validateAndRetrieveManifest(ctx context.Context) (*domai
 		return nil, ErrLibrarianNil
 	}
 
-	m.send(ports.UpdateEvent{Operation: "run", Message: "Retrieving local manifest for lock validation"})
+	m.send(ports.UpdateInfo{Operation: "run", Message: "Retrieving local manifest for lock validation"})
 	localManifest, err := m.librarian.GetLocalManifest(ctx)
 	if err != nil {
-		m.send(ports.ErrorEvent{Operation: "run", Err: err})
+		m.send(ports.ErrorInfo{Operation: "run", Err: err})
 		return nil, err
 	}
-	m.send(ports.UpdateEvent{Operation: "run", Message: "Retrieved local manifest", Data: map[string]any{
+	m.send(ports.UpdateInfo{Operation: "run", Message: "Retrieved local manifest", Data: map[string]any{
 		"ritual_version": localManifest.RitualVersion,
 	}})
 
 	if localManifest.LockedBy != "" {
 		err := errors.New("local manifest already locked")
-		m.send(ports.ErrorEvent{Operation: "run", Err: err})
+		m.send(ports.ErrorInfo{Operation: "run", Err: err})
 		return nil, err
 	}
-	m.send(ports.UpdateEvent{Operation: "run", Message: "Local manifest is unlocked, proceeding with lock acquisition"})
+	m.send(ports.UpdateInfo{Operation: "run", Message: "Local manifest is unlocked, proceeding with lock acquisition"})
 
 	return localManifest, nil
 }
@@ -254,61 +254,61 @@ func (m *MolfarService) acquireManifestLocks(ctx context.Context, localManifest,
 		return ErrLibrarianNil
 	}
 
-	m.send(ports.StartEvent{Operation: "lock"})
+	m.send(ports.StartInfo{Operation: "lock"})
 
 	// Re-check lock status to prevent race condition between Prepare and Run
 	if localManifest.LockedBy != "" {
 		err := errors.New("local manifest already locked")
-		m.send(ports.ErrorEvent{Operation: "lock", Err: err})
+		m.send(ports.ErrorInfo{Operation: "lock", Err: err})
 		return err
 	}
 	if remoteManifest.LockedBy != "" {
 		err := errors.New("remote manifest already locked")
-		m.send(ports.ErrorEvent{Operation: "lock", Err: err})
+		m.send(ports.ErrorInfo{Operation: "lock", Err: err})
 		return err
 	}
 
-	m.send(ports.UpdateEvent{Operation: "lock", Message: "Generating unique lock identifier"})
+	m.send(ports.UpdateInfo{Operation: "lock", Message: "Generating unique lock identifier"})
 	hostname, err := os.Hostname()
 	if err != nil {
-		m.send(ports.ErrorEvent{Operation: "lock", Err: err})
+		m.send(ports.ErrorInfo{Operation: "lock", Err: err})
 		return err
 	}
 
 	lockID := fmt.Sprintf("%s"+config.LockIDSeparator+"%d", hostname, time.Now().UnixNano())
-	m.send(ports.UpdateEvent{Operation: "lock", Message: "Generated lock ID", Data: map[string]any{"lock_id": lockID}})
+	m.send(ports.UpdateInfo{Operation: "lock", Message: "Generated lock ID", Data: map[string]any{"lock_id": lockID}})
 	localManifest.LockedBy = lockID
 	remoteManifest.LockedBy = lockID
 
-	m.send(ports.UpdateEvent{Operation: "lock", Message: "Acquiring local manifest lock"})
+	m.send(ports.UpdateInfo{Operation: "lock", Message: "Acquiring local manifest lock"})
 	err = m.librarian.SaveLocalManifest(ctx, localManifest)
 	if err != nil {
-		m.send(ports.ErrorEvent{Operation: "lock", Err: err})
+		m.send(ports.ErrorInfo{Operation: "lock", Err: err})
 		return err
 	}
-	m.send(ports.UpdateEvent{Operation: "lock", Message: "Successfully locked local manifest"})
+	m.send(ports.UpdateInfo{Operation: "lock", Message: "Successfully locked local manifest"})
 
-	m.send(ports.UpdateEvent{Operation: "lock", Message: "Acquiring remote manifest lock"})
+	m.send(ports.UpdateInfo{Operation: "lock", Message: "Acquiring remote manifest lock"})
 	err = m.librarian.SaveRemoteManifest(ctx, remoteManifest)
 	if err != nil {
-		m.send(ports.ErrorEvent{Operation: "lock", Err: fmt.Errorf("failed to lock remote manifest: %w", err)})
+		m.send(ports.ErrorInfo{Operation: "lock", Err: fmt.Errorf("failed to lock remote manifest: %w", err)})
 
 		// Rollback: unlock local manifest to prevent orphaned lock
 		localManifest.Unlock()
 		if rollbackErr := m.librarian.SaveLocalManifest(ctx, localManifest); rollbackErr != nil {
-			m.send(ports.ErrorEvent{Operation: "lock", Err: fmt.Errorf("rollback failed: %w", rollbackErr)})
+			m.send(ports.ErrorInfo{Operation: "lock", Err: fmt.Errorf("rollback failed: %w", rollbackErr)})
 			return fmt.Errorf("failed to lock remote manifest: %w, rollback failed: %w", err, rollbackErr)
 		}
-		m.send(ports.UpdateEvent{Operation: "lock", Message: "Successfully rolled back local manifest lock"})
+		m.send(ports.UpdateInfo{Operation: "lock", Message: "Successfully rolled back local manifest lock"})
 
 		return fmt.Errorf("failed to lock remote manifest: %w", err)
 	}
-	m.send(ports.UpdateEvent{Operation: "lock", Message: "Successfully locked remote storage", Data: map[string]any{"lock_id": lockID}})
+	m.send(ports.UpdateInfo{Operation: "lock", Message: "Successfully locked remote storage", Data: map[string]any{"lock_id": lockID}})
 
 	// Store lock ID for ownership validation
 	m.currentLockID = lockID
 
-	m.send(ports.FinishEvent{Operation: "lock"})
+	m.send(ports.FinishInfo{Operation: "lock"})
 	return nil
 }
 
@@ -330,15 +330,15 @@ func (m *MolfarService) executeServer(ctx context.Context, server *domain.Server
 		return ErrServerRunnerNil
 	}
 
-	m.send(ports.StartEvent{Operation: "server"})
-	m.send(ports.UpdateEvent{Operation: "server", Message: "Starting server execution", Data: map[string]any{"server_address": server.Address}})
+	m.send(ports.StartInfo{Operation: "server"})
+	m.send(ports.UpdateInfo{Operation: "server", Message: "Starting server execution", Data: map[string]any{"server_address": server.Address}})
 	err := m.serverRunner.Run(server)
 	if err != nil {
-		m.send(ports.ErrorEvent{Operation: "server", Err: err})
+		m.send(ports.ErrorInfo{Operation: "server", Err: err})
 		return err
 	}
-	m.send(ports.UpdateEvent{Operation: "server", Message: "Server execution completed successfully"})
-	m.send(ports.FinishEvent{Operation: "server"})
+	m.send(ports.UpdateInfo{Operation: "server", Message: "Server execution completed successfully"})
+	m.send(ports.FinishInfo{Operation: "server"})
 
 	return nil
 }
@@ -353,12 +353,12 @@ func (m *MolfarService) Exit() error {
 		return ErrLibrarianNil
 	}
 
-	m.send(ports.StartEvent{Operation: "exit"})
-	m.send(ports.UpdateEvent{Operation: "exit", Message: "Starting exit phase"})
-	defer m.send(ports.FinishEvent{Operation: "exit"})
+	m.send(ports.StartInfo{Operation: "exit"})
+	m.send(ports.UpdateInfo{Operation: "exit", Message: "Starting exit phase"})
+	defer m.send(ports.FinishInfo{Operation: "exit"})
 
 	if m.currentLockID == "" {
-		m.send(ports.UpdateEvent{Operation: "exit", Message: "No lock owned, skipping exit flow"})
+		m.send(ports.UpdateInfo{Operation: "exit", Message: "No lock owned, skipping exit flow"})
 		return nil
 	}
 
@@ -369,58 +369,58 @@ func (m *MolfarService) Exit() error {
 	// Must capture before exit updaters run (sync would zero the diff).
 	localBefore, err := m.librarian.GetLocalManifest(ctx)
 	if err != nil {
-		m.send(ports.ErrorEvent{Operation: "exit", Err: err})
+		m.send(ports.ErrorInfo{Operation: "exit", Err: err})
 		return fmt.Errorf("get local manifest: %w", err)
 	}
 	remoteBefore, err := m.librarian.GetRemoteManifest(ctx)
 	if err != nil {
-		m.send(ports.ErrorEvent{Operation: "exit", Err: err})
+		m.send(ports.ErrorInfo{Operation: "exit", Err: err})
 		return fmt.Errorf("get remote manifest: %w", err)
 	}
 
 	// Delta sync upload.
 	for i, u := range m.exitUpdaters {
-		m.send(ports.StartEvent{Operation: "exit-updater"})
-		m.send(ports.UpdateEvent{Operation: "exit-updater", Message: "Running exit updater", Data: map[string]any{"index": i}})
+		m.send(ports.StartInfo{Operation: "exit-updater"})
+		m.send(ports.UpdateInfo{Operation: "exit-updater", Message: "Running exit updater", Data: map[string]any{"index": i}})
 		if err := u.Run(ctx); err != nil {
-			m.send(ports.ErrorEvent{Operation: "exit-updater", Err: err})
+			m.send(ports.ErrorInfo{Operation: "exit-updater", Err: err})
 			return fmt.Errorf("exit updater %d: %w", i, err)
 		}
-		m.send(ports.FinishEvent{Operation: "exit-updater"})
+		m.send(ports.FinishInfo{Operation: "exit-updater"})
 	}
 
 	// Snapshot backups only if worlds were dirty before sync.
 	if ShouldBackup(localBefore.Worlds.SyncState, remoteBefore.Worlds.SyncState) {
 		manifestAfter, err := m.librarian.GetLocalManifest(ctx)
 		if err != nil {
-			m.send(ports.ErrorEvent{Operation: "exit", Err: err})
+			m.send(ports.ErrorInfo{Operation: "exit", Err: err})
 			return fmt.Errorf("get manifest for backup: %w", err)
 		}
 
-		m.send(ports.StartEvent{Operation: "backup"})
-		m.send(ports.UpdateEvent{Operation: "backup", Message: "Creating local snapshot"})
+		m.send(ports.StartInfo{Operation: "backup"})
+		m.send(ports.UpdateInfo{Operation: "backup", Message: "Creating local snapshot"})
 		if err := CreateBackup(ctx, m.localStorage, config.WorldsDir, config.BackupsDir, manifestAfter); err != nil {
-			m.send(ports.ErrorEvent{Operation: "backup", Err: err})
+			m.send(ports.ErrorInfo{Operation: "backup", Err: err})
 			return fmt.Errorf("local backup: %w", err)
 		}
-		m.send(ports.UpdateEvent{Operation: "backup", Message: "Creating R2 snapshot"})
+		m.send(ports.UpdateInfo{Operation: "backup", Message: "Creating R2 snapshot"})
 		if err := CreateBackup(ctx, m.remoteStorage, config.WorldsDir, config.BackupsDir, manifestAfter); err != nil {
-			m.send(ports.ErrorEvent{Operation: "backup", Err: err})
+			m.send(ports.ErrorInfo{Operation: "backup", Err: err})
 			return fmt.Errorf("r2 backup: %w", err)
 		}
-		m.send(ports.FinishEvent{Operation: "backup"})
+		m.send(ports.FinishInfo{Operation: "backup"})
 	} else {
-		m.send(ports.UpdateEvent{Operation: "backup", Message: "Worlds clean, skipping snapshot"})
+		m.send(ports.UpdateInfo{Operation: "backup", Message: "Worlds clean, skipping snapshot"})
 	}
 
 	// Retentions — always run.
 	for i, r := range m.retentions {
-		m.send(ports.StartEvent{Operation: "retention"})
+		m.send(ports.StartInfo{Operation: "retention"})
 		if err := r.Apply(ctx); err != nil {
-			m.send(ports.ErrorEvent{Operation: "retention", Err: err})
+			m.send(ports.ErrorInfo{Operation: "retention", Err: err})
 			return fmt.Errorf("retention %d: %w", i, err)
 		}
-		m.send(ports.FinishEvent{Operation: "retention"})
+		m.send(ports.FinishInfo{Operation: "retention"})
 	}
 
 	return m.unlockManifests(ctx)
@@ -435,59 +435,59 @@ func (m *MolfarService) unlockManifests(ctx context.Context) error {
 		return ErrLibrarianNil
 	}
 
-	m.send(ports.StartEvent{Operation: "unlock"})
-	m.send(ports.UpdateEvent{Operation: "unlock", Message: "Unlocking manifests"})
+	m.send(ports.StartInfo{Operation: "unlock"})
+	m.send(ports.UpdateInfo{Operation: "unlock", Message: "Unlocking manifests"})
 
 	// Get local manifest and validate ownership
 	localManifest, err := m.librarian.GetLocalManifest(ctx)
 	if err != nil {
-		m.send(ports.ErrorEvent{Operation: "unlock", Err: err})
+		m.send(ports.ErrorInfo{Operation: "unlock", Err: err})
 		return err
 	}
 
 	// Validate ownership: ensure we own the lock
 	if localManifest == nil {
 		err := errors.New("local manifest cannot be nil")
-		m.send(ports.ErrorEvent{Operation: "unlock", Err: err})
+		m.send(ports.ErrorInfo{Operation: "unlock", Err: err})
 		return err
 	}
 
 	// Check if manifest is locked
 	if !localManifest.IsLocked() {
-		m.send(ports.UpdateEvent{Operation: "unlock", Message: "Local manifest is already unlocked"})
-		m.send(ports.FinishEvent{Operation: "unlock"})
+		m.send(ports.UpdateInfo{Operation: "unlock", Message: "Local manifest is already unlocked"})
+		m.send(ports.FinishInfo{Operation: "unlock"})
 		return nil
 	}
 
 	// Validate ownership: only unlock if we own the lock
 	if m.currentLockID == "" {
 		err := errors.New("lock ownership validation failed: no lock ID stored")
-		m.send(ports.ErrorEvent{Operation: "unlock", Err: err})
+		m.send(ports.ErrorInfo{Operation: "unlock", Err: err})
 		return err
 	}
 
 	if localManifest.LockedBy != m.currentLockID {
 		err := errors.New("lock ownership validation failed")
-		m.send(ports.ErrorEvent{Operation: "unlock", Err: err})
+		m.send(ports.ErrorInfo{Operation: "unlock", Err: err})
 		return err
 	}
 
-	m.send(ports.UpdateEvent{Operation: "unlock", Message: "Validated lock ownership", Data: map[string]any{"lock_id": localManifest.LockedBy}})
+	m.send(ports.UpdateInfo{Operation: "unlock", Message: "Validated lock ownership", Data: map[string]any{"lock_id": localManifest.LockedBy}})
 
 	// Unlock both manifests and stamp RitualVersion
 	localManifest.Unlock()
 	localManifest.RitualVersion = config.AppVersion
 	err = m.librarian.SaveLocalManifest(ctx, localManifest)
 	if err != nil {
-		m.send(ports.ErrorEvent{Operation: "unlock", Err: err})
+		m.send(ports.ErrorInfo{Operation: "unlock", Err: err})
 		return err
 	}
-	m.send(ports.UpdateEvent{Operation: "unlock", Message: "Successfully unlocked local manifest"})
+	m.send(ports.UpdateInfo{Operation: "unlock", Message: "Successfully unlocked local manifest"})
 
 	// Get remote manifest for unlock
 	remoteManifest, err := m.librarian.GetRemoteManifest(ctx)
 	if err != nil {
-		m.send(ports.ErrorEvent{Operation: "unlock", Err: err})
+		m.send(ports.ErrorInfo{Operation: "unlock", Err: err})
 		return fmt.Errorf("local manifest unlocked but failed to unlock remote: %w", err)
 	}
 
@@ -496,17 +496,17 @@ func (m *MolfarService) unlockManifests(ctx context.Context) error {
 		remoteManifest.RitualVersion = config.AppVersion
 		err = m.librarian.SaveRemoteManifest(ctx, remoteManifest)
 		if err != nil {
-			m.send(ports.ErrorEvent{Operation: "unlock", Err: err})
+			m.send(ports.ErrorInfo{Operation: "unlock", Err: err})
 			return fmt.Errorf("local manifest unlocked but failed to unlock remote: %w", err)
 		}
-		m.send(ports.UpdateEvent{Operation: "unlock", Message: "Successfully unlocked remote manifest"})
+		m.send(ports.UpdateInfo{Operation: "unlock", Message: "Successfully unlocked remote manifest"})
 	}
 
 	// Clear stored lock ID
 	m.currentLockID = ""
 
-	m.send(ports.UpdateEvent{Operation: "unlock", Message: "Successfully unlocked all manifests"})
-	m.send(ports.FinishEvent{Operation: "unlock"})
+	m.send(ports.UpdateInfo{Operation: "unlock", Message: "Successfully unlocked all manifests"})
+	m.send(ports.FinishInfo{Operation: "unlock"})
 	return nil
 }
 
@@ -519,7 +519,7 @@ func (m *MolfarService) getRemoteManifest(ctx context.Context) (*domain.Manifest
 	if remoteManifest == nil {
 		return nil, errors.New("remote manifest cannot be nil")
 	}
-	m.send(ports.UpdateEvent{Operation: "run", Message: "Retrieved remote manifest", Data: map[string]any{
+	m.send(ports.UpdateInfo{Operation: "run", Message: "Retrieved remote manifest", Data: map[string]any{
 		"ritual_version": remoteManifest.RitualVersion,
 	}})
 	return remoteManifest, nil

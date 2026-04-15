@@ -70,20 +70,33 @@ func main() {
 		defer logCleanup()
 	}
 
-	// Create event channel and start consumer
-	events := make(chan ports.Event, 100)
+	// Create event bus + stdin prompter; start consumer subscription.
+	bus := adapters.NewEventBus(128)
+	prompter := newStdinPrompter(os.Stdin, os.Stdout)
+	busCh, cancelSub := bus.Subscribe()
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		consumeEvents(events, logFile)
+		consumeEvents(busCh, logFile)
 	}()
+
+	// Backwards-compat alias for callers still taking an events bus parameter.
+	events := bus
+
+	// shutdown waits for the consumer to drain before returning.
+	shutdown := func() {
+		cancelSub()
+		wg.Wait()
+	}
+	_ = prompter // wired into services during state-machine cutover
+	_ = shutdown // used by error paths below
 
 	// Create local storage
 	localStorage, err := adapters.NewFSRepository(workRoot)
 	if err != nil {
 		fmt.Printf("Failed to create local storage: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -92,7 +105,7 @@ func main() {
 	remoteStorage, err := adapters.NewR2Repository(envBucket, envAccountID, envAccessKeyID, envSecretAccessKey, events)
 	if err != nil {
 		fmt.Printf("Failed to create remote storage: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -101,7 +114,7 @@ func main() {
 	librarian, err := services.NewLibrarianService(localStorage, remoteStorage)
 	if err != nil {
 		fmt.Printf("Failed to create librarian service: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -116,7 +129,7 @@ func main() {
 	ritualUpdater, err := services.NewRitualUpdater(librarian, remoteStorage, config.AppVersion)
 	if err != nil {
 		fmt.Printf("Failed to create ritual updater: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -144,14 +157,14 @@ func main() {
 	worldsFilter, err := adapters.ParseRitualSync(worldsFS)
 	if err != nil {
 		fmt.Printf("Failed to parse worlds .ritualsync: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
 	serverFilter, err := adapters.ParseRitualSync(serverFS)
 	if err != nil {
 		fmt.Printf("Failed to parse server .ritualsync: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -204,7 +217,7 @@ func main() {
 	remoteManifestForConditions, err := librarian.GetRemoteManifest(context.Background())
 	if err != nil {
 		fmt.Printf("Failed to get remote manifest for conditions: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -219,7 +232,7 @@ func main() {
 	lockCondition, err := services.NewManifestLockCondition(librarian)
 	if err != nil {
 		fmt.Printf("Failed to create lock condition: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -228,7 +241,7 @@ func main() {
 	ramCondition, err := services.NewRAMCondition(remoteManifestForConditions.GetMinRAMMB(), systemInfo)
 	if err != nil {
 		fmt.Printf("Failed to create RAM condition: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -237,7 +250,7 @@ func main() {
 	diskCondition, err := services.NewDiskSpaceCondition(remoteManifestForConditions.GetMinDiskMB(), config.RootPath, systemInfo)
 	if err != nil {
 		fmt.Printf("Failed to create disk condition: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -246,7 +259,7 @@ func main() {
 	javaCondition, err := services.NewJavaVersionCondition(remoteManifestForConditions.GetMinJavaVersion(), javaInfo)
 	if err != nil {
 		fmt.Printf("Failed to create Java condition: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -263,7 +276,7 @@ func main() {
 	retentionSettings, err := domain.LoadSettings()
 	if err != nil {
 		fmt.Printf("Failed to load settings: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -282,21 +295,21 @@ func main() {
 	localRetention, err := services.NewRetention(localStorage, localRules, config.BackupsDir, parseBackupTimestamp)
 	if err != nil {
 		fmt.Printf("Failed to create local retention: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
 	r2Retention, err := services.NewRetention(remoteStorage, remoteRules, config.BackupsDir, parseBackupTimestamp)
 	if err != nil {
 		fmt.Printf("Failed to create R2 retention: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
 	logRetention, err := services.NewLogRetention(localStorage, events)
 	if err != nil {
 		fmt.Printf("Failed to create log retention: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -314,7 +327,7 @@ func main() {
 	serverRunner, err := adapters.NewServerRunner(config.RootPath, workRoot, remoteManifestForConditions.Server.StartScript, commandExecutor)
 	if err != nil {
 		fmt.Printf("Failed to create server runner: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -323,17 +336,17 @@ func main() {
 	molfar, err := services.NewMolfarService(conditions, updaters, exitUpdaters, retentions, serverRunner, librarian, localStorage, remoteStorage, events, workRoot)
 	if err != nil {
 		fmt.Printf("Failed to create molfar service: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
 
 	// Prompt for settings and create server config
 	// Pass min RAM from manifest so user can't enter less than required
-	settings, err := services.PromptSettings(events, remoteManifestForConditions.GetMinRAMMB())
+	settings, err := services.PromptSettings(bus, prompter, remoteManifestForConditions.GetMinRAMMB())
 	if err != nil {
 		fmt.Printf("Failed to get settings: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -341,7 +354,7 @@ func main() {
 	server, err := settings.ToServerRuntime()
 	if err != nil {
 		fmt.Printf("Failed to create server config: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -351,7 +364,7 @@ func main() {
 
 	if err := molfar.Prepare(); err != nil {
 		fmt.Printf("Prepare phase failed: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
@@ -364,13 +377,13 @@ func main() {
 	// Always attempt Exit to unlock manifests, even if Run failed
 	if err := molfar.Exit(); err != nil {
 		fmt.Printf("Exit phase failed: %v\n", err)
-		close(events)
+		shutdown()
 		wg.Wait()
 		return
 	}
 
 	// Close event channel and wait for consumer to finish
-	close(events)
+	shutdown()
 	wg.Wait()
 
 	if runErr != nil {

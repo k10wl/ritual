@@ -20,27 +20,29 @@ var (
 // LogRetention implements RetentionService for log files
 type LogRetention struct {
 	localStorage ports.StorageRepository
-	events       chan<- ports.Event
+	bus          ports.EventBus
 }
 
 // Compile-time check to ensure LogRetention implements ports.RetentionService
 var _ ports.RetentionService = (*LogRetention)(nil)
 
 // NewLogRetention creates a new log retention service
-func NewLogRetention(localStorage ports.StorageRepository, events chan<- ports.Event) (*LogRetention, error) {
+func NewLogRetention(localStorage ports.StorageRepository, bus ports.EventBus) (*LogRetention, error) {
 	if localStorage == nil {
 		return nil, ErrLogRetentionStorageNil
 	}
 
 	return &LogRetention{
 		localStorage: localStorage,
-		events:       events,
+		bus:          bus,
 	}, nil
 }
 
-// send safely sends an event to the channel
-func (r *LogRetention) send(evt ports.Event) {
-	ports.SendEvent(r.events, evt)
+// publish emits an event on the bus (nil-safe).
+func (r *LogRetention) publish(evt ports.Event) {
+	if r.bus != nil {
+		r.bus.Publish(evt)
+	}
 }
 
 // Apply removes old log files exceeding the retention limit
@@ -80,14 +82,14 @@ func (r *LogRetention) Apply(ctx context.Context) error {
 	// Delete oldest logs exceeding limit
 	toDelete := logFiles[config.MaxLogFiles:]
 
-	r.send(ports.UpdateEvent{Operation: "retention", Message: "Applying log retention policy", Data: map[string]any{
+	r.publish(ports.UpdateInfo{Operation: "retention", Message: "Applying log retention policy", Data: map[string]any{
 		"total":       len(logFiles),
 		"max_allowed": config.MaxLogFiles,
 		"to_delete":   len(toDelete),
 	}})
 
 	for _, key := range toDelete {
-		r.send(ports.UpdateEvent{Operation: "retention", Message: "Deleting old log", Data: map[string]any{"key": key}})
+		r.publish(ports.UpdateInfo{Operation: "retention", Message: "Deleting old log", Data: map[string]any{"key": key}})
 		if err := r.localStorage.Delete(ctx, key); err != nil {
 			return fmt.Errorf("failed to delete log %s: %w", key, err)
 		}

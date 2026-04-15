@@ -42,7 +42,7 @@ type S3Client interface {
 type R2Repository struct {
 	client S3Client
 	bucket string
-	events chan<- ports.Event
+	bus    ports.EventBus
 }
 
 func setupS3Client(accountID string, accessKeyID string, secretAccessKey string) (S3Client, error) {
@@ -61,7 +61,7 @@ func setupS3Client(accountID string, accessKeyID string, secretAccessKey string)
 	return client, nil
 }
 
-func NewR2Repository(bucket string, accountID string, accessKeyID string, secretAccessKey string, events chan<- ports.Event) (*R2Repository, error) {
+func NewR2Repository(bucket string, accountID string, accessKeyID string, secretAccessKey string, bus ports.EventBus) (*R2Repository, error) {
 	client, err := setupS3Client(accountID, accessKeyID, secretAccessKey)
 	if err != nil {
 		return nil, err
@@ -70,21 +70,23 @@ func NewR2Repository(bucket string, accountID string, accessKeyID string, secret
 	return &R2Repository{
 		client: client,
 		bucket: bucket,
-		events: events,
+		bus:    bus,
 	}, nil
 }
 
-func NewR2RepositoryWithClient(client S3Client, bucket string, events chan<- ports.Event) *R2Repository {
+func NewR2RepositoryWithClient(client S3Client, bucket string, bus ports.EventBus) *R2Repository {
 	return &R2Repository{
 		client: client,
 		bucket: bucket,
-		events: events,
+		bus:    bus,
 	}
 }
 
-// send safely sends an event to the channel
-func (r *R2Repository) send(evt ports.Event) {
-	ports.SendEvent(r.events, evt)
+// publish emits an event on the bus (nil-safe).
+func (r *R2Repository) publish(evt ports.Event) {
+	if r.bus != nil {
+		r.bus.Publish(evt)
+	}
 }
 
 // retryOpts returns per-call options: classifier + retry-event hook.
@@ -93,7 +95,7 @@ func (r *R2Repository) retryOpts(op, key string) []rg.Option {
 	return []rg.Option{
 		rg.RetryIf(r2Retryable),
 		rg.OnRetry(func(n uint, err error) {
-			r.send(ports.RetryAttemptInfo{
+			r.publish(ports.RetryAttemptInfo{
 				Operation: op,
 				Key:       key,
 				Attempt:   n + 1,
@@ -248,11 +250,17 @@ type progressReadCloser struct {
 	totalSize   int64
 	lastLogTime time.Time
 	logInterval time.Duration
-	events      chan<- ports.Event
+	bus         ports.EventBus
 }
 
-func newProgressReadCloser(r io.ReadCloser, key string, totalSize int64, events chan<- ports.Event) *progressReadCloser {
-	ports.SendEvent(events, ports.UpdateEvent{
+func publishIfBus(bus ports.EventBus, evt ports.Event) {
+	if bus != nil {
+		bus.Publish(evt)
+	}
+}
+
+func newProgressReadCloser(r io.ReadCloser, key string, totalSize int64, bus ports.EventBus) *progressReadCloser {
+	publishIfBus(bus, ports.UpdateInfo{
 		Operation: "download",
 		Message:   "Starting download",
 		Data:      map[string]any{"key": key, "size_mb": fmt.Sprintf("%.2f", float64(totalSize)/(1024*1024))},
@@ -263,7 +271,7 @@ func newProgressReadCloser(r io.ReadCloser, key string, totalSize int64, events 
 		totalSize:   totalSize,
 		lastLogTime: time.Now(),
 		logInterval: 5 * time.Second,
-		events:      events,
+		bus:         bus,
 	}
 }
 
@@ -281,7 +289,7 @@ func (pr *progressReadCloser) Read(p []byte) (int, error) {
 				pct := float64(bytesRead) / float64(pr.totalSize) * 100
 				data["percent"] = pct
 			}
-			ports.SendEvent(pr.events, ports.UpdateEvent{
+			publishIfBus(pr.bus, ports.UpdateInfo{
 				Operation: "download",
 				Message:   "Download progress",
 				Data:      data,
@@ -290,7 +298,7 @@ func (pr *progressReadCloser) Read(p []byte) (int, error) {
 	}
 	if err == io.EOF {
 		totalMB := float64(atomic.LoadInt64(&pr.bytesRead)) / (1024 * 1024)
-		ports.SendEvent(pr.events, ports.UpdateEvent{
+		publishIfBus(pr.bus, ports.UpdateInfo{
 			Operation: "download",
 			Message:   "Download completed",
 			Data:      map[string]any{"key": pr.key, "total_mb": fmt.Sprintf("%.2f", totalMB)},

@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"ritual/internal/core/ports"
@@ -16,12 +14,10 @@ func timestamp() string {
 	return time.Now().Format("15:04:05")
 }
 
-// consumeEvents reads events from channel and prints to stdout and optional log file
-// Runs until channel is closed
+// consumeEvents reads events from the bus subscription channel and writes to
+// stdout plus the optional log file. Runs until the channel is closed (i.e.
+// the subscribe cancel func was invoked).
 func consumeEvents(events <-chan ports.Event, logFile io.Writer) {
-	reader := bufio.NewReader(os.Stdin)
-
-	// Create writer that outputs to both stdout and log file
 	var writer io.Writer = os.Stdout
 	if logFile != nil {
 		writer = io.MultiWriter(os.Stdout, logFile)
@@ -29,9 +25,9 @@ func consumeEvents(events <-chan ports.Event, logFile io.Writer) {
 
 	for evt := range events {
 		switch e := evt.(type) {
-		case ports.StartEvent:
+		case ports.StartInfo:
 			fmt.Fprintf(writer, "[%s] [%s] Starting...\n", timestamp(), e.Operation)
-		case ports.UpdateEvent:
+		case ports.UpdateInfo:
 			if e.Data != nil {
 				if pct, ok := e.Data["percent"]; ok {
 					fmt.Fprintf(writer, "[%s] [%s] %s (%.1f%%)\n", timestamp(), e.Operation, e.Message, pct)
@@ -41,35 +37,22 @@ func consumeEvents(events <-chan ports.Event, logFile io.Writer) {
 			} else {
 				fmt.Fprintf(writer, "[%s] [%s] %s\n", timestamp(), e.Operation, e.Message)
 			}
-		case ports.FinishEvent:
+		case ports.FinishInfo:
 			fmt.Fprintf(writer, "[%s] [%s] Completed\n", timestamp(), e.Operation)
-		case ports.ErrorEvent:
+		case ports.ErrorInfo:
 			fmt.Fprintf(writer, "[%s] [%s] ERROR: %v\n", timestamp(), e.Operation, e.Err)
-		case ports.PromptEvent:
-			handlePrompt(reader, e, writer)
+		case ports.StateChangedInfo:
+			fmt.Fprintf(writer, "[%s] %s → %s\n", timestamp(), e.From, e.To)
+		case ports.StateFailedInfo:
+			fmt.Fprintf(writer, "[%s] FAILED in %s: %v\n", timestamp(), e.State, e.Err)
+		case ports.RetryAttemptInfo:
+			if e.Key != "" {
+				fmt.Fprintf(writer, "[%s] [retry] %s key=%s attempt=%d err=%v\n", timestamp(), e.Operation, e.Key, e.Attempt, e.Err)
+			} else {
+				fmt.Fprintf(writer, "[%s] [retry] %s attempt=%d err=%v\n", timestamp(), e.Operation, e.Attempt, e.Err)
+			}
+		default:
+			fmt.Fprintf(writer, "[%s] %v\n", timestamp(), evt)
 		}
-	}
-}
-
-// handlePrompt displays prompt and sends user response back via channel
-func handlePrompt(reader *bufio.Reader, e ports.PromptEvent, writer io.Writer) {
-	if e.DefaultValue != "" {
-		fmt.Fprintf(writer, "%s [%s]: ", e.Prompt, e.DefaultValue)
-	} else {
-		fmt.Fprintf(writer, "%s: ", e.Prompt)
-	}
-
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		e.ResponseChan <- any(e.DefaultValue)
-		return
-	}
-
-	input = strings.TrimSpace(input)
-	if input == "" {
-		e.ResponseChan <- any(e.DefaultValue)
-	} else {
-		fmt.Fprintf(writer, "%s\n", input)
-		e.ResponseChan <- any(input)
 	}
 }

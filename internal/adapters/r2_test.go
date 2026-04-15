@@ -396,14 +396,15 @@ func TestR2Repository_RetriesTransient(t *testing.T) {
 	for _, tc := range subtests {
 		t.Run(tc.name, func(t *testing.T) {
 			mockClient := new(MockS3Client)
-			events := make(chan ports.Event, 16)
-			repo := NewR2RepositoryWithClient(mockClient, "bucket", events)
+			bus := NewEventBus(16)
+			ch, cancel := bus.Subscribe()
+			defer cancel()
+			repo := NewR2RepositoryWithClient(mockClient, "bucket", bus)
 			tc.setup(mockClient)
 
 			if err := tc.invoke(repo); err != nil {
 				t.Fatalf("invoke: %v", err)
 			}
-			close(events)
 
 			// Count SDK calls: 2 failures + 1 success = 3
 			calls := 0
@@ -416,11 +417,17 @@ func TestR2Repository_RetriesTransient(t *testing.T) {
 				t.Errorf("%s calls = %d, want 3", tc.call, calls)
 			}
 
-			// Count retry events: one per failed attempt
+			// Count retry events (best-effort, bus is lossy but buffer is large)
 			retries := 0
-			for evt := range events {
-				if _, ok := evt.(ports.RetryAttemptInfo); ok {
-					retries++
+		drainLoop:
+			for {
+				select {
+				case evt := <-ch:
+					if _, ok := evt.(ports.RetryAttemptInfo); ok {
+						retries++
+					}
+				default:
+					break drainLoop
 				}
 			}
 			if retries != 2 {

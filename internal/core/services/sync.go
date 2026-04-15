@@ -22,7 +22,7 @@ type syncService struct {
 	scanner       ports.DirectoryScanner
 	local         ports.StorageRepository
 	remote        ports.StorageRepository
-	events        chan<- ports.Event
+	events        ports.EventBus
 	config        SyncConfig
 	localStaging  string
 	remoteStaging string
@@ -33,7 +33,7 @@ var _ ports.SyncService = (*syncService)(nil)
 func NewSyncService(
 	scanner ports.DirectoryScanner,
 	local, remote ports.StorageRepository,
-	events chan<- ports.Event,
+	events ports.EventBus,
 	config SyncConfig,
 	localStaging string,
 	remoteStaging string,
@@ -60,7 +60,7 @@ func (s *syncService) Download(ctx context.Context, local, remote domain.SyncSta
 
 	defer os.RemoveAll(s.localStaging)
 
-	s.send(ports.StartEvent{Operation: "sync-" + s.config.Prefix})
+	s.send(ports.StartInfo{Operation: "sync-" + s.config.Prefix})
 
 	if err := s.stageDownload(ctx, diff.Download); err != nil {
 		return local, fmt.Errorf("stage: %w", err)
@@ -70,7 +70,7 @@ func (s *syncService) Download(ctx context.Context, local, remote domain.SyncSta
 	}
 	s.cleanLocalGhosts(remote.XXHashMap)
 
-	s.send(ports.FinishEvent{Operation: "sync-" + s.config.Prefix})
+	s.send(ports.FinishInfo{Operation: "sync-" + s.config.Prefix})
 
 	return domain.SyncState{
 		XXHashMap:    remote.XXHashMap,
@@ -93,7 +93,7 @@ func (s *syncService) Upload(ctx context.Context, local, remote domain.SyncState
 		return domain.SyncState{XXHashMap: newMap, XXHashSyncAt: now}, nil
 	}
 
-	s.send(ports.StartEvent{Operation: "sync-" + s.config.Prefix})
+	s.send(ports.StartInfo{Operation: "sync-" + s.config.Prefix})
 
 	if len(diff.Upload) > 0 {
 		if err := s.stageUpload(ctx, diff.Upload); err != nil {
@@ -108,7 +108,7 @@ func (s *syncService) Upload(ctx context.Context, local, remote domain.SyncState
 	}
 	s.cleanRemoteStaging(ctx)
 
-	s.send(ports.FinishEvent{Operation: "sync-" + s.config.Prefix})
+	s.send(ports.FinishInfo{Operation: "sync-" + s.config.Prefix})
 
 	return domain.SyncState{XXHashMap: newMap, XXHashSyncAt: now}, nil
 }
@@ -120,7 +120,7 @@ func (s *syncService) send(evt ports.Event) {
 // stageDownload downloads files from remote to local staging dir.
 func (s *syncService) stageDownload(ctx context.Context, files []string) error {
 	for i, file := range files {
-		s.send(ports.UpdateEvent{
+		s.send(ports.UpdateInfo{
 			Operation: "sync-" + s.config.Prefix,
 			Message:   "Downloading",
 			Data:      map[string]any{"file": file, "progress": i + 1, "total": len(files)},
@@ -179,7 +179,7 @@ func (s *syncService) cleanLocalGhosts(xxhashMap map[string]string) {
 // stageUpload uploads files from local storage to remote staging prefix.
 func (s *syncService) stageUpload(ctx context.Context, files []string) error {
 	for i, file := range files {
-		s.send(ports.UpdateEvent{
+		s.send(ports.UpdateInfo{
 			Operation: "sync-" + s.config.Prefix,
 			Message:   "Uploading",
 			Data:      map[string]any{"file": file, "progress": i + 1, "total": len(files)},
