@@ -97,7 +97,7 @@ func main() {
 		return
 	}
 
-	// Create librarian service
+	// Create librarian service (still used by Molfar; dies in state-machine Phase 6)
 	librarian, err := services.NewLibrarianService(localStorage, remoteStorage)
 	if err != nil {
 		fmt.Printf("Failed to create librarian service: %v\n", err)
@@ -105,6 +105,12 @@ func main() {
 		wg.Wait()
 		return
 	}
+
+	// ManifestStore, two sides. Ready for state-machine Deps consumption.
+	localManifests := adapters.NewManifestStore(localStorage)
+	remoteManifests := adapters.NewManifestStore(remoteStorage)
+	_ = localManifests  // wired in state-machine sprint
+	_ = remoteManifests // wired in state-machine sprint
 
 	// Create updaters (ritual updater first - must self-update before anything else)
 	ritualUpdater, err := services.NewRitualUpdater(librarian, remoteStorage, config.AppVersion)
