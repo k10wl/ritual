@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"ritual/internal/config"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -134,4 +136,28 @@ func TestManifest_Clone_NilXXHashMap(t *testing.T) {
 
 	clone := original.Clone()
 	assert.Nil(t, clone.Worlds.XXHashMap)
+}
+
+func TestManifest_UnmarshalJSON_AppliesDefaults(t *testing.T) {
+	t.Run("empty object fills defaults", func(t *testing.T) {
+		var m Manifest
+		require.NoError(t, json.Unmarshal([]byte(`{}`), &m))
+		assert.Equal(t, config.DefaultMinRAMMB, m.MinRAMMB)
+		assert.Equal(t, config.DefaultMinDiskMB, m.MinDiskMB)
+		assert.Equal(t, config.DefaultMinJavaVersion, m.MinJavaVersion)
+		assert.Equal(t, DefaultRetentionRules(), m.RemoteRetention)
+	})
+
+	t.Run("explicit fields not overwritten", func(t *testing.T) {
+		var m Manifest
+		require.NoError(t, json.Unmarshal([]byte(`{"min_ram_mb":8192}`), &m))
+		assert.Equal(t, 8192, m.MinRAMMB)
+		assert.Equal(t, config.DefaultMinDiskMB, m.MinDiskMB)
+	})
+
+	t.Run("malformed json errors", func(t *testing.T) {
+		var m Manifest
+		err := json.Unmarshal([]byte(`not json`), &m)
+		require.Error(t, err)
+	})
 }

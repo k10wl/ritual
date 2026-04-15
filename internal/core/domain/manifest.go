@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"ritual/internal/config"
 	"time"
 )
@@ -121,4 +122,18 @@ func (m *Manifest) ApplyDefaults() {
 	if m.RemoteRetention == (RetentionRules{}) {
 		m.RemoteRetention = DefaultRetentionRules()
 	}
+}
+
+// UnmarshalJSON decodes a Manifest and applies domain defaults as the last
+// step. Persistence layers (see adapters.manifestStore) rely on this for
+// defaults-on-decode so Save paths can be pure codec+IO.
+func (m *Manifest) UnmarshalJSON(data []byte) error {
+	type alias Manifest
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*m = Manifest(a)
+	m.ApplyDefaults()
+	return nil
 }
