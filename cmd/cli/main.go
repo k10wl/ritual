@@ -111,23 +111,12 @@ func main() {
 		return
 	}
 
-	// Create librarian service (still used by Molfar; dies in state-machine Phase 6)
-	librarian, err := services.NewLibrarianService(localStorage, remoteStorage)
-	if err != nil {
-		fmt.Printf("Failed to create librarian service: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
-	}
-
-	// ManifestStore, two sides. Ready for state-machine Deps consumption.
+	// ManifestStore, two sides.
 	localManifests := adapters.NewManifestStore(localStorage)
 	remoteManifests := adapters.NewManifestStore(remoteStorage)
-	_ = localManifests  // wired in state-machine sprint
-	_ = remoteManifests // wired in state-machine sprint
 
 	// Create updaters (ritual updater first - must self-update before anything else)
-	ritualUpdater, err := services.NewRitualUpdater(librarian, remoteStorage, config.AppVersion)
+	ritualUpdater, err := services.NewRitualUpdater(localManifests, remoteManifests, remoteStorage, config.AppVersion)
 	if err != nil {
 		fmt.Printf("Failed to create ritual updater: %v\n", err)
 		shutdown()
@@ -172,8 +161,8 @@ func main() {
 
 	// World scanner: MtimeScanner if previous hash map exists, FullScanner otherwise
 	var worldInnerScanner ports.DirectoryScanner
-	localManifestForScanner, scannerManifestErr := librarian.GetLocalManifest(context.Background())
-	if scannerManifestErr == nil && len(localManifestForScanner.Worlds.XXHashMap) > 0 {
+	localManifestForScanner, scannerManifestErr := localManifests.Get(context.Background())
+	if scannerManifestErr == nil && localManifestForScanner != nil && len(localManifestForScanner.Worlds.XXHashMap) > 0 {
 		mtimeScanner, err := adapters.NewMtimeScanner(worldsPath, localManifestForScanner.Worlds.XXHashSyncAt, localManifestForScanner.Worlds.XXHashMap)
 		if err != nil {
 			fmt.Printf("Failed to create mtime scanner, falling back to full: %v\n", err)
@@ -205,17 +194,17 @@ func main() {
 	)
 
 	// Updaters
-	worldSyncDownloader := services.NewSyncDownloadUpdater(worldSync, librarian, func(m *domain.Manifest) *domain.SyncState {
+	worldSyncDownloader := services.NewSyncDownloadUpdater(worldSync, localManifests, remoteManifests, func(m *domain.Manifest) *domain.SyncState {
 		return &m.Worlds.SyncState
 	})
-	serverSyncDownloader := services.NewSyncDownloadUpdater(serverSync, librarian, func(m *domain.Manifest) *domain.SyncState {
+	serverSyncDownloader := services.NewSyncDownloadUpdater(serverSync, localManifests, remoteManifests, func(m *domain.Manifest) *domain.SyncState {
 		return &m.Server.SyncState
 	})
 	updaters := []ports.UpdaterService{ritualUpdater, serverSyncDownloader, worldSyncDownloader}
 
 	// Create conditions (pre-flight checks before updaters run)
 	// Fetch remote manifest to get thresholds for conditions
-	remoteManifestForConditions, err := librarian.GetRemoteManifest(context.Background())
+	remoteManifestForConditions, err := remoteManifests.Get(context.Background())
 	if err != nil {
 		fmt.Printf("Failed to get remote manifest for conditions: %v\n", err)
 		shutdown()
@@ -230,7 +219,7 @@ func main() {
 	javaInfo := adapters.NewJavaInfo()
 
 	// Create manifest lock condition
-	lockCondition, err := services.NewManifestLockCondition(librarian)
+	lockCondition, err := services.NewManifestLockCondition(remoteManifests)
 	if err != nil {
 		fmt.Printf("Failed to create lock condition: %v\n", err)
 		shutdown()
@@ -318,7 +307,7 @@ func main() {
 	retentions := []ports.RetentionService{localRetention, r2Retention, logRetention}
 
 	// Exit updaters — only worlds upload on exit
-	worldSyncUploader := services.NewSyncUploader(worldSync, librarian, func(m *domain.Manifest) *domain.SyncState {
+	worldSyncUploader := services.NewSyncUploader(worldSync, localManifests, remoteManifests, func(m *domain.Manifest) *domain.SyncState {
 		return &m.Worlds.SyncState
 	})
 	exitUpdaters := []ports.UpdaterService{worldSyncUploader}

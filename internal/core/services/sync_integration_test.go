@@ -18,16 +18,17 @@ import (
 	"ritual/internal/testhelpers"
 )
 
-// syncTestEnv bundles local/remote FS repos, librarian, and temp dirs for integration tests.
+// syncTestEnv bundles local/remote FS repos, manifest stores, and temp dirs for integration tests.
 type syncTestEnv struct {
-	localDir   string
-	remoteDir  string
-	localRoot  *os.Root
-	remoteRoot *os.Root
-	local      *adapters.FSRepository
-	remote     *adapters.FSRepository
-	librarian  *services.LibrarianService
-	ctx        context.Context
+	localDir        string
+	remoteDir       string
+	localRoot       *os.Root
+	remoteRoot      *os.Root
+	local           *adapters.FSRepository
+	remote          *adapters.FSRepository
+	localManifests  ports.ManifestStore
+	remoteManifests ports.ManifestStore
+	ctx             context.Context
 }
 
 func newSyncTestEnv(t *testing.T) *syncTestEnv {
@@ -49,42 +50,39 @@ func newSyncTestEnv(t *testing.T) *syncTestEnv {
 	remote, err := adapters.NewFSRepository(remoteRoot)
 	require.NoError(t, err)
 
-	librarian, err := services.NewLibrarianService(local, remote)
-	require.NoError(t, err)
-
 	return &syncTestEnv{
-		localDir:   localDir,
-		remoteDir:  remoteDir,
-		localRoot:  localRoot,
-		remoteRoot: remoteRoot,
-		local:      local,
-		remote:     remote,
-		librarian:  librarian,
-		ctx:        context.Background(),
+		localDir:        localDir,
+		remoteDir:       remoteDir,
+		localRoot:       localRoot,
+		remoteRoot:      remoteRoot,
+		local:           local,
+		remote:          remote,
+		localManifests:  adapters.NewManifestStore(local),
+		remoteManifests: adapters.NewManifestStore(remote),
+		ctx:             context.Background(),
 	}
 }
 
-// saveManifest writes a manifest to the given storage as manifest.json
 func (e *syncTestEnv) saveLocalManifest(t *testing.T, m *domain.Manifest) {
 	t.Helper()
-	require.NoError(t, e.librarian.SaveLocalManifest(e.ctx, m))
+	require.NoError(t, e.localManifests.Save(e.ctx, m))
 }
 
 func (e *syncTestEnv) saveRemoteManifest(t *testing.T, m *domain.Manifest) {
 	t.Helper()
-	require.NoError(t, e.librarian.SaveRemoteManifest(e.ctx, m))
+	require.NoError(t, e.remoteManifests.Save(e.ctx, m))
 }
 
 func (e *syncTestEnv) loadLocalManifest(t *testing.T) *domain.Manifest {
 	t.Helper()
-	m, err := e.librarian.GetLocalManifest(e.ctx)
+	m, err := e.localManifests.Get(e.ctx)
 	require.NoError(t, err)
 	return m
 }
 
 func (e *syncTestEnv) loadRemoteManifest(t *testing.T) *domain.Manifest {
 	t.Helper()
-	m, err := e.librarian.GetRemoteManifest(e.ctx)
+	m, err := e.remoteManifests.Get(e.ctx)
 	require.NoError(t, err)
 	return m
 }
@@ -219,9 +217,7 @@ func TestSyncIntegration_FullUploadThenDownload(t *testing.T) {
 	env2.remoteDir = env.remoteDir // share remote dir
 
 	// Rebuild librarian with shared remote
-	librarian2, err := services.NewLibrarianService(env2.local, env2.remote)
-	require.NoError(t, err)
-	env2.librarian = librarian2
+	env2.remoteManifests = adapters.NewManifestStore(env2.remote)
 
 	env2.saveLocalManifest(t, &domain.Manifest{})
 
@@ -480,9 +476,7 @@ func TestSyncIntegration_HostAUploads_HostBDownloads_HostBUploadsChanges(t *test
 	envB := newSyncTestEnv(t)
 	envB.remote = env.remote
 	envB.remoteDir = env.remoteDir
-	libB, err := services.NewLibrarianService(envB.local, envB.remote)
-	require.NoError(t, err)
-	envB.librarian = libB
+	envB.remoteManifests = adapters.NewManifestStore(envB.remote)
 	envB.saveLocalManifest(t, &domain.Manifest{})
 
 	// Host B downloads
@@ -800,9 +794,7 @@ func TestSyncIntegration_RitualSyncRemoteWins(t *testing.T) {
 	envB := newSyncTestEnv(t)
 	envB.remote = envA.remote
 	envB.remoteDir = envA.remoteDir
-	libB, err := services.NewLibrarianService(envB.local, envB.remote)
-	require.NoError(t, err)
-	envB.librarian = libB
+	envB.remoteManifests = adapters.NewManifestStore(envB.remote)
 	envB.saveLocalManifest(t, &domain.Manifest{})
 
 	// Host B has narrower .ritualsync locally

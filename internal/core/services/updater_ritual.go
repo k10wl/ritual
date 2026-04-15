@@ -16,18 +16,19 @@ import (
 
 // RitualUpdater error constants
 var (
-	ErrRitualUpdaterLibrarianNil  = errors.New("librarian service cannot be nil")
-	ErrRitualUpdaterStorageNil    = errors.New("storage repository cannot be nil")
-	ErrRitualUpdaterVersionEmpty  = errors.New("binary version cannot be empty")
-	ErrRitualUpdaterNil           = errors.New("ritual updater cannot be nil")
-	ErrRitualCtxNil               = errors.New("context cannot be nil")
-	ErrRitualRemoteManifestNil    = errors.New("remote manifest cannot be nil")
+	ErrRitualUpdaterStoreNil     = errors.New("manifest store cannot be nil")
+	ErrRitualUpdaterStorageNil   = errors.New("storage repository cannot be nil")
+	ErrRitualUpdaterVersionEmpty = errors.New("binary version cannot be empty")
+	ErrRitualUpdaterNil          = errors.New("ritual updater cannot be nil")
+	ErrRitualCtxNil              = errors.New("context cannot be nil")
+	ErrRitualRemoteManifestNil   = errors.New("remote manifest cannot be nil")
 )
 
-// RitualUpdater implements UpdaterService for ritual self-updates
-// Compares local and remote ritual versions and performs self-update if local is outdated
+// RitualUpdater implements UpdaterService for ritual self-updates.
+// Compares local and remote ritual versions and performs self-update if local is outdated.
 type RitualUpdater struct {
-	librarian     ports.LibrarianService
+	local         ports.ManifestStore
+	remote        ports.ManifestStore
 	storage       ports.StorageRepository
 	binaryVersion string
 }
@@ -35,15 +36,15 @@ type RitualUpdater struct {
 // Compile-time check to ensure RitualUpdater implements ports.UpdaterService
 var _ ports.UpdaterService = (*RitualUpdater)(nil)
 
-// NewRitualUpdater creates a new ritual updater
+// NewRitualUpdater creates a new ritual updater.
 // binaryVersion is the version baked into the current binary (e.g., "1.0.0")
 func NewRitualUpdater(
-	librarian ports.LibrarianService,
+	local, remote ports.ManifestStore,
 	storage ports.StorageRepository,
 	binaryVersion string,
 ) (*RitualUpdater, error) {
-	if librarian == nil {
-		return nil, ErrRitualUpdaterLibrarianNil
+	if local == nil || remote == nil {
+		return nil, ErrRitualUpdaterStoreNil
 	}
 	if storage == nil {
 		return nil, ErrRitualUpdaterStorageNil
@@ -53,14 +54,15 @@ func NewRitualUpdater(
 	}
 
 	return &RitualUpdater{
-		librarian:     librarian,
+		local:         local,
+		remote:        remote,
 		storage:       storage,
 		binaryVersion: binaryVersion,
 	}, nil
 }
 
-// Run executes the ritual self-update process
-// Downloads new binary if local version is outdated, replaces current exe, and restarts
+// Run executes the ritual self-update process.
+// Downloads new binary if local version is outdated, replaces current exe, and restarts.
 func (u *RitualUpdater) Run(ctx context.Context) error {
 	if u == nil {
 		return ErrRitualUpdaterNil
@@ -69,7 +71,7 @@ func (u *RitualUpdater) Run(ctx context.Context) error {
 		return ErrRitualCtxNil
 	}
 
-	remoteManifest, err := u.librarian.GetRemoteManifest(ctx)
+	remoteManifest, err := u.remote.Get(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get remote manifest: %w", err)
 	}
@@ -77,14 +79,12 @@ func (u *RitualUpdater) Run(ctx context.Context) error {
 		return ErrRitualRemoteManifestNil
 	}
 
-	// Compare binary version (source of truth) against remote manifest
 	if !IsVersionOlder(u.binaryVersion, remoteManifest.RitualVersion) {
 		return nil
 	}
 
 	fmt.Printf("Update available: %s -> %s\n", u.binaryVersion, remoteManifest.RitualVersion)
 
-	// Download new binary from remote (always stored as ritual.exe by convention)
 	currentExe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get current executable path: %w", err)
@@ -98,17 +98,16 @@ func (u *RitualUpdater) Run(ctx context.Context) error {
 	}
 	fmt.Printf("Downloaded %d bytes\n", len(data))
 
-	// Update local manifest BEFORE replacing binary
-	// If local manifest doesn't exist (first run), create from remote
+	// Update local manifest BEFORE replacing binary. Missing local manifest →
+	// seed from remote (first run).
 	fmt.Println("Updating local manifest...")
-	localManifest, err := u.librarian.GetLocalManifest(ctx)
-	if err != nil {
-		// First run - create local manifest from remote
+	localManifest, err := u.local.Get(ctx)
+	if err != nil || localManifest == nil {
 		localManifest = remoteManifest.Clone()
 	} else {
 		localManifest.RitualVersion = remoteManifest.RitualVersion
 	}
-	if err := u.librarian.SaveLocalManifest(ctx, localManifest); err != nil {
+	if err := u.local.Save(ctx, localManifest); err != nil {
 		return fmt.Errorf("failed to save local manifest: %w", err)
 	}
 

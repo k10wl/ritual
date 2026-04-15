@@ -27,22 +27,6 @@ type StorageRepository interface {
 	Copy(ctx context.Context, sourceKey string, destKey string) error
 }
 
-// LibrarianService defines the manifest management interface
-// Librarian handles synchronization between local and remote manifests
-type LibrarianService interface {
-	// GetLocalManifest retrieves the local manifest
-	GetLocalManifest(ctx context.Context) (*domain.Manifest, error)
-
-	// GetRemoteManifest retrieves the remote manifest
-	GetRemoteManifest(ctx context.Context) (*domain.Manifest, error)
-
-	// SaveLocalManifest stores the manifest locally
-	SaveLocalManifest(ctx context.Context, manifest *domain.Manifest) error
-
-	// SaveRemoteManifest stores the manifest remotely
-	SaveRemoteManifest(ctx context.Context, manifest *domain.Manifest) error
-}
-
 // ValidatorService defines the validation interface
 // Validator ensures instance integrity and validates data consistency
 type ValidatorService interface {

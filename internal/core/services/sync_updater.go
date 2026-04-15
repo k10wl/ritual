@@ -8,28 +8,34 @@ import (
 )
 
 // SyncDownloadUpdater wraps syncService.Download as an UpdaterService.
-// Used in Molfar's prepare phase to download changes from remote.
+// Reads both manifests via ManifestStore, runs sync.Download on the selected
+// SyncState pair, writes the new state back to the local manifest.
 type SyncDownloadUpdater struct {
-	sync      *syncService
-	librarian ports.LibrarianService
-	getState  func(*domain.Manifest) *domain.SyncState
+	sync   *syncService
+	local  ports.ManifestStore
+	remote ports.ManifestStore
+	getState func(*domain.Manifest) *domain.SyncState
 }
 
 var _ ports.UpdaterService = (*SyncDownloadUpdater)(nil)
 
 // NewSyncDownloadUpdater creates an updater that runs sync download.
 // getState selects which SyncState to operate on (e.g. &manifest.Worlds.SyncState or &manifest.Server.SyncState).
-func NewSyncDownloadUpdater(sync *syncService, librarian ports.LibrarianService, getState func(*domain.Manifest) *domain.SyncState) *SyncDownloadUpdater {
-	return &SyncDownloadUpdater{sync: sync, librarian: librarian, getState: getState}
+func NewSyncDownloadUpdater(
+	sync *syncService,
+	local, remote ports.ManifestStore,
+	getState func(*domain.Manifest) *domain.SyncState,
+) *SyncDownloadUpdater {
+	return &SyncDownloadUpdater{sync: sync, local: local, remote: remote, getState: getState}
 }
 
-// Run executes the download sync: reads manifests, calls Download with value semantics, writes result back.
+// Run executes the download sync.
 func (u *SyncDownloadUpdater) Run(ctx context.Context) error {
-	localManifest, err := u.librarian.GetLocalManifest(ctx)
+	localManifest, err := u.local.Get(ctx)
 	if err != nil {
 		return err
 	}
-	remoteManifest, err := u.librarian.GetRemoteManifest(ctx)
+	remoteManifest, err := u.remote.Get(ctx)
 	if err != nil {
 		return err
 	}
@@ -43,28 +49,33 @@ func (u *SyncDownloadUpdater) Run(ctx context.Context) error {
 	}
 
 	*localState = newState
-	return u.librarian.SaveLocalManifest(ctx, localManifest)
+	return u.local.Save(ctx, localManifest)
 }
 
 // SyncUploader wraps syncService.Upload as an UpdaterService for exit flow.
 type SyncUploader struct {
-	sync      *syncService
-	librarian ports.LibrarianService
-	getState  func(*domain.Manifest) *domain.SyncState
+	sync     *syncService
+	local    ports.ManifestStore
+	remote   ports.ManifestStore
+	getState func(*domain.Manifest) *domain.SyncState
 }
 
 var _ ports.UpdaterService = (*SyncUploader)(nil)
 
-func NewSyncUploader(sync *syncService, librarian ports.LibrarianService, getState func(*domain.Manifest) *domain.SyncState) *SyncUploader {
-	return &SyncUploader{sync: sync, librarian: librarian, getState: getState}
+func NewSyncUploader(
+	sync *syncService,
+	local, remote ports.ManifestStore,
+	getState func(*domain.Manifest) *domain.SyncState,
+) *SyncUploader {
+	return &SyncUploader{sync: sync, local: local, remote: remote, getState: getState}
 }
 
 func (u *SyncUploader) Run(ctx context.Context) error {
-	localManifest, err := u.librarian.GetLocalManifest(ctx)
+	localManifest, err := u.local.Get(ctx)
 	if err != nil {
 		return err
 	}
-	remoteManifest, err := u.librarian.GetRemoteManifest(ctx)
+	remoteManifest, err := u.remote.Get(ctx)
 	if err != nil {
 		return err
 	}
@@ -80,8 +91,8 @@ func (u *SyncUploader) Run(ctx context.Context) error {
 	*localState = newState
 	*remoteState = newState
 
-	if err := u.librarian.SaveLocalManifest(ctx, localManifest); err != nil {
+	if err := u.local.Save(ctx, localManifest); err != nil {
 		return err
 	}
-	return u.librarian.SaveRemoteManifest(ctx, remoteManifest)
+	return u.remote.Save(ctx, remoteManifest)
 }
