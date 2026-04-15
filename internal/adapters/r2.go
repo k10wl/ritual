@@ -1,5 +1,11 @@
 package adapters
 
+// All network methods on R2Repository route through retry.Do / retry.DoVoid.
+// Classification lives in r2_classify.go (r2Retryable). Transient retries
+// publish ports.RetryAttemptInfo on the events channel — same channel that
+// carries UploadProgress / DownloadProgress. Retry delays are zero under
+// `go test` via testing.Testing() inside internal/adapters/retry.
+
 import (
 	"bytes"
 	"context"
@@ -11,7 +17,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	rg "github.com/avast/retry-go/v4"
+
 	appconfig "ritual/internal/config"
+	"ritual/internal/adapters/retry"
 	"ritual/internal/core/ports"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -78,68 +87,87 @@ func (r *R2Repository) send(evt ports.Event) {
 	ports.SendEvent(r.events, evt)
 }
 
+// retryOpts returns per-call options: classifier + retry-event hook.
+// The closure captures op+key so the published event is self-describing.
+func (r *R2Repository) retryOpts(op, key string) []rg.Option {
+	return []rg.Option{
+		rg.RetryIf(r2Retryable),
+		rg.OnRetry(func(n uint, err error) {
+			r.send(ports.RetryAttemptInfo{
+				Operation: op,
+				Key:       key,
+				Attempt:   n + 1,
+				Err:       err,
+			})
+		}),
+	}
+}
+
 func (r *R2Repository) Get(ctx context.Context, key string) ([]byte, error) {
 	key = filepath.ToSlash(key)
-	result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(r.bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get object %s: %w", key, err)
-	}
-	defer result.Body.Close()
-
-	return io.ReadAll(result.Body)
+	return retry.Do(ctx, func(ctx context.Context) ([]byte, error) {
+		result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(r.bucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get object %s: %w", key, err)
+		}
+		defer result.Body.Close()
+		return io.ReadAll(result.Body)
+	}, r.retryOpts("r2.Get", key)...)
 }
 
 func (r *R2Repository) Put(ctx context.Context, key string, data []byte) error {
 	key = filepath.ToSlash(key)
 	md5sum := md5.Sum(data)
 	contentMD5 := base64.StdEncoding.EncodeToString(md5sum[:])
-	_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:     aws.String(r.bucket),
-		Key:        aws.String(key),
-		Body:       bytes.NewReader(data),
-		ContentMD5: &contentMD5,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to put object %s: %w", key, err)
-	}
-
-	return nil
+	return retry.DoVoid(ctx, func(ctx context.Context) error {
+		_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:     aws.String(r.bucket),
+			Key:        aws.String(key),
+			Body:       bytes.NewReader(data),
+			ContentMD5: &contentMD5,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to put object %s: %w", key, err)
+		}
+		return nil
+	}, r.retryOpts("r2.Put", key)...)
 }
 
 func (r *R2Repository) Delete(ctx context.Context, key string) error {
 	key = filepath.ToSlash(key)
-	_, err := r.client.DeleteObject(ctx, &s3.DeleteObjectInput{
-		Bucket: aws.String(r.bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to delete object %s: %w", key, err)
-	}
-
-	return nil
+	return retry.DoVoid(ctx, func(ctx context.Context) error {
+		_, err := r.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(r.bucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to delete object %s: %w", key, err)
+		}
+		return nil
+	}, r.retryOpts("r2.Delete", key)...)
 }
 
 func (r *R2Repository) List(ctx context.Context, prefix string) ([]string, error) {
 	prefix = filepath.ToSlash(prefix)
-	result, err := r.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(r.bucket),
-		Prefix: aws.String(prefix),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list objects with prefix %s: %w", prefix, err)
-	}
-
-	keys := make([]string, 0, len(result.Contents))
-	for _, obj := range result.Contents {
-		if obj.Key != nil {
-			keys = append(keys, *obj.Key)
+	return retry.Do(ctx, func(ctx context.Context) ([]string, error) {
+		result, err := r.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(r.bucket),
+			Prefix: aws.String(prefix),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to list objects with prefix %s: %w", prefix, err)
 		}
-	}
-
-	return keys, nil
+		keys := make([]string, 0, len(result.Contents))
+		for _, obj := range result.Contents {
+			if obj.Key != nil {
+				keys = append(keys, *obj.Key)
+			}
+		}
+		return keys, nil
+	}, r.retryOpts("r2.List", prefix)...)
 }
 
 // Copy copies data from source key to destination key
@@ -165,21 +193,19 @@ func (r *R2Repository) Copy(ctx context.Context, sourceKey string, destKey strin
 
 	sourceKey = filepath.ToSlash(sourceKey)
 	destKey = filepath.ToSlash(destKey)
-
-	// Create source URI for copy operation
 	sourceURI := fmt.Sprintf("%s/%s", r.bucket, sourceKey)
 
-	// Copy object within same bucket
-	_, err := r.client.CopyObject(ctx, &s3.CopyObjectInput{
-		Bucket:     aws.String(r.bucket),
-		Key:        aws.String(destKey),
-		CopySource: aws.String(sourceURI),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to copy object from %s to %s: %w", sourceKey, destKey, err)
-	}
-
-	return nil
+	return retry.DoVoid(ctx, func(ctx context.Context) error {
+		_, err := r.client.CopyObject(ctx, &s3.CopyObjectInput{
+			Bucket:     aws.String(r.bucket),
+			Key:        aws.String(destKey),
+			CopySource: aws.String(sourceURI),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to copy object from %s to %s: %w", sourceKey, destKey, err)
+		}
+		return nil
+	}, r.retryOpts("r2.Copy", destKey)...)
 }
 
 func (r *R2Repository) DeleteBatch(ctx context.Context, keys []string) error {
@@ -195,12 +221,18 @@ func (r *R2Repository) DeleteBatch(ctx context.Context, keys []string) error {
 			k := key
 			objects[j] = types.ObjectIdentifier{Key: &k}
 		}
-		_, err := r.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
-			Bucket: &r.bucket,
-			Delete: &types.Delete{Objects: objects, Quiet: aws.Bool(true)},
-		})
+		err := retry.DoVoid(ctx, func(ctx context.Context) error {
+			_, err := r.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+				Bucket: &r.bucket,
+				Delete: &types.Delete{Objects: objects, Quiet: aws.Bool(true)},
+			})
+			if err != nil {
+				return fmt.Errorf("batch delete failed: %w", err)
+			}
+			return nil
+		}, r.retryOpts("r2.DeleteBatch", "")...)
 		if err != nil {
-			return fmt.Errorf("batch delete failed: %w", err)
+			return err
 		}
 	}
 	return nil
@@ -270,5 +302,3 @@ func (pr *progressReadCloser) Read(p []byte) (int, error) {
 func (pr *progressReadCloser) Close() error {
 	return pr.reader.Close()
 }
-
-

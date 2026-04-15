@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -305,4 +306,142 @@ func TestR2Repository_EdgeCases(t *testing.T) {
 
 func TestR2Repository_InterfaceCompliance(t *testing.T) {
 	var _ ports.StorageRepository = (*R2Repository)(nil)
+}
+
+// TestR2Repository_RetriesTransient verifies every StorageRepository method
+// retries when the S3Client returns a transient error (here: generic error,
+// which r2Retryable treats as retryable by default). Each subtest fails the
+// mock N-1 times then succeeds, asserting the mock was called N times and the
+// retry hook published RetryAttemptInfo (N-1 times).
+func TestR2Repository_RetriesTransient(t *testing.T) {
+	flaky := errors.New("transient")
+
+	type subtest struct {
+		name   string
+		setup  func(m *MockS3Client)
+		invoke func(repo *R2Repository) error
+		call   string
+	}
+
+	subtests := []subtest{
+		{
+			name: "Get",
+			setup: func(m *MockS3Client) {
+				m.On("GetObject", mock.Anything, mock.Anything, mock.Anything).
+					Return((*s3.GetObjectOutput)(nil), flaky).Twice()
+				body := io.NopCloser(bytes.NewReader([]byte("ok")))
+				m.On("GetObject", mock.Anything, mock.Anything, mock.Anything).
+					Return(&s3.GetObjectOutput{Body: body}, nil).Once()
+			},
+			invoke: func(repo *R2Repository) error { _, err := repo.Get(context.Background(), "k"); return err },
+			call:   "GetObject",
+		},
+		{
+			name: "Put",
+			setup: func(m *MockS3Client) {
+				m.On("PutObject", mock.Anything, mock.Anything, mock.Anything).
+					Return(&s3.PutObjectOutput{}, flaky).Twice()
+				m.On("PutObject", mock.Anything, mock.Anything, mock.Anything).
+					Return(&s3.PutObjectOutput{}, nil).Once()
+			},
+			invoke: func(repo *R2Repository) error { return repo.Put(context.Background(), "k", []byte("v")) },
+			call:   "PutObject",
+		},
+		{
+			name: "Delete",
+			setup: func(m *MockS3Client) {
+				m.On("DeleteObject", mock.Anything, mock.Anything, mock.Anything).
+					Return(&s3.DeleteObjectOutput{}, flaky).Twice()
+				m.On("DeleteObject", mock.Anything, mock.Anything, mock.Anything).
+					Return(&s3.DeleteObjectOutput{}, nil).Once()
+			},
+			invoke: func(repo *R2Repository) error { return repo.Delete(context.Background(), "k") },
+			call:   "DeleteObject",
+		},
+		{
+			name: "List",
+			setup: func(m *MockS3Client) {
+				m.On("ListObjectsV2", mock.Anything, mock.Anything, mock.Anything).
+					Return(&s3.ListObjectsV2Output{}, flaky).Twice()
+				m.On("ListObjectsV2", mock.Anything, mock.Anything, mock.Anything).
+					Return(&s3.ListObjectsV2Output{}, nil).Once()
+			},
+			invoke: func(repo *R2Repository) error { _, err := repo.List(context.Background(), "p"); return err },
+			call:   "ListObjectsV2",
+		},
+		{
+			name: "Copy",
+			setup: func(m *MockS3Client) {
+				m.On("CopyObject", mock.Anything, mock.Anything, mock.Anything).
+					Return(&s3.CopyObjectOutput{}, flaky).Twice()
+				m.On("CopyObject", mock.Anything, mock.Anything, mock.Anything).
+					Return(&s3.CopyObjectOutput{}, nil).Once()
+			},
+			invoke: func(repo *R2Repository) error { return repo.Copy(context.Background(), "src", "dst") },
+			call:   "CopyObject",
+		},
+		{
+			name: "DeleteBatch",
+			setup: func(m *MockS3Client) {
+				m.On("DeleteObjects", mock.Anything, mock.Anything, mock.Anything).
+					Return(&s3.DeleteObjectsOutput{}, flaky).Twice()
+				m.On("DeleteObjects", mock.Anything, mock.Anything, mock.Anything).
+					Return(&s3.DeleteObjectsOutput{}, nil).Once()
+			},
+			invoke: func(repo *R2Repository) error { return repo.DeleteBatch(context.Background(), []string{"a", "b"}) },
+			call:   "DeleteObjects",
+		},
+	}
+
+	for _, tc := range subtests {
+		t.Run(tc.name, func(t *testing.T) {
+			mockClient := new(MockS3Client)
+			events := make(chan ports.Event, 16)
+			repo := NewR2RepositoryWithClient(mockClient, "bucket", events)
+			tc.setup(mockClient)
+
+			if err := tc.invoke(repo); err != nil {
+				t.Fatalf("invoke: %v", err)
+			}
+			close(events)
+
+			// Count SDK calls: 2 failures + 1 success = 3
+			calls := 0
+			for _, c := range mockClient.Calls {
+				if c.Method == tc.call {
+					calls++
+				}
+			}
+			if calls != 3 {
+				t.Errorf("%s calls = %d, want 3", tc.call, calls)
+			}
+
+			// Count retry events: one per failed attempt
+			retries := 0
+			for evt := range events {
+				if _, ok := evt.(ports.RetryAttemptInfo); ok {
+					retries++
+				}
+			}
+			if retries != 2 {
+				t.Errorf("RetryAttemptInfo count = %d, want 2", retries)
+			}
+		})
+	}
+}
+
+// TestR2Repository_NoRetryOnPermanent verifies permanent errors (AccessDenied)
+// short-circuit retry — r2Retryable returns false, so exactly one SDK call is made.
+func TestR2Repository_NoRetryOnPermanent(t *testing.T) {
+	mockClient := new(MockS3Client)
+	repo := NewR2RepositoryWithClient(mockClient, "bucket", nil)
+	permanent := &smithy.GenericAPIError{Code: "AccessDenied"}
+	mockClient.On("GetObject", mock.Anything, mock.Anything, mock.Anything).
+		Return((*s3.GetObjectOutput)(nil), permanent).Once()
+
+	_, err := repo.Get(context.Background(), "k")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	mockClient.AssertExpectations(t)
 }
