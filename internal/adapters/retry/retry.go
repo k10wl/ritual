@@ -2,6 +2,7 @@ package retry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -30,10 +31,10 @@ func (f fatalError) Unwrap() error { return f.err }
 // Fatal marks an error as non-retryable and run-abort-worthy (logic error, bug, contract violation).
 func Fatal(err error) error { return fatalError{err} }
 
-// IsFatal reports whether err was wrapped via Fatal.
+// IsFatal reports whether err (or any error it wraps) was marked via Fatal.
 func IsFatal(err error) bool {
-	_, ok := err.(fatalError)
-	return ok
+	var f fatalError
+	return errors.As(err, &f)
 }
 
 // DefaultOptions returns the shared retry config. Under `go test`, delays are zero.
