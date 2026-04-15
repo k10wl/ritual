@@ -30,7 +30,7 @@ func PromptSettings(bus ports.EventBus, prompter ports.Prompter, minRAMMB int) (
 		minRAMGB = 1
 	}
 
-	ports.SendEvent(bus, ports.StartInfo{Operation: "Settings"})
+	if bus != nil { bus.Publish(ports.StartInfo{Operation: "Settings"}) }
 	ports.SendEvent(bus, ports.UpdateInfo{
 		Operation: "Settings",
 		Message:   "Press Enter to accept default values shown in brackets",
@@ -74,7 +74,7 @@ func PromptSettings(bus ports.EventBus, prompter ports.Prompter, minRAMMB int) (
 		Operation: "Settings",
 		Message:   fmt.Sprintf("Saved: IP=%s, Port=%d, RAM=%dGB", settings.IP, settings.Port, settings.Memory/1024),
 	})
-	ports.SendEvent(bus, ports.FinishInfo{Operation: "Settings"})
+	if bus != nil { bus.Publish(ports.FinishInfo{Operation: "Settings"}) }
 
 	return settings, nil
 }

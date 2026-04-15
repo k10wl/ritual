@@ -114,7 +114,7 @@ func (s *syncService) Upload(ctx context.Context, local, remote domain.SyncState
 }
 
 func (s *syncService) send(evt ports.Event) {
-	ports.SendEvent(s.events, evt)
+	if s.events != nil { s.events.Publish(evt) }
 }
 
 // stageDownload downloads files from remote to local staging dir.
