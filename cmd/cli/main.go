@@ -115,9 +115,6 @@ func main() {
 		return
 	}
 
-	// Wrap remote storage with retry for sync operations (5 attempts, 1s base, 15s cap)
-	retryRemote := adapters.NewRetryStorageRepository(remoteStorage, 5, 1*time.Second, 15*time.Second)
-
 	// Generate sync session ID (same format as lock ID for traceability)
 	hostname, _ := os.Hostname()
 	syncSessionID := fmt.Sprintf("%s%s%d", hostname, config.LockIDSeparator, time.Now().UnixNano())
@@ -172,15 +169,16 @@ func main() {
 	// Server scanner: always FullScanner (small file count)
 	serverScanner := adapters.NewFilteredScanner(adapters.NewFullScanner(serverFS), serverFilter)
 
-	// Two sync services — same code, different config
+	// Two sync services — same code, different config.
+	// remoteStorage already retries on transient errors (inline in R2Repository).
 	worldSync := services.NewSyncService(
-		worldScanner, localStorage, retryRemote, events,
+		worldScanner, localStorage, remoteStorage, events,
 		services.SyncConfig{Prefix: config.WorldsDir, LocalDir: worldsPath},
 		filepath.Join(localStagingBase, config.WorldsDir),
 		remoteStagingBase+"/"+config.WorldsDir,
 	)
 	serverSync := services.NewSyncService(
-		serverScanner, localStorage, retryRemote, events,
+		serverScanner, localStorage, remoteStorage, events,
 		services.SyncConfig{Prefix: config.ServerDir, LocalDir: serverPath},
 		filepath.Join(localStagingBase, config.ServerDir),
 		remoteStagingBase+"/"+config.ServerDir,
