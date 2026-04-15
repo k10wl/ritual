@@ -41,6 +41,9 @@ func (*RunningState) Name() StateName { return Running }
 
 func (s *RunningState) Handle(ctx context.Context) (Handler, error) {
 	publish(s.bus, ports.StartInfo{Operation: "server"})
+	if next := ctxFailed(ctx, s.factory, Running); next != nil {
+		return next, nil
+	}
 
 	localBefore, _ := s.localManifests.Get(ctx)
 	remoteBefore, _ := s.remoteManifests.Get(ctx)

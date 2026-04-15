@@ -1,6 +1,8 @@
 package statemachine
 
 import (
+	"context"
+
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )
@@ -45,4 +47,16 @@ func publish(bus ports.EventBus, evt ports.Event) {
 	if bus != nil {
 		bus.Publish(evt)
 	}
+}
+
+// ctxFailed checks ctx cancellation and returns a Failed handler if cancelled,
+// nil otherwise. Every state EXCEPT ExitingState uses this at Handle() entry
+// and inside any loop to honor GUI-close / OS-shutdown cancellation promptly.
+// ExitingState deliberately runs with context.WithoutCancel and must not use
+// this helper.
+func ctxFailed(ctx context.Context, f StateFactory, from StateName) Handler {
+	if err := ctx.Err(); err != nil {
+		return f.Failed(from, err)
+	}
+	return nil
 }

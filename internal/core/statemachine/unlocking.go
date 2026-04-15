@@ -37,8 +37,13 @@ func NewUnlockingState(
 
 func (*UnlockingState) Name() StateName { return Unlocking }
 
-func (s *UnlockingState) Handle(ctx context.Context) (Handler, error) {
+func (s *UnlockingState) Handle(parentCtx context.Context) (Handler, error) {
 	publish(s.bus, ports.StartInfo{Operation: "unlock-rollback"})
+
+	// Lock release must complete even if the parent ctx was cancelled —
+	// same exception as ExitingState. Leaving a stale LockedBy strands
+	// the instance for the next run.
+	ctx := context.WithoutCancel(parentCtx)
 
 	if local, err := s.localManifests.Get(ctx); err == nil && local != nil && local.LockedBy == s.lockID {
 		local.Unlock()

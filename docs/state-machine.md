@@ -1,10 +1,22 @@
-# State Machine Proposal (Future — GUI Milestone)
+# State Machine
 
-## Status: Memo — not for implementation yet
+## Status: Implemented in `internal/core/statemachine/`
 
-This document captures the state machine design discussed during delta sync v2 planning.
-It will become relevant when the GUI layer is added. Recorded here so the design decisions
-and rationale are not lost.
+This document describes the Ritual state machine as it ships on `feat/delta-sync`.
+Previously labelled a "proposal"; now the authoritative design reference.
+
+Implementation landmarks:
+- `internal/core/statemachine/handler.go` — `StateName` typed string, `Handler` interface, 6 state constants
+- `internal/core/statemachine/machine.go` — `Machine.Run` loop, emits `StateChangedInfo` on every transition
+- `internal/core/statemachine/factory.go` — `StateFactory` + `Deps`, shared `publish` and `ctxFailed` helpers
+- Per-state files + tests: `preparing.go`, `locking.go`, `running.go`, `exiting.go`, `unlocking.go`, `failed.go`
+
+Design deltas from the original proposal:
+- **No `MachineContext` god-struct.** Each state carries only its own deps via constructor injection.
+- **No `DoneState`.** Terminal success = `Handle` returns `(nil, nil)`.
+- **No `Enter`/`Exit` hooks.** Brackets that span phases are modeled as state pairs (`Locking`↔`Unlocking`/`Exiting`); brackets within a phase use `defer`.
+- **`ExitingState` and `UnlockingState` use `context.WithoutCancel`.** Lock release must complete even if the upstream ctx is cancelled — stranded locks are worse than a slow shutdown.
+- **No Memento / crash recovery.** Manifest lock semantics already cover the crash scenario.
 
 ---
 

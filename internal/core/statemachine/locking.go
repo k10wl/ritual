@@ -28,6 +28,9 @@ func (*LockingState) Name() StateName { return Locking }
 
 func (s *LockingState) Handle(ctx context.Context) (Handler, error) {
 	publish(s.bus, ports.StartInfo{Operation: "lock"})
+	if next := ctxFailed(ctx, s.factory, Locking); next != nil {
+		return next, nil
+	}
 
 	local, err := s.localManifests.Get(ctx)
 	if err != nil {
