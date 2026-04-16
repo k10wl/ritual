@@ -24,4 +24,5 @@ type RunState struct {
 	LocalBefore  *domain.Manifest
 	RemoteBefore *domain.Manifest
 	Err          error
+	FailedStage  string
 }
