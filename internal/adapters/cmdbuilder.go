@@ -1,16 +1,17 @@
 package adapters
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"strconv"
+	"strings"
 )
 
 var _ ports.CmdBuilder = (*ServerCmdBuilder)(nil)
@@ -45,25 +46,24 @@ func (b *ServerCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io
 		return nil, fmt.Errorf("resolve runtime: %w", err)
 	}
 
-	if _, err := b.workRoot.Stat(b.startScript); err != nil {
+	f, err := b.workRoot.Open(b.startScript)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("start script not found at %s", b.startScript)
 		}
-		return nil, fmt.Errorf("failed to check start script at %s: %w", b.startScript, err)
+		return nil, fmt.Errorf("open start script at %s: %w", b.startScript, err)
 	}
+	defer f.Close()
 
-	rootPath := b.workRoot.Name()
-	scriptPath := filepath.Join(rootPath, b.startScript)
 	memoryArg := "-Xmx" + strconv.Itoa(server.Memory) + "M"
-	logFile := filepath.Join(rootPath, config.LogsDir, config.ServerLogFilename)
-	psCommand := fmt.Sprintf("& '%s' %s 2>&1 | Tee-Object -FilePath '%s'", scriptPath, memoryArg, logFile)
-	args := []string{
-		"/C", "start", "/wait", "powershell", "-Command", psCommand,
+	parts, err := parseJavaInvocation(f, memoryArg)
+	if err != nil {
+		return nil, fmt.Errorf("parse start script %s: %w", b.startScript, err)
 	}
 
-	workingDir := filepath.Dir(scriptPath)
-	cmd := exec.Command("cmd", args...)
-	cmd.Dir = workingDir
+	scriptPath := filepath.Join(b.workRoot.Name(), b.startScript)
+	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	cmd.Dir = filepath.Dir(scriptPath)
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stdout
@@ -71,3 +71,22 @@ func (b *ServerCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io
 	return cmd, nil
 }
 
+func parseJavaInvocation(r io.Reader, memoryArg string) ([]string, error) {
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "@") || strings.HasPrefix(strings.ToLower(line), "rem ") {
+			continue
+		}
+		line = strings.ReplaceAll(line, "%1", memoryArg)
+		parts := strings.Fields(line)
+		if len(parts) == 0 {
+			continue
+		}
+		return parts, nil
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return nil, fmt.Errorf("no java invocation found")
+}

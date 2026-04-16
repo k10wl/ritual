@@ -7,12 +7,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"ritual/internal/config"
 	"ritual/internal/core/domain"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+const forgeBat = "@echo off\njava %1 @user_jvm_args.txt @libraries/net/minecraftforge/forge/win_args.txt nogui\n"
 
 func stubRuntime(port, memory int) func() (*domain.ServerRuntime, error) {
 	return func() (*domain.ServerRuntime, error) {
@@ -77,7 +78,7 @@ func TestServerCmdBuilder_Build(t *testing.T) {
 
 	startScript := filepath.Join("instance", "run.bat")
 	scriptPath := filepath.Join(tempDir, startScript)
-	require.NoError(t, os.WriteFile(scriptPath, []byte("@echo off"), 0644))
+	require.NoError(t, os.WriteFile(scriptPath, []byte(forgeBat), 0644))
 
 	b, err := NewServerCmdBuilder(workRoot, startScript, stubRuntime(25565, 1024))
 	require.NoError(t, err)
@@ -87,11 +88,14 @@ func TestServerCmdBuilder_Build(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, cmd)
 	assert.Equal(t, instanceDir, cmd.Dir)
-
-	logFile := filepath.Join(tempDir, config.LogsDir, config.ServerLogFilename)
-	psCommand := fmt.Sprintf("& '%s' %s 2>&1 | Tee-Object -FilePath '%s'", scriptPath, "-Xmx1024M", logFile)
-	expectedArgs := []string{"cmd", "/C", "start", "/wait", "powershell", "-Command", psCommand}
-	assert.Equal(t, expectedArgs, cmd.Args)
+	expected := []string{
+		"java",
+		"-Xmx1024M",
+		"@user_jvm_args.txt",
+		"@libraries/net/minecraftforge/forge/win_args.txt",
+		"nogui",
+	}
+	assert.Equal(t, expected, cmd.Args)
 }
 
 func TestServerCmdBuilder_Build_ScriptNotFound(t *testing.T) {
@@ -130,13 +134,31 @@ func TestServerCmdBuilder_Build_RuntimeError(t *testing.T) {
 	assert.Contains(t, err.Error(), "settings unavailable")
 }
 
+func TestServerCmdBuilder_Build_NoJavaLine(t *testing.T) {
+	tempDir := t.TempDir()
+	workRoot, err := os.OpenRoot(tempDir)
+	require.NoError(t, err)
+	defer workRoot.Close()
+
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "run.bat"), []byte("@echo off\n"), 0644))
+
+	b, err := NewServerCmdBuilder(workRoot, "run.bat", stubRuntime(25565, 1024))
+	require.NoError(t, err)
+
+	cmd, err := b.Build(context.Background(), nil, nil)
+
+	assert.Error(t, err)
+	assert.Nil(t, cmd)
+	assert.Contains(t, err.Error(), "no java invocation found")
+}
+
 func TestServerCmdBuilder_Build_ContextWired(t *testing.T) {
 	tempDir := t.TempDir()
 	workRoot, err := os.OpenRoot(tempDir)
 	require.NoError(t, err)
 	defer workRoot.Close()
 
-	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "run.bat"), []byte("@echo off"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "run.bat"), []byte(forgeBat), 0644))
 
 	b, err := NewServerCmdBuilder(workRoot, "run.bat", stubRuntime(25565, 1024))
 	require.NoError(t, err)
