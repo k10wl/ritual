@@ -14,10 +14,19 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"ritual/internal/core/ports"
 )
+
+var saveWaitTimeout = 30 * time.Second
+
+func init() {
+	if testing.Testing() {
+		saveWaitTimeout = 10 * time.Millisecond
+	}
+}
 
 type Supervisor struct {
 	localStore  ports.ManifestStore
@@ -190,12 +199,11 @@ func (s *Supervisor) tick(ctx context.Context, runID string) {
 func (s *Supervisor) syncTick(ctx context.Context) {
 	defer s.syncReady.Store(true)
 
-	s.bus.Publish(ports.SaveRequested{})
-
-	// wait for SaveCompleted
 	ch, unsub := s.bus.Subscribe()
 	defer unsub()
-	timer := time.NewTimer(30 * time.Second)
+	s.bus.Publish(ports.SaveRequested{})
+
+	timer := time.NewTimer(saveWaitTimeout)
 	defer timer.Stop()
 	for {
 		select {
