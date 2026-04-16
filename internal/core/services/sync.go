@@ -18,7 +18,7 @@ type SyncConfig struct {
 	LocalDir string // absolute path to final destination
 }
 
-type syncService struct {
+type SyncService struct {
 	scanner       ports.DirectoryScanner
 	local         ports.StorageRepository
 	remote        ports.StorageRepository
@@ -28,7 +28,7 @@ type syncService struct {
 	remoteStaging string
 }
 
-var _ ports.SyncService = (*syncService)(nil)
+var _ ports.SyncService = (*SyncService)(nil)
 
 func NewSyncService(
 	scanner ports.DirectoryScanner,
@@ -37,8 +37,8 @@ func NewSyncService(
 	config SyncConfig,
 	localStaging string,
 	remoteStaging string,
-) *syncService {
-	return &syncService{
+) *SyncService {
+	return &SyncService{
 		scanner:       scanner,
 		local:         local,
 		remote:        remote,
@@ -49,7 +49,7 @@ func NewSyncService(
 	}
 }
 
-func (s *syncService) Download(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error) {
+func (s *SyncService) Download(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error) {
 	// Clean leftover staging from previous sessions
 	os.RemoveAll(s.localStaging)
 
@@ -78,7 +78,7 @@ func (s *syncService) Download(ctx context.Context, local, remote domain.SyncSta
 	}, nil
 }
 
-func (s *syncService) Upload(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error) {
+func (s *SyncService) Upload(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error) {
 	// Clean leftover remote staging from previous sessions
 	s.cleanRemoteStaging(ctx)
 
@@ -113,12 +113,12 @@ func (s *syncService) Upload(ctx context.Context, local, remote domain.SyncState
 	return domain.SyncState{XXHashMap: newMap, XXHashSyncAt: now}, nil
 }
 
-func (s *syncService) send(evt ports.Event) {
+func (s *SyncService) send(evt ports.Event) {
 	if s.events != nil { s.events.Publish(evt) }
 }
 
 // stageDownload downloads files from remote to local staging dir.
-func (s *syncService) stageDownload(ctx context.Context, files []string) error {
+func (s *SyncService) stageDownload(ctx context.Context, files []string) error {
 	for i, file := range files {
 		s.send(ports.UpdateInfo{
 			Operation: "sync-" + s.config.Prefix,
@@ -142,7 +142,7 @@ func (s *syncService) stageDownload(ctx context.Context, files []string) error {
 }
 
 // commitDownload walks staging dir and writes files to local target dir.
-func (s *syncService) commitDownload() error {
+func (s *SyncService) commitDownload() error {
 	return fs.WalkDir(os.DirFS(s.localStaging), ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || path == "." {
 			return err
@@ -160,7 +160,7 @@ func (s *syncService) commitDownload() error {
 }
 
 // cleanLocalGhosts removes local files not present in the remote hash map.
-func (s *syncService) cleanLocalGhosts(xxhashMap map[string]string) {
+func (s *SyncService) cleanLocalGhosts(xxhashMap map[string]string) {
 	filepath.WalkDir(s.config.LocalDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -177,7 +177,7 @@ func (s *syncService) cleanLocalGhosts(xxhashMap map[string]string) {
 }
 
 // stageUpload uploads files from local storage to remote staging prefix.
-func (s *syncService) stageUpload(ctx context.Context, files []string) error {
+func (s *SyncService) stageUpload(ctx context.Context, files []string) error {
 	for i, file := range files {
 		s.send(ports.UpdateInfo{
 			Operation: "sync-" + s.config.Prefix,
@@ -198,7 +198,7 @@ func (s *syncService) stageUpload(ctx context.Context, files []string) error {
 }
 
 // commitUpload moves files from remote staging to final remote prefix.
-func (s *syncService) commitUpload(ctx context.Context, files []string) error {
+func (s *SyncService) commitUpload(ctx context.Context, files []string) error {
 	for _, file := range files {
 		src := s.remoteStaging + "/" + file
 		dst := s.config.Prefix + "/" + file
@@ -211,7 +211,7 @@ func (s *syncService) commitUpload(ctx context.Context, files []string) error {
 }
 
 // cleanRemoteOrphans batch-deletes orphaned files from remote.
-func (s *syncService) cleanRemoteOrphans(ctx context.Context, files []string) {
+func (s *SyncService) cleanRemoteOrphans(ctx context.Context, files []string) {
 	keys := make([]string, len(files))
 	for i, file := range files {
 		keys[i] = s.config.Prefix + "/" + file
@@ -220,7 +220,7 @@ func (s *syncService) cleanRemoteOrphans(ctx context.Context, files []string) {
 }
 
 // cleanRemoteStaging batch-deletes remaining staging keys.
-func (s *syncService) cleanRemoteStaging(ctx context.Context) {
+func (s *SyncService) cleanRemoteStaging(ctx context.Context) {
 	if s.remote == nil {
 		return
 	}

@@ -7,11 +7,11 @@ import (
 	"ritual/internal/core/ports"
 )
 
-// SyncDownloadUpdater wraps syncService.Download as an UpdaterService.
+// SyncDownloadUpdater wraps SyncService.Download as an UpdaterService.
 // Reads both manifests via ManifestStore, runs sync.Download on the selected
 // SyncState pair, writes the new state back to the local manifest.
 type SyncDownloadUpdater struct {
-	sync   *syncService
+	sync   *SyncService
 	local  ports.ManifestStore
 	remote ports.ManifestStore
 	getState func(*domain.Manifest) *domain.SyncState
@@ -22,7 +22,7 @@ var _ ports.UpdaterService = (*SyncDownloadUpdater)(nil)
 // NewSyncDownloadUpdater creates an updater that runs sync download.
 // getState selects which SyncState to operate on (e.g. &manifest.Worlds.SyncState or &manifest.Server.SyncState).
 func NewSyncDownloadUpdater(
-	sync *syncService,
+	sync *SyncService,
 	local, remote ports.ManifestStore,
 	getState func(*domain.Manifest) *domain.SyncState,
 ) *SyncDownloadUpdater {
@@ -52,9 +52,9 @@ func (u *SyncDownloadUpdater) Run(ctx context.Context) error {
 	return u.local.Save(ctx, localManifest)
 }
 
-// SyncUploader wraps syncService.Upload as an UpdaterService for exit flow.
+// SyncUploader wraps SyncService.Upload as an UpdaterService for exit flow.
 type SyncUploader struct {
-	sync     *syncService
+	sync     *SyncService
 	local    ports.ManifestStore
 	remote   ports.ManifestStore
 	getState func(*domain.Manifest) *domain.SyncState
@@ -63,7 +63,7 @@ type SyncUploader struct {
 var _ ports.UpdaterService = (*SyncUploader)(nil)
 
 func NewSyncUploader(
-	sync *syncService,
+	sync *SyncService,
 	local, remote ports.ManifestStore,
 	getState func(*domain.Manifest) *domain.SyncState,
 ) *SyncUploader {
