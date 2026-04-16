@@ -21,8 +21,9 @@ import (
 // Kit is the result of Build — holds everything the stage chain needs
 // from the sync subsystem.
 type Kit struct {
-	Updaters      []ports.UpdaterService // check → fetch uses these
-	ExitUpdaters  []ports.UpdaterService // serve → publish uses these
+	Updaters      []ports.UpdaterService  // check → fetch uses these
+	ExitUpdaters  []ports.UpdaterService  // serve → publish uses these
+	WorldScanner  ports.DirectoryScanner  // archiving uses this to detect server mutations
 }
 
 // Build wires scanners, filters, sync services, and updaters. It reads
@@ -91,6 +92,7 @@ func Build(
 	return Kit{
 		Updaters:     []ports.UpdaterService{ritualUpdater, serverDown, worldDown},
 		ExitUpdaters: []ports.UpdaterService{worldUp},
+		WorldScanner: worldScanner,
 	}, nil
 }
 

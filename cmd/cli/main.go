@@ -131,6 +131,7 @@ func run(ctx context.Context) error {
 		localStorage, remoteStorage,
 		localManifests, remoteManifests,
 		conds, sk.Updaters, sk.ExitUpdaters, rets,
+		sk.WorldScanner,
 		cmdBuilder,
 	)
 

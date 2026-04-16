@@ -34,6 +34,7 @@ type Ritual struct {
 	updaters        []ports.UpdaterService
 	exitUpdaters    []ports.UpdaterService
 	retentions      []ports.RetentionService
+	scanner         ports.DirectoryScanner
 	cmdBuilder      ports.CmdBuilder
 
 	entry  machine.Strategy[ritual.RunState]
@@ -52,6 +53,7 @@ func New(
 	updaters []ports.UpdaterService,
 	exitUpdaters []ports.UpdaterService,
 	retentions []ports.RetentionService,
+	scanner ports.DirectoryScanner,
 	cmdBuilder ports.CmdBuilder,
 ) *Ritual {
 	r := &Ritual{
@@ -64,6 +66,7 @@ func New(
 		updaters:        updaters,
 		exitUpdaters:    exitUpdaters,
 		retentions:      retentions,
+		scanner:         scanner,
 		cmdBuilder:      cmdBuilder,
 		status:          Idle,
 	}
@@ -160,9 +163,9 @@ func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
 
 	retain := retaining.New(r.retentions, failRet)
 	unlock := unlocking.New(r.localManifests, r.remoteManifests, retain)
-	archive := archiving.New(r.localStorage, r.remoteStorage, r.localManifests, unlock)
-	publish := publishing.New(r.exitUpdaters, archive)
-	run := running.New(r.cmdBuilder, publish)
+	publish := publishing.New(r.exitUpdaters, unlock)
+	archive := archiving.New(r.localStorage, r.remoteStorage, r.localManifests, r.scanner, publish)
+	run := running.New(r.cmdBuilder, archive)
 	rollback := unlocking.New(r.localManifests, r.remoteManifests, failAcq)
 	acquire := acquiring.New(r.localManifests, r.remoteManifests, run, failAcq, rollback)
 	fetch := fetching.New(r.updaters, acquire, failFetch)

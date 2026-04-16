@@ -1,12 +1,14 @@
-// Package archiving snapshots the world to the backups prefix on both
-// storage slots, gated by services.ShouldBackup. Runs under
-// context.WithoutCancel. Any error is recorded in rs.Err; chain always
+// Package archiving snapshots the pre-run world state to the backups
+// prefix on both storage slots. Runs between server exit and publish so
+// that remote still holds the pre-run files. A scanner detects whether
+// the server actually mutated local files; if nothing changed, the
+// backup is skipped. Any error is recorded in rs.Err; chain always
 // forwards to onNext so the lock-release path continues.
 package archiving
 
 import (
 	"context"
-	"fmt"
+	"maps"
 
 	"ritual/internal/config"
 	"ritual/internal/core/machine"
@@ -19,18 +21,21 @@ type Strategy struct {
 	localStore     ports.StorageRepository
 	remoteStore    ports.StorageRepository
 	localManifests ports.ManifestStore
+	scanner        ports.DirectoryScanner
 	onNext         machine.Strategy[ritual.RunState]
 }
 
 func New(
 	localStore, remoteStore ports.StorageRepository,
 	localManifests ports.ManifestStore,
+	scanner ports.DirectoryScanner,
 	onNext machine.Strategy[ritual.RunState],
 ) *Strategy {
 	return &Strategy{
 		localStore:     localStore,
 		remoteStore:    remoteStore,
 		localManifests: localManifests,
+		scanner:        scanner,
 		onNext:         onNext,
 	}
 }
@@ -40,36 +45,36 @@ func (*Strategy) Name() string { return ritual.StageArchiving }
 func (s *Strategy) Run(parentCtx context.Context, rs *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
 	publish(rs.Bus, ports.StartInfo{Operation: "archive"})
 
-	if rs.LockID == "" || !shouldBackup(rs) {
+	if rs.LockID == "" || rs.LocalBefore == nil {
 		publish(rs.Bus, ports.FinishInfo{Operation: "archive"})
 		return s.onNext, nil
 	}
 
 	ctx, done := ritual.WithLostLock(parentCtx, rs)
 	defer done()
-	localAfter, err := s.localManifests.Get(ctx)
-	if err != nil || localAfter == nil {
+
+	if !s.serverChangedFiles(ctx, rs) {
 		publish(rs.Bus, ports.FinishInfo{Operation: "archive"})
 		return s.onNext, nil
 	}
 
-	if err := services.CreateBackup(ctx, s.localStore, config.WorldsDir, config.BackupsDir, localAfter); err != nil {
-		rs.Err = fmt.Errorf("local backup: %w", err)
-		return s.onNext, nil
-	}
-	if err := services.CreateBackup(ctx, s.remoteStore, config.WorldsDir, config.BackupsDir, localAfter); err != nil {
-		rs.Err = fmt.Errorf("remote backup: %w", err)
-		return s.onNext, nil
-	}
+	manifest := rs.LocalBefore
+
+	_ = services.CreateBackupFrom(ctx, s.remoteStore, s.localStore, config.WorldsDir, config.BackupsDir, manifest)
+	_ = services.CreateBackup(ctx, s.remoteStore, config.WorldsDir, config.BackupsDir, manifest)
 	publish(rs.Bus, ports.FinishInfo{Operation: "archive"})
 	return s.onNext, nil
 }
 
-func shouldBackup(rs *ritual.RunState) bool {
-	if rs.LocalBefore == nil || rs.RemoteBefore == nil {
+func (s *Strategy) serverChangedFiles(ctx context.Context, rs *ritual.RunState) bool {
+	if s.scanner == nil {
 		return false
 	}
-	return services.ShouldBackup(rs.LocalBefore.Worlds.SyncState, rs.RemoteBefore.Worlds.SyncState)
+	currentMap, err := s.scanner.Scan(ctx)
+	if err != nil {
+		return false
+	}
+	return !maps.Equal(rs.LocalBefore.Worlds.XXHashMap, currentMap)
 }
 
 func publish(bus ports.EventBus, e ports.Event) {

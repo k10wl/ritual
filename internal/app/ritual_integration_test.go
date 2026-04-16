@@ -273,6 +273,7 @@ func (r *testRitual) startRitualFull(t *testing.T, conditions []ports.ConditionS
 		[]ports.UpdaterService{downloader},
 		[]ports.UpdaterService{uploader},
 		nil,
+		scanner,
 		cmdBuilder,
 	)
 
@@ -431,6 +432,73 @@ func updateManifestXXHash(
 	state.XXHashMap = xxhashMap
 	state.XXHashSyncAt = time.Now()
 	require.NoError(t, store.Save(ctx, manifest), "save manifest after xxhash update")
+}
+
+// ---------- latestBackupName ----------
+
+func (r *testRitual) latestBackupName(t *testing.T) string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(r.localDir, config.BackupsDir))
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+	return entries[len(entries)-1].Name()
+}
+
+// ---------- startRitualWithRetention ----------
+
+func (r *testRitual) startRitualWithRetention(t *testing.T) *fakeServer {
+	t.Helper()
+	server := r.fakerun()
+
+	worldsPath := filepath.Join(r.localDir, config.WorldsDir)
+	_ = os.MkdirAll(worldsPath, 0755)
+
+	worldsFS := os.DirFS(worldsPath)
+	worldScanner := adapters.NewFullScanner(worldsFS)
+
+	localStaging := filepath.Join(t.TempDir(), "staging")
+	remoteStaging := fmt.Sprintf("sync/test-%d", time.Now().UnixNano())
+
+	worldSync := services.NewSyncService(
+		worldScanner, r.local, r.remote, r.bus,
+		services.SyncConfig{Prefix: config.WorldsDir, LocalDir: worldsPath},
+		filepath.Join(localStaging, config.WorldsDir),
+		remoteStaging+"/"+config.WorldsDir,
+	)
+
+	worldDown := services.NewSyncDownloadUpdater(
+		worldSync, r.localManifests, r.remoteManifests,
+		func(m *domain.Manifest) *domain.SyncState { return &m.Worlds.SyncState },
+	)
+	worldUp := services.NewSyncUploader(
+		worldSync, r.localManifests, r.remoteManifests,
+		func(m *domain.Manifest) *domain.SyncState { return &m.Worlds.SyncState },
+	)
+
+	rules := domain.DefaultRetentionRules()
+	localRetention, err := services.NewRetention(r.local, rules, config.BackupsDir, services.ParseTimestampDir)
+	require.NoError(t, err)
+	remoteRetention, err := services.NewRetention(r.remote, rules, config.BackupsDir, services.ParseTimestampDir)
+	require.NoError(t, err)
+
+	cmdBuilder := &fakeServerCmdBuilder{server: server}
+
+	rit := app.New(
+		r.bus,
+		r.local, r.remote,
+		r.localManifests, r.remoteManifests,
+		nil,
+		[]ports.UpdaterService{worldDown},
+		[]ports.UpdaterService{worldUp},
+		[]ports.RetentionService{localRetention, remoteRetention},
+		worldScanner,
+		cmdBuilder,
+	)
+
+	go rit.Listen(r.ctx)
+	time.Sleep(20 * time.Millisecond)
+	r.bus.Publish(app.StartRequested{})
+	return server
 }
 
 // ---------- assert helpers ----------
@@ -816,7 +884,7 @@ func (r *testRitual) startRitualWithFlakyUpdater(t *testing.T, flaky ports.Updat
 		r.localManifests, r.remoteManifests,
 		nil,
 		[]ports.UpdaterService{flaky},
-		nil, nil,
+		nil, nil, nil,
 		cmdBuilder,
 	)
 
@@ -888,4 +956,65 @@ func TestIntegration_MultiHost_AUploads_BDownloadsPlaysUploads(t *testing.T) {
 
 	ritualA.assertRemoteFileContent(t, "world/level.dat", []byte("host B modified"),
 		"remote should have Host B's changes — B was the last to upload")
+}
+
+// ---------- integration tests: backup and retention ----------
+
+func TestIntegration_BackupCreated_ContainsPreRunState(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("before run")),
+	)
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	server.write("worlds/world/level.dat", []byte("after run"))
+	server.exit(0)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	ritual.assertBackupExists(t,
+		"files changed during run — backup should be created")
+	backupName := ritual.latestBackupName(t)
+	ritual.assertBackupFileContent(t, backupName, "worlds/world/level.dat", []byte("before run"),
+		"backup should contain pre-run snapshot, not post-mutation content")
+	ritual.assertBackupHasManifest(t, backupName,
+		"backup should contain manifest.json snapshot")
+}
+
+func TestIntegration_NothingChanged_NoBackupCreated(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedSyncedWorld(t, ritual,
+		file("world/level.dat", []byte("level")),
+	)
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	server.exit(0)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	ritual.assertNoBackup(t,
+		"server ran but changed nothing — no backup should be created")
+}
+
+func TestIntegration_RetentionPrunesOldBackups(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedBackups(t, ritual, 5)
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("level")),
+	)
+
+	server := ritual.startRitualWithRetention(t)
+	server.waitReady(t)
+	server.write("worlds/world/level.dat", []byte("changed"))
+	server.exit(0)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	ritual.assertBackupCount(t, ritual.retentionLimit(),
+		"retention should prune oldest backups, keeping only N most recent")
 }

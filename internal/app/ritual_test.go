@@ -82,6 +82,7 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 		[]ports.UpdaterService{noopUpdater{}},
 		[]ports.UpdaterService{noopUpdater{}},
 		[]ports.RetentionService{noopRetention{}},
+		nil,
 		fakeCmdBuilder{},
 	)
 
@@ -125,6 +126,7 @@ func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 		[]ports.UpdaterService{flaky},
 		[]ports.UpdaterService{noopUpdater{}},
 		[]ports.RetentionService{noopRetention{}},
+		nil,
 		fakeCmdBuilder{},
 	)
 
@@ -164,7 +166,7 @@ func TestRitual_Stop_CancelsRunning(t *testing.T) {
 		bus,
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
-		nil, nil, nil, nil,
+		nil, nil, nil, nil, nil,
 		blocker,
 	)
 
@@ -189,7 +191,7 @@ func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
 		bus,
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
-		nil, nil, nil, nil,
+		nil, nil, nil, nil, nil,
 		fakeCmdBuilder{},
 	)
 
