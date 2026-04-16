@@ -86,7 +86,7 @@ func TestServerCmdBuilder_Build(t *testing.T) {
 	b, err := NewServerCmdBuilder(workRoot, startScript, stubRuntime("127.0.0.1:25565", 1024))
 	require.NoError(t, err)
 
-	cmd, err := b.Build(context.Background())
+	cmd, err := b.Build(context.Background(), nil, nil)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, cmd)
@@ -155,7 +155,7 @@ func TestServerCmdBuilder_Build_UpdatesServerProperties(t *testing.T) {
 			b, err := NewServerCmdBuilder(workRoot, startScript, stubRuntime(address, tc.memory))
 			require.NoError(t, err)
 
-			cmd, err := b.Build(context.Background())
+			cmd, err := b.Build(context.Background(), nil, nil)
 
 			assert.NoError(t, err)
 			assert.NotNil(t, cmd)
@@ -192,7 +192,7 @@ func TestServerCmdBuilder_Build_CreatesServerPropertiesIfMissing(t *testing.T) {
 	b, err := NewServerCmdBuilder(workRoot, startScript, stubRuntime("192.168.1.50:25570", 2048))
 	require.NoError(t, err)
 
-	cmd, err := b.Build(context.Background())
+	cmd, err := b.Build(context.Background(), nil, nil)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, cmd)
@@ -213,7 +213,7 @@ func TestServerCmdBuilder_Build_ScriptNotFound(t *testing.T) {
 	b, err := NewServerCmdBuilder(workRoot, "nonexistent.bat", stubRuntime("127.0.0.1:25565", 1024))
 	require.NoError(t, err)
 
-	cmd, err := b.Build(context.Background())
+	cmd, err := b.Build(context.Background(), nil, nil)
 
 	assert.Error(t, err)
 	assert.Nil(t, cmd)
@@ -233,7 +233,7 @@ func TestServerCmdBuilder_Build_RuntimeError(t *testing.T) {
 	b, err := NewServerCmdBuilder(workRoot, "run.bat", failing)
 	require.NoError(t, err)
 
-	cmd, err := b.Build(context.Background())
+	cmd, err := b.Build(context.Background(), nil, nil)
 
 	assert.Error(t, err)
 	assert.Nil(t, cmd)
@@ -254,7 +254,7 @@ func TestServerCmdBuilder_Build_ContextWired(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	cmd, err := b.Build(ctx)
+	cmd, err := b.Build(ctx, nil, nil)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, cmd)

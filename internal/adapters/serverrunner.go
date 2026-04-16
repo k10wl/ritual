@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,7 +41,7 @@ func NewServerCmdBuilder(workRoot *os.Root, startScript string, runtime func() (
 	}, nil
 }
 
-func (b *ServerCmdBuilder) Build(ctx context.Context) (*exec.Cmd, error) {
+func (b *ServerCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io.Writer) (*exec.Cmd, error) {
 	server, err := b.runtime()
 	if err != nil {
 		return nil, fmt.Errorf("resolve runtime: %w", err)
@@ -67,8 +68,11 @@ func (b *ServerCmdBuilder) Build(ctx context.Context) (*exec.Cmd, error) {
 	}
 
 	workingDir := filepath.Dir(scriptPath)
-	cmd := exec.CommandContext(ctx, "cmd", args...)
+	cmd := exec.Command("cmd", args...)
 	cmd.Dir = workingDir
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stdout
 
 	return cmd, nil
 }
