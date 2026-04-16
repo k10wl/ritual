@@ -14,22 +14,26 @@ import (
 // Build returns the ordered condition slice for the Checking stage.
 // Provider interfaces are injected so tests can pass fakes and the
 // package compiles on any OS.
+type HardwareInfoProvider interface {
+	services.SystemInfoProvider
+	services.DiskInfoProvider
+}
+
 func Build(
 	remoteManifest *domain.Manifest,
 	remoteManifests ports.ManifestStore,
-	sys services.SystemInfoProvider,
-	disk services.DiskInfoProvider,
+	hw HardwareInfoProvider,
 	java services.JavaVersionProvider,
 ) ([]ports.ConditionService, error) {
 	lock, err := services.NewManifestLockCondition(remoteManifests)
 	if err != nil {
 		return nil, fmt.Errorf("lock condition: %w", err)
 	}
-	ram, err := services.NewRAMCondition(remoteManifest.GetMinRAMMB(), sys)
+	ram, err := services.NewRAMCondition(remoteManifest.GetMinRAMMB(), hw)
 	if err != nil {
 		return nil, fmt.Errorf("ram condition: %w", err)
 	}
-	diskCond, err := services.NewDiskSpaceCondition(remoteManifest.GetMinDiskMB(), config.RootPath, disk)
+	diskCond, err := services.NewDiskSpaceCondition(remoteManifest.GetMinDiskMB(), config.RootPath, hw)
 	if err != nil {
 		return nil, fmt.Errorf("disk condition: %w", err)
 	}

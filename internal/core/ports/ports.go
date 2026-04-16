@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"os/exec"
 	"ritual/internal/core/domain"
 )
 
@@ -34,20 +35,10 @@ type ValidatorService interface {
 	CheckLock(local *domain.Manifest, remote *domain.Manifest) error
 }
 
-// CommandExecutor defines the command execution interface
-// CommandExecutor abstracts command execution for testability
-type CommandExecutor interface {
-	// Execute runs a command with the given arguments and working directory
-	Execute(command string, args []string, workingDir string) error
-}
-
-// ServerRunner defines the server execution interface
-// ServerRunner handles the execution of Minecraft server processes
-type ServerRunner interface {
-	// Run executes the server process with the given server configuration.
-	// Context cancellation triggers a graceful stop (Minecraft "stop" command)
-	// on adapters that support it.
-	Run(ctx context.Context, server *domain.ServerRuntime) error
+// CmdBuilder lazily creates the *exec.Cmd for the server process.
+// Build receives the context so exec.CommandContext can wire cancellation.
+type CmdBuilder interface {
+	Build(ctx context.Context) (*exec.Cmd, error)
 }
 
 // UpdaterService defines the interface for update operations

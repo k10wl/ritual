@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
@@ -13,68 +14,51 @@ import (
 	"strings"
 )
 
-// Compile-time check to ensure ServerRunner implements ports.ServerRunner interface
-var _ ports.ServerRunner = (*ServerRunner)(nil)
+var _ ports.CmdBuilder = (*ServerCmdBuilder)(nil)
 
-// ServerRunner implements the ServerRunner interface for executing Minecraft servers
-type ServerRunner struct {
-	homedir         string
-	workRoot        *os.Root
-	startScript     string
-	commandExecutor ports.CommandExecutor
+type ServerCmdBuilder struct {
+	workRoot    *os.Root
+	startScript string
+	runtime     func() (*domain.ServerRuntime, error)
 }
 
-// NewServerRunner creates a new ServerRunner instance
-// startScript is the path to the bat file relative to ritual root
-func NewServerRunner(homedir string, workRoot *os.Root, startScript string, commandExecutor ports.CommandExecutor) (*ServerRunner, error) {
-	if homedir == "" {
-		return nil, fmt.Errorf("homedir cannot be empty")
-	}
+func NewServerCmdBuilder(workRoot *os.Root, startScript string, runtime func() (*domain.ServerRuntime, error)) (*ServerCmdBuilder, error) {
 	if workRoot == nil {
 		return nil, fmt.Errorf("workRoot cannot be nil")
 	}
 	if startScript == "" {
 		return nil, fmt.Errorf("start script cannot be empty")
 	}
-	if commandExecutor == nil {
-		return nil, fmt.Errorf("command executor cannot be nil")
+	if runtime == nil {
+		return nil, fmt.Errorf("runtime factory cannot be nil")
 	}
 
-	return &ServerRunner{
-		homedir:         homedir,
-		workRoot:        workRoot,
-		startScript:     startScript,
-		commandExecutor: commandExecutor,
+	return &ServerCmdBuilder{
+		workRoot:    workRoot,
+		startScript: startScript,
+		runtime:     runtime,
 	}, nil
 }
 
-// Run executes the Minecraft server process using the configured start script.
-// ctx cancellation is plumbed into commandExecutor via graceful-stop hooks
-// when available; today the command blocks until the server exits on its own.
-func (s *ServerRunner) Run(ctx context.Context, server *domain.ServerRuntime) error {
-	_ = ctx // graceful-stop wiring lands in a follow-up when ServerRunner tests exist for it
-	if s == nil {
-		return fmt.Errorf("server runner cannot be nil")
-	}
-	if server == nil {
-		return fmt.Errorf("server cannot be nil")
+func (b *ServerCmdBuilder) Build(ctx context.Context) (*exec.Cmd, error) {
+	server, err := b.runtime()
+	if err != nil {
+		return nil, fmt.Errorf("resolve runtime: %w", err)
 	}
 
-	// Check if script exists using workRoot
-	if _, err := s.workRoot.Stat(s.startScript); err != nil {
+	if _, err := b.workRoot.Stat(b.startScript); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("start script not found at %s", s.startScript)
+			return nil, fmt.Errorf("start script not found at %s", b.startScript)
 		}
-		return fmt.Errorf("failed to check start script at %s: %w", s.startScript, err)
+		return nil, fmt.Errorf("failed to check start script at %s: %w", b.startScript, err)
 	}
 
-	// Update server.properties with IP and port before starting
-	if err := s.updateServerProperties(server); err != nil {
-		return fmt.Errorf("failed to update server.properties: %w", err)
+	if err := b.updateServerProperties(server); err != nil {
+		return nil, fmt.Errorf("failed to update server.properties: %w", err)
 	}
 
-	rootPath := s.workRoot.Name()
-	scriptPath := filepath.Join(rootPath, s.startScript)
+	rootPath := b.workRoot.Name()
+	scriptPath := filepath.Join(rootPath, b.startScript)
 	memoryArg := "-Xmx" + strconv.Itoa(server.Memory) + "M"
 	logFile := filepath.Join(rootPath, config.LogsDir, config.ServerLogFilename)
 	psCommand := fmt.Sprintf("& '%s' %s 2>&1 | Tee-Object -FilePath '%s'", scriptPath, memoryArg, logFile)
@@ -83,23 +67,19 @@ func (s *ServerRunner) Run(ctx context.Context, server *domain.ServerRuntime) er
 	}
 
 	workingDir := filepath.Dir(scriptPath)
-	if err := s.commandExecutor.Execute("cmd", args, workingDir); err != nil {
-		return fmt.Errorf("failed to start server: %w", err)
-	}
+	cmd := exec.CommandContext(ctx, "cmd", args...)
+	cmd.Dir = workingDir
 
-	return nil
+	return cmd, nil
 }
 
-// updateServerProperties modifies server.properties to set IP and port
-func (s *ServerRunner) updateServerProperties(server *domain.ServerRuntime) error {
-	propsPath := filepath.Join(filepath.Dir(s.startScript), "server.properties")
+func (b *ServerCmdBuilder) updateServerProperties(server *domain.ServerRuntime) error {
+	propsPath := filepath.Join(filepath.Dir(b.startScript), "server.properties")
 
-	// Read existing properties using workRoot
-	file, err := s.workRoot.Open(propsPath)
+	file, err := b.workRoot.Open(propsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Create new file with just IP and port
-			return s.writeServerProperties(propsPath, server, nil)
+			return b.writeServerProperties(propsPath, server, nil)
 		}
 		return fmt.Errorf("failed to open server.properties: %w", err)
 	}
@@ -114,11 +94,10 @@ func (s *ServerRunner) updateServerProperties(server *domain.ServerRuntime) erro
 		return fmt.Errorf("failed to read server.properties: %w", err)
 	}
 
-	return s.writeServerProperties(propsPath, server, lines)
+	return b.writeServerProperties(propsPath, server, lines)
 }
 
-// writeServerProperties writes the updated server.properties file
-func (s *ServerRunner) writeServerProperties(propsPath string, server *domain.ServerRuntime, existingLines []string) error {
+func (b *ServerCmdBuilder) writeServerProperties(propsPath string, server *domain.ServerRuntime, existingLines []string) error {
 	portStr := strconv.Itoa(server.Port)
 	foundIP := false
 	foundPort := false
@@ -137,7 +116,6 @@ func (s *ServerRunner) writeServerProperties(propsPath string, server *domain.Se
 		}
 	}
 
-	// Add missing properties
 	if !foundIP {
 		newLines = append(newLines, "server-ip="+server.IP)
 	}
@@ -150,8 +128,7 @@ func (s *ServerRunner) writeServerProperties(propsPath string, server *domain.Se
 		content += "\n"
 	}
 
-	// Write using workRoot
-	file, err := s.workRoot.Create(propsPath)
+	file, err := b.workRoot.Create(propsPath)
 	if err != nil {
 		return fmt.Errorf("failed to create server.properties: %w", err)
 	}
