@@ -93,9 +93,6 @@ func run(ctx context.Context) error {
 	localManifests := adapters.NewManifestStore(localStorage)
 	remoteManifests := adapters.NewManifestStore(remoteStorage)
 
-	_, stopHeartbeat := heartbeat.Attach(bus, remoteManifests)
-	defer stopHeartbeat()
-
 	remoteManifest, err := remoteManifests.Get(context.Background())
 	if err != nil {
 		return fmt.Errorf("get remote manifest: %w", err)
@@ -106,6 +103,10 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)
 	}
+
+	// --- Heartbeat (needs WorldSync from kit) ---
+	_, stopHeartbeat := heartbeat.Attach(bus, localManifests, remoteManifests, sk.WorldSync)
+	defer stopHeartbeat()
 	sysInfo := adapters.NewSystemInfo()
 	javaInfo := adapters.NewJavaInfo()
 	conds, err := conditions.Build(remoteManifest, remoteManifests, sysInfo, javaInfo)
