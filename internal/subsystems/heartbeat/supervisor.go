@@ -27,6 +27,7 @@ type Supervisor struct {
 
 	mu         sync.Mutex
 	active     map[string]context.CancelFunc
+	lockIDs    map[string]string
 	syncCtx    context.Context
 	syncCancel context.CancelFunc
 	syncReady  atomic.Bool
@@ -45,6 +46,7 @@ func Attach(bus ports.EventBus, localStore, remoteStore ports.ManifestStore, syn
 		syncer:      syncer,
 		bus:         bus,
 		active:      map[string]context.CancelFunc{},
+		lockIDs:     map[string]string{},
 		syncCtx:     cancelledCtx,
 		syncCancel:  cancelledCancel,
 	}
@@ -69,7 +71,7 @@ func Attach(bus ports.EventBus, localStore, remoteStore ports.ManifestStore, syn
 func (s *Supervisor) handle(e ports.Event) {
 	switch ev := e.(type) {
 	case ports.LockAcquiredInfo:
-		s.start(ev.RunID, ev.Interval)
+		s.start(ev.RunID, ev.LockID, ev.Interval)
 	case ports.LockReleasedInfo:
 		s.stop(ev.RunID)
 	case ports.ServerReadyInfo:
@@ -78,11 +80,14 @@ func (s *Supervisor) handle(e ports.Event) {
 		s.mu.Unlock()
 	case ports.ServerStoppedInfo:
 		s.cancelSync()
+		s.stopAll()
 	case ports.ServerCrashedInfo:
 		s.cancelSync()
+		s.stopAll()
 	case ports.ServerOutputInfo:
 		if strings.Contains(ev.Line, "Stopping the server") {
 			s.cancelSync()
+			s.stopAll()
 		}
 	}
 }
@@ -95,7 +100,7 @@ func (s *Supervisor) cancelSync() {
 	s.mu.Unlock()
 }
 
-func (s *Supervisor) start(runID string, interval time.Duration) {
+func (s *Supervisor) start(runID, lockID string, interval time.Duration) {
 	if interval <= 0 {
 		return
 	}
@@ -105,6 +110,7 @@ func (s *Supervisor) start(runID string, interval time.Duration) {
 		prev()
 	}
 	s.active[runID] = cancel
+	s.lockIDs[runID] = lockID
 	s.mu.Unlock()
 	go s.beat(ctx, runID, interval)
 }
@@ -113,6 +119,7 @@ func (s *Supervisor) stop(runID string) {
 	s.mu.Lock()
 	cancel, ok := s.active[runID]
 	delete(s.active, runID)
+	delete(s.lockIDs, runID)
 	if s.syncCancel != nil {
 		s.syncCancel()
 	}
@@ -127,6 +134,7 @@ func (s *Supervisor) stopAll() {
 	for id, cancel := range s.active {
 		cancel()
 		delete(s.active, id)
+		delete(s.lockIDs, id)
 	}
 	if s.syncCancel != nil {
 		s.syncCancel()
@@ -152,7 +160,10 @@ func (s *Supervisor) tick(ctx context.Context, runID string) {
 	if err != nil || m == nil {
 		return
 	}
-	if m.LockedBy != runID {
+	s.mu.Lock()
+	lockID := s.lockIDs[runID]
+	s.mu.Unlock()
+	if m.LockedBy != lockID {
 		s.bus.Publish(ports.LockLostInfo{RunID: runID, Reason: "owner_mismatch"})
 		s.stop(runID)
 		return

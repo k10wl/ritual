@@ -53,6 +53,7 @@ import (
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/services"
+	"ritual/internal/subsystems/heartbeat"
 )
 
 // ---------- TestMain: compile fakerun binary once ----------
@@ -1049,4 +1050,310 @@ func TestIntegration_OutdatedManifest_NoXXHash_FullSyncPopulatesMaps(t *testing.
 		"outdated manifest with no xxhash — pipeline should populate maps from actual files")
 	ritual.assertManifestUnlocked(t,
 		"lock should be cleared after migration sync")
+}
+
+// ---------- liveSyncCmdBuilder ----------
+
+type liveSyncCmdBuilder struct {
+	binary string
+	root   string
+}
+
+func (b *liveSyncCmdBuilder) Build(_ context.Context, stdin io.Reader, stdout io.Writer) (*exec.Cmd, error) {
+	cmd := exec.Command(b.binary, "--root", b.root)
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stdout
+	return cmd, nil
+}
+
+// ---------- startRitualWithLiveSync ----------
+
+func (r *testRitual) startRitualWithLiveSync(t *testing.T) {
+	t.Helper()
+
+	worldsPath := filepath.Join(r.localDir, config.WorldsDir)
+	require.NoError(t, os.MkdirAll(worldsPath, 0755), "create worlds dir")
+
+	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
+	staging := t.TempDir()
+
+	syncSvc := services.NewSyncService(
+		scanner, r.local, r.remote, r.bus,
+		services.SyncConfig{Prefix: config.WorldsDir, LocalDir: worldsPath},
+		filepath.Join(staging, "local"),
+		"sync/integration/worlds",
+	)
+
+	getState := func(m *domain.Manifest) *domain.SyncState { return &m.Worlds.SyncState }
+
+	downloader := services.NewSyncDownloadUpdater(syncSvc, r.localManifests, r.remoteManifests, getState)
+	uploader := services.NewSyncUploader(syncSvc, r.localManifests, r.remoteManifests, getState)
+
+	cmdBuilder := &liveSyncCmdBuilder{binary: fakerunBin, root: r.localDir}
+
+	_, stopHeartbeat := heartbeat.Attach(r.bus, r.localManifests, r.remoteManifests, syncSvc)
+	t.Cleanup(stopHeartbeat)
+
+	rit := app.New(
+		r.bus,
+		r.local, r.remote,
+		r.localManifests, r.remoteManifests,
+		nil,
+		[]ports.UpdaterService{downloader},
+		[]ports.UpdaterService{uploader},
+		nil,
+		scanner,
+		cmdBuilder,
+		immediateReady{},
+	)
+
+	go rit.Listen(r.ctx)
+	time.Sleep(20 * time.Millisecond)
+	r.bus.Publish(app.StartRequested{})
+}
+
+// ---------- live sync assert helpers ----------
+
+func (r *testRitual) assertRemoteManifestSyncAt(t *testing.T, msg string) time.Time {
+	t.Helper()
+	remoteManifest, err := r.remoteManifests.Get(r.ctx)
+	require.NoError(t, err, msg)
+	assert.False(t, remoteManifest.Worlds.XXHashSyncAt.IsZero(), msg)
+	return remoteManifest.Worlds.XXHashSyncAt
+}
+
+func waitForSaveCompleted(t *testing.T, ch <-chan ports.Event, count int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	seen := 0
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for %d SaveCompleted events (got %d)", count, seen)
+		case e, ok := <-ch:
+			if !ok {
+				t.Fatalf("event channel closed while waiting for SaveCompleted (got %d/%d)", seen, count)
+			}
+			if _, ok := e.(ports.SaveCompleted); ok {
+				seen++
+				if seen >= count {
+					return
+				}
+			}
+		}
+	}
+}
+
+func waitForSaveCompletedThenStatus(t *testing.T, ch <-chan ports.Event, saveCount int, stop func(), want app.Outcome, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	seen := 0
+	stopped := false
+	for {
+		select {
+		case <-deadline:
+			if !stopped {
+				t.Fatalf("timed out waiting for %d SaveCompleted events (got %d)", saveCount, seen)
+			}
+			t.Fatalf("timed out waiting for %s status after stop", want)
+		case e, ok := <-ch:
+			if !ok {
+				t.Fatal("event channel closed unexpectedly")
+			}
+			if !stopped {
+				if _, ok := e.(ports.SaveCompleted); ok {
+					seen++
+					if seen >= saveCount {
+						stop()
+						stopped = true
+					}
+				}
+			}
+			if stopped {
+				if sc, ok := e.(app.StatusChanged); ok && sc.Status == want {
+					return
+				}
+			}
+		}
+	}
+}
+
+func seedRemoteWorldWithShortHeartbeat(t *testing.T, r *testRitual, files ...testFile) {
+	t.Helper()
+	seedFiles(t, r.remoteDir, files)
+
+	remoteManifest, err := r.remoteManifests.Get(r.ctx)
+	require.NoError(t, err, "get remote manifest for short heartbeat seed")
+	remoteManifest.Lease.HeartbeatInterval = domain.Duration(200 * time.Millisecond)
+	remoteManifest.Lease.TTL = domain.Duration(2 * time.Second)
+
+	worldsPath := filepath.Join(r.remoteDir, config.WorldsDir)
+	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
+	xxhashMap, err := scanner.Scan(r.ctx)
+	require.NoError(t, err, "scan worlds for short heartbeat seed")
+	remoteManifest.Worlds.SyncState.XXHashMap = xxhashMap
+	remoteManifest.Worlds.SyncState.XXHashSyncAt = time.Now()
+
+	require.NoError(t, r.remoteManifests.Save(r.ctx, remoteManifest), "save remote manifest with short heartbeat")
+}
+
+// ---------- integration tests: live sync ----------
+
+func TestIntegration_PlayingWithLiveSync_WorldsSyncEveryTick(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorldWithShortHeartbeat(t, ritual,
+		file("world/level.dat", []byte("level data")),
+		file("world/region/r.0.0.mca", []byte("region data")),
+	)
+
+	ch, unsub := ritual.bus.Subscribe()
+	defer unsub()
+
+	ritual.startRitualWithLiveSync(t)
+
+	waitForSaveCompletedThenStatus(t, ch, 2, ritual.sendStop, app.Failed, 10*time.Second)
+
+	ritual.assertRemoteHasFile(t, "world/level.dat",
+		"live sync — world files should remain on remote after sync ticks")
+	ritual.assertRemoteHasFile(t, "world/region/r.0.0.mca",
+		"live sync — region files should remain on remote after sync ticks")
+	ritual.assertRemoteManifestSyncAt(t,
+		"live sync — remote manifest SyncState.XXHashSyncAt should be updated after sync ticks")
+	ritual.assertManifestUnlocked(t,
+		"lock should be cleared after live sync run completes")
+}
+
+func TestIntegration_NothingChangedDuringPlay_NothingUploaded(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorldWithShortHeartbeat(t, ritual,
+		file("world/level.dat", []byte("level data")),
+	)
+
+	ch, unsub := ritual.bus.Subscribe()
+	defer unsub()
+
+	ritual.startRitualWithLiveSync(t)
+
+	waitForSaveCompletedThenStatus(t, ch, 2, ritual.sendStop, app.Failed, 10*time.Second)
+
+	ritual.assertRemoteFileContent(t, "world/level.dat", []byte("level data"),
+		"nothing changed during play — remote file content should be identical to seed")
+	ritual.assertNoStagingFiles(t,
+		"nothing changed during play — no staging artifacts should remain")
+	ritual.assertManifestUnlocked(t,
+		"lock should be cleared after no-op sync run")
+}
+
+func TestIntegration_CrashRecovery_LocalNewerKept(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedFiles(t, ritual.remoteDir, []testFile{
+		file("world/level.dat", []byte("remote old data")),
+	})
+
+	remoteManifest, err := ritual.remoteManifests.Get(ritual.ctx)
+	require.NoError(t, err, "get remote manifest for crash recovery test")
+	remoteManifest.Lease.HeartbeatInterval = domain.Duration(200 * time.Millisecond)
+	remoteManifest.Lease.TTL = domain.Duration(2 * time.Second)
+	remoteManifest.Worlds.SyncState.XXHashSyncAt = time.Now().Add(-time.Hour)
+	remoteManifest.Worlds.SyncState.XXHashMap = map[string]string{
+		"world/level.dat": "remote-hash-old",
+	}
+	require.NoError(t, ritual.remoteManifests.Save(ritual.ctx, remoteManifest), "save remote manifest for crash recovery")
+
+	seedFiles(t, ritual.localDir, []testFile{
+		file("world/level.dat", []byte("local newer data")),
+	})
+
+	worldsPath := filepath.Join(ritual.localDir, config.WorldsDir)
+	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
+	localXXHash, err := scanner.Scan(ritual.ctx)
+	require.NoError(t, err, "scan local worlds for crash recovery")
+
+	localManifest, err := ritual.localManifests.Get(ritual.ctx)
+	require.NoError(t, err, "get local manifest for crash recovery test")
+	localManifest.Worlds.SyncState.XXHashSyncAt = time.Now()
+	localManifest.Worlds.SyncState.XXHashMap = localXXHash
+	require.NoError(t, ritual.localManifests.Save(ritual.ctx, localManifest), "save local manifest for crash recovery")
+
+	ch, unsub := ritual.bus.Subscribe()
+	defer unsub()
+
+	ritual.startRitualWithLiveSync(t)
+
+	waitForSaveCompletedThenStatus(t, ch, 1, ritual.sendStop, app.Failed, 10*time.Second)
+
+	ritual.assertLocalFileContent(t, "world/level.dat", []byte("local newer data"),
+		"crash recovery — local is newer than remote, download should be skipped and local data preserved")
+	ritual.assertManifestUnlocked(t,
+		"lock should be cleared after crash recovery run")
+}
+
+func TestIntegration_LiveSyncUploadsNewFiles_RemoteReflectsChanges(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorldWithShortHeartbeat(t, ritual,
+		file("world/level.dat", []byte("original level")),
+	)
+
+	ch, unsub := ritual.bus.Subscribe()
+	defer unsub()
+
+	ritual.startRitualWithLiveSync(t)
+
+	waitForSaveCompleted(t, ch, 1, 10*time.Second)
+
+	worldsPath := filepath.Join(ritual.localDir, config.WorldsDir)
+	newFilePath := filepath.Join(worldsPath, "world", "playerdata", "player1.dat")
+	require.NoError(t, os.MkdirAll(filepath.Dir(newFilePath), 0755), "create playerdata dir")
+	require.NoError(t, os.WriteFile(newFilePath, []byte("player one"), 0644), "write new player file")
+
+	waitForSaveCompletedThenStatus(t, ch, 1, ritual.sendStop, app.Failed, 10*time.Second)
+
+	ritual.assertRemoteHasFile(t, "world/level.dat",
+		"live sync — original file should still exist on remote")
+	ritual.assertRemoteHasFile(t, "world/playerdata/player1.dat",
+		"live sync — new file written during play should be uploaded to remote by sync tick")
+	ritual.assertRemoteFileContent(t, "world/playerdata/player1.dat", []byte("player one"),
+		"live sync — uploaded file content should match what was written locally")
+	ritual.assertManifestUnlocked(t,
+		"lock should be cleared after live sync with file mutations")
+}
+
+func TestIntegration_LiveSyncAfterCleanStop_RemoteHasSyncedState(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorldWithShortHeartbeat(t, ritual,
+		file("world/level.dat", []byte("level data")),
+		file("world/region/r.0.0.mca", []byte("region data")),
+	)
+
+	ch, unsub := ritual.bus.Subscribe()
+	defer unsub()
+
+	ritual.startRitualWithLiveSync(t)
+
+	waitForSaveCompletedThenStatus(t, ch, 1, ritual.sendStop, app.Failed, 10*time.Second)
+
+	remoteManifest, err := ritual.remoteManifests.Get(ritual.ctx)
+	require.NoError(t, err, "get remote manifest after clean stop")
+	assert.NotEmpty(t, remoteManifest.Worlds.XXHashMap,
+		"clean stop after live sync — remote manifest should have xxhash map populated from sync")
+	assert.False(t, remoteManifest.Worlds.XXHashSyncAt.IsZero(),
+		"clean stop after live sync — remote manifest XXHashSyncAt should be set")
+
+	localManifest, err := ritual.localManifests.Get(ritual.ctx)
+	require.NoError(t, err, "get local manifest after clean stop")
+	assert.NotEmpty(t, localManifest.Worlds.XXHashMap,
+		"clean stop after live sync — local manifest should have xxhash map populated from sync")
+
+	ritual.assertRemoteHasFile(t, "world/level.dat",
+		"clean stop — world files should persist on remote")
+	ritual.assertRemoteHasFile(t, "world/region/r.0.0.mca",
+		"clean stop — region files should persist on remote")
+	ritual.assertManifestUnlocked(t,
+		"lock should be cleared after clean stop with live sync")
 }
