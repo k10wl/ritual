@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type instruction struct {
@@ -26,8 +27,10 @@ func main() {
 		line := scanner.Bytes()
 		var inst instruction
 		if err := json.Unmarshal(line, &inst); err != nil {
-			fmt.Fprintf(os.Stderr, "invalid instruction: %s\n", err)
-			os.Exit(2)
+			if handleConsoleCommand(strings.TrimSpace(string(line))) {
+				return
+			}
+			continue
 		}
 		if err := execute(*root, inst); err != nil {
 			fmt.Fprintf(os.Stderr, "execute %s: %s\n", inst.Op, err)
@@ -40,6 +43,20 @@ func main() {
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "stdin read: %s\n", err)
 		os.Exit(2)
+	}
+}
+
+func handleConsoleCommand(cmd string) bool {
+	switch cmd {
+	case "save-all flush", "save-all":
+		fmt.Println("[Server thread/INFO]: Saving the game (this may take a moment!)")
+		fmt.Println("[Server thread/INFO]: Saved the game")
+		return false
+	case "stop":
+		fmt.Println("[Server thread/INFO]: Stopping the server")
+		return true
+	default:
+		return false
 	}
 }
 

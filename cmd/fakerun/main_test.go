@@ -146,12 +146,50 @@ func TestFakerun_MultipleOpsInSequence(t *testing.T) {
 	assert.FileExists(t, filepath.Join(root, "c.txt"), "c.txt should exist")
 }
 
-func TestFakerun_InvalidJSON_ExitsNonZero(t *testing.T) {
+func TestFakerun_UnrecognizedPlainText_Ignored(t *testing.T) {
+	root := t.TempDir()
+	code, _ := run(t, root, "not a command", exitOp(0))
+	assert.Equal(t, 0, code,
+		"unrecognized plain text should be silently ignored")
+}
+
+func TestFakerun_SaveAllFlush_EchoesConfirmation(t *testing.T) {
 	root := t.TempDir()
 	cmd := exec.Command(fakerunBin, "--root", root)
-	cmd.Stdin = strings.NewReader("not json\n")
-	err := cmd.Run()
-	assert.Error(t, err, "invalid JSON should cause non-zero exit")
+	cmd.Stdin = strings.NewReader("save-all flush\n" + exitOp(0) + "\n")
+	out, err := cmd.CombinedOutput()
+
+	assert.NoError(t, err, "save-all flush followed by exit 0 should exit cleanly")
+	assert.Contains(t, string(out), "Saved the game",
+		"save-all flush should echo 'Saved the game' to stdout")
+}
+
+func TestFakerun_Stop_GracefulExit(t *testing.T) {
+	root := t.TempDir()
+	cmd := exec.Command(fakerunBin, "--root", root)
+	cmd.Stdin = strings.NewReader("stop\n")
+	out, err := cmd.CombinedOutput()
+
+	assert.NoError(t, err, "stop command should exit cleanly with code 0")
+	assert.Contains(t, string(out), "Stopping the server",
+		"stop should echo 'Stopping the server' to stdout")
+}
+
+func TestFakerun_PlainTextAndJSON_Interleaved(t *testing.T) {
+	root := t.TempDir()
+	code, output := run(t, root,
+		writeOp("test.txt", "hello"),
+		"save-all flush",
+		exitOp(0),
+	)
+
+	assert.Equal(t, 0, code, "interleaved plain text and JSON should work")
+	assert.Contains(t, output, "Saved the game",
+		"save-all flush should produce confirmation between JSON ops")
+
+	data, err := os.ReadFile(filepath.Join(root, "test.txt"))
+	require.NoError(t, err, "JSON write op should still create file")
+	assert.Equal(t, "hello", string(data))
 }
 
 func TestFakerun_UnknownOp_ExitsNonZero(t *testing.T) {
