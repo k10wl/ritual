@@ -1018,3 +1018,28 @@ func TestIntegration_RetentionPrunesOldBackups(t *testing.T) {
 	ritual.assertBackupCount(t, ritual.retentionLimit(),
 		"retention should prune oldest backups, keeping only N most recent")
 }
+
+func TestIntegration_OutdatedManifest_NoXXHash_FullSyncPopulatesMaps(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedFiles(t, ritual.localDir, []testFile{
+		file("world/level.dat", []byte("level")),
+	})
+	seedLocalManifest(t, ritual, &domain.Manifest{ManifestVersion: "1.0.0"})
+
+	seedFiles(t, ritual.remoteDir, []testFile{
+		file("world/level.dat", []byte("level")),
+	})
+	seedRemoteManifest(t, ritual, &domain.Manifest{ManifestVersion: "1.0.0"})
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	server.exit(0)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	ritual.assertManifestXXHashNotEmpty(t,
+		"outdated manifest with no xxhash — pipeline should populate maps from actual files")
+	ritual.assertManifestUnlocked(t,
+		"lock should be cleared after migration sync")
+}
