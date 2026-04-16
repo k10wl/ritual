@@ -43,6 +43,10 @@ func (u *SyncDownloadUpdater) Run(ctx context.Context) error {
 	localState := u.getState(localManifest)
 	remoteState := u.getState(remoteManifest)
 
+	if localState.XXHashSyncAt.After(remoteState.XXHashSyncAt) {
+		return nil
+	}
+
 	newState, err := u.sync.Download(ctx, *localState, *remoteState)
 	if err != nil {
 		return err
