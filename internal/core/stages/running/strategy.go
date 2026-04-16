@@ -55,6 +55,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 	publish(rs.Bus, ports.ServerStartingInfo{})
 
 	waitErr := cmd.Wait()
+	stdinR.Close()
 	outW.Close()
 
 	if waitErr != nil {

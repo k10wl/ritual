@@ -41,7 +41,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -221,24 +220,12 @@ type fakeServerCmdBuilder struct {
 	server *fakeServer
 }
 
-func (b *fakeServerCmdBuilder) Build(_ context.Context, stdin io.Reader, stdout io.Writer) (*exec.Cmd, error) {
-	testR, testW := io.Pipe()
-	b.server.stdin = testW
-
-	// Merge stdin from running stage and test-controlled pipe into one reader.
-	mergedR, mergedW := io.Pipe()
-	go func() {
-		defer mergedW.Close()
-		var wg sync.WaitGroup
-		wg.Add(2)
-		copy := func(r io.Reader) { defer wg.Done(); io.Copy(mergedW, r) }
-		go copy(stdin)
-		go copy(testR)
-		wg.Wait()
-	}()
+func (b *fakeServerCmdBuilder) Build(_ context.Context, _ io.Reader, stdout io.Writer) (*exec.Cmd, error) {
+	pr, pw := io.Pipe()
+	b.server.stdin = pw
 
 	cmd := exec.Command(b.server.binary, "--root", b.server.root)
-	cmd.Stdin = mergedR
+	cmd.Stdin = pr
 	cmd.Stdout = stdout
 	cmd.Stderr = stdout
 	return cmd, nil
