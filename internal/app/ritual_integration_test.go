@@ -193,11 +193,16 @@ func newRitualSharingRemote(t *testing.T, other *testRitual) *testRitual {
 type fakeServer struct {
 	binary string
 	root   string
+	ready  chan io.WriteCloser
 	stdin  io.WriteCloser
 }
 
 func (r *testRitual) fakerun() *fakeServer {
-	return &fakeServer{binary: fakerunBin, root: r.localDir}
+	return &fakeServer{
+		binary: fakerunBin,
+		root:   r.localDir,
+		ready:  make(chan io.WriteCloser, 1),
+	}
 }
 
 func (s *fakeServer) write(path string, content []byte) {
@@ -224,7 +229,7 @@ type fakeServerCmdBuilder struct {
 
 func (b *fakeServerCmdBuilder) Build(_ context.Context, _ io.Reader, stdout io.Writer) (*exec.Cmd, error) {
 	pr, pw := io.Pipe()
-	b.server.stdin = pw
+	b.server.ready <- pw
 
 	cmd := exec.Command(b.server.binary, "--root", b.server.root)
 	cmd.Stdin = pr
@@ -697,14 +702,10 @@ func (f *failOnceIntegrationUpdater) Run(_ context.Context) error {
 
 func (s *fakeServer) waitReady(t *testing.T) {
 	t.Helper()
-	deadline := time.After(10 * time.Second)
-	for s.stdin == nil {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for fakerun stdin to be connected")
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
+	select {
+	case s.stdin = <-s.ready:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for fakerun stdin to be connected")
 	}
 }
 
