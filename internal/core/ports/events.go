@@ -112,3 +112,31 @@ func (r RetryAttemptInfo) String() string {
 	}
 	return fmt.Sprintf("retry %s key=%s attempt=%d err=%v", r.Operation, r.Key, r.Attempt, r.Err)
 }
+
+type ServerStartingInfo struct{}
+
+func (ServerStartingInfo) String() string { return "server starting" }
+
+type ServerReadyInfo struct{}
+
+func (ServerReadyInfo) String() string { return "server ready" }
+
+type ServerOutputInfo struct{ Line string }
+
+func (s ServerOutputInfo) String() string { return s.Line }
+
+type ServerStoppedInfo struct{}
+
+func (ServerStoppedInfo) String() string { return "server stopped" }
+
+type ServerCrashedInfo struct{ Err error }
+
+func (s ServerCrashedInfo) String() string { return fmt.Sprintf("server crashed: %v", s.Err) }
+
+type SaveRequested struct{}
+
+func (SaveRequested) String() string { return "save requested" }
+
+type SaveCompleted struct{}
+
+func (SaveCompleted) String() string { return "save completed" }
