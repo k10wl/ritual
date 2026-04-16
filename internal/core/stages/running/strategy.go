@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -55,11 +56,13 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 			publish(rs.Bus, ports.ServerReadyInfo{})
 		}
 	}()
-	go listenCommands(ctx, stdinW, outCh, rs.Bus)
+	waitDone := make(chan struct{})
+	go listenCommands(ctx, stdinW, outCh, rs.Bus, cmd.Process, waitDone)
 
 	publish(rs.Bus, ports.ServerStartingInfo{})
 
 	waitErr := cmd.Wait()
+	close(waitDone)
 	stdinR.Close()
 	outW.Close()
 
@@ -86,7 +89,7 @@ func scanOutput(r io.Reader, outCh chan<- string, bus ports.EventBus) {
 	close(outCh)
 }
 
-func listenCommands(ctx context.Context, stdin io.WriteCloser, outCh <-chan string, bus ports.EventBus) {
+func listenCommands(ctx context.Context, stdin io.WriteCloser, outCh <-chan string, bus ports.EventBus, process *os.Process, waitDone <-chan struct{}) {
 	ch, unsub := bus.Subscribe()
 	defer unsub()
 	defer stdin.Close()
@@ -94,6 +97,12 @@ func listenCommands(ctx context.Context, stdin io.WriteCloser, outCh <-chan stri
 		select {
 		case <-ctx.Done():
 			io.WriteString(stdin, "stop\n")
+			stdin.Close()
+			select {
+			case <-waitDone:
+			case <-time.After(time.Minute):
+				process.Kill()
+			}
 			return
 		case e, ok := <-ch:
 			if !ok {
