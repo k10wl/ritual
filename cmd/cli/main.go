@@ -105,7 +105,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)
 	}
-	conds, err := conditions.Build(remoteManifest, remoteManifests)
+	sysInfo := adapters.NewSystemInfo()
+	javaInfo := adapters.NewJavaInfo()
+	conds, err := conditions.Build(remoteManifest, remoteManifests, sysInfo, sysInfo, javaInfo)
 	if err != nil {
 		return fmt.Errorf("conditions: %w", err)
 	}
