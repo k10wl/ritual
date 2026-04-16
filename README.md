@@ -154,15 +154,15 @@ task build                      # → bin/ritual.exe
 task dev                        # dev mode with hot-reload
 ```
 
-Every task has a `desc:` — run `task --list` for the full menu. See [docs/taskfile.md](docs/taskfile.md) for conventions and troubleshooting.
+Every task has a `desc:` — run `task --list` for the full menu. See the header comment in [`Taskfile.yml`](Taskfile.yml) for conventions and known issues.
 
 ## Documentation
 
 ### Project Documentation
 - **[Architecture Overview](docs/overview.md)** - High-level system architecture and components
 - **[Project Structure](docs/structure.md)** - Detailed directory structure and component descriptions
-- **[Taskfile Reference](docs/taskfile.md)** - Build, dev, and CLI task usage for Windows & macOS
 - **[Build Process](docs/build.md)** - Environment files, version management, icon sources
+- **[Taskfile.yml](Taskfile.yml)** - Tasks are self-documented (`task --list`); header explains conventions
 - **[Defensive Programming Standards](docs/coding-practices.md)** - NASA JPL Power of Ten compliance guidelines
 - **[Sprint Tracker](docs/progress.md)** - Development progress and sprint planning
 - **[Architecture Diagrams](docs/ritual.drawio)** - Visual system architecture diagrams

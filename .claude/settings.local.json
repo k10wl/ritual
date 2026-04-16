@@ -11,7 +11,8 @@
       "Bash(git branch:*)",
       "Bash(grep:*)",
       "mcp__plugin_context7_context7__resolve-library-id",
-      "WebSearch"
+      "WebSearch",
+      "Bash(task test:race)"
     ],
     "deny": [],
     "ask": []

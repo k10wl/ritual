@@ -1,3 +1,31 @@
+# Ritual build orchestration.
+#
+# Target platform: Windows. macOS is a dev-iteration host only.
+#
+# Discovery:
+#   task --list           # user-facing tasks (every task has a desc:)
+#   task --list-all       # includes wails3 template internals
+#   task --summary <name> # full summary for a specific task
+#
+# Single sources of truth:
+#   - Version & product metadata: internal/config/config.go
+#       → emitted into build/windows/info.json by cmd/genversioninfo on each build
+#   - App icons: assets/baiki-{dev,prod}.ico
+#       → task gui:assets regenerates favicon + darwin .icns from baiki-dev.ico
+#       → wails3 generate syso bakes baiki-{dev,prod}.ico into the Windows .syso
+#   - R2 credentials: .env.{dev,prod}.local (gitignored)
+#       → injected at build time via ldflags; preconditions abort the build if missing
+#
+# All generated artefacts are gitignored (frontend/bindings, frontend/dist/*,
+# frontend/public/favicon.ico, bin/, *.syso, build/darwin/icons.icns,
+# build/windows/info.json).
+#
+# Known issues:
+#   - wails3 alpha.74 server mode (run:server / build:server) is broken on darwin
+#     (symbol redeclaration). Regular gui:dev works.
+#   - Binding generator only picks up services in non-main packages — services
+#     must live under internal/gui/services/.
+
 version: '3'
 
 includes:
