@@ -100,6 +100,9 @@ func listenCommands(ctx context.Context, stdin io.WriteCloser, outCh <-chan stri
 			if !ok {
 				return
 			}
+			if _, ok := e.(ports.ServerReadyInfo); ok {
+				io.WriteString(stdin, "save-off\n")
+			}
 			if _, ok := e.(ports.SaveRequested); ok {
 				io.WriteString(stdin, "save-all flush\n")
 				if waitForLine(outCh, "Saved the game", 30*time.Second) {
