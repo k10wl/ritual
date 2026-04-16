@@ -11,29 +11,45 @@ package heartbeat
 
 import (
 	"context"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"ritual/internal/core/ports"
 )
 
 type Supervisor struct {
-	store ports.ManifestStore
-	bus   ports.EventBus
+	localStore  ports.ManifestStore
+	remoteStore ports.ManifestStore
+	syncer      ports.SyncService
+	bus         ports.EventBus
 
-	mu     sync.Mutex
-	active map[string]context.CancelFunc
+	mu         sync.Mutex
+	active     map[string]context.CancelFunc
+	syncCtx    context.Context
+	syncCancel context.CancelFunc
+	syncReady  atomic.Bool
 }
 
 // Attach subscribes a new Supervisor to bus and returns it. The consumer
 // goroutine runs until the returned cancel is called. Typically called
 // once at composition root; cancel on program exit.
-func Attach(bus ports.EventBus, store ports.ManifestStore) (*Supervisor, func()) {
+func Attach(bus ports.EventBus, localStore, remoteStore ports.ManifestStore, syncer ports.SyncService) (*Supervisor, func()) {
+	cancelledCtx, cancelledCancel := context.WithCancel(context.Background())
+	cancelledCancel() // starts cancelled — sync only after ServerReadyInfo
+
 	s := &Supervisor{
-		store:  store,
-		bus:    bus,
-		active: map[string]context.CancelFunc{},
+		localStore:  localStore,
+		remoteStore: remoteStore,
+		syncer:      syncer,
+		bus:         bus,
+		active:      map[string]context.CancelFunc{},
+		syncCtx:     cancelledCtx,
+		syncCancel:  cancelledCancel,
 	}
+	s.syncReady.Store(true)
+
 	ch, cancelSub := bus.Subscribe()
 	done := make(chan struct{})
 	go func() {
@@ -56,7 +72,27 @@ func (s *Supervisor) handle(e ports.Event) {
 		s.start(ev.RunID, ev.Interval)
 	case ports.LockReleasedInfo:
 		s.stop(ev.RunID)
+	case ports.ServerReadyInfo:
+		s.mu.Lock()
+		s.syncCtx, s.syncCancel = context.WithCancel(context.Background())
+		s.mu.Unlock()
+	case ports.ServerStoppedInfo:
+		s.cancelSync()
+	case ports.ServerCrashedInfo:
+		s.cancelSync()
+	case ports.ServerOutputInfo:
+		if strings.Contains(ev.Line, "Stopping the server") {
+			s.cancelSync()
+		}
 	}
+}
+
+func (s *Supervisor) cancelSync() {
+	s.mu.Lock()
+	if s.syncCancel != nil {
+		s.syncCancel()
+	}
+	s.mu.Unlock()
 }
 
 func (s *Supervisor) start(runID string, interval time.Duration) {
@@ -77,6 +113,9 @@ func (s *Supervisor) stop(runID string) {
 	s.mu.Lock()
 	cancel, ok := s.active[runID]
 	delete(s.active, runID)
+	if s.syncCancel != nil {
+		s.syncCancel()
+	}
 	s.mu.Unlock()
 	if ok {
 		cancel()
@@ -88,6 +127,9 @@ func (s *Supervisor) stopAll() {
 	for id, cancel := range s.active {
 		cancel()
 		delete(s.active, id)
+	}
+	if s.syncCancel != nil {
+		s.syncCancel()
 	}
 	s.mu.Unlock()
 }
@@ -106,7 +148,7 @@ func (s *Supervisor) beat(ctx context.Context, runID string, interval time.Durat
 }
 
 func (s *Supervisor) tick(ctx context.Context, runID string) {
-	m, err := s.store.Get(ctx)
+	m, err := s.remoteStore.Get(ctx)
 	if err != nil || m == nil {
 		return
 	}
@@ -115,6 +157,70 @@ func (s *Supervisor) tick(ctx context.Context, runID string) {
 		s.stop(runID)
 		return
 	}
+
+	// heartbeat — always, synchronous
 	m.HeartbeatAt = time.Now().UTC()
-	_ = s.store.Save(ctx, m)
+	_ = s.remoteStore.Save(ctx, m)
+
+	// sync — only when server running and previous sync finished
+	s.mu.Lock()
+	syncCtx := s.syncCtx
+	s.mu.Unlock()
+
+	if syncCtx.Err() != nil {
+		return
+	}
+	if !s.syncReady.CompareAndSwap(true, false) {
+		return
+	}
+	go s.syncTick(syncCtx)
+}
+
+func (s *Supervisor) syncTick(ctx context.Context) {
+	defer s.syncReady.Store(true)
+
+	s.bus.Publish(ports.SaveRequested{})
+
+	// wait for SaveCompleted
+	ch, unsub := s.bus.Subscribe()
+	defer unsub()
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case <-timer.C:
+			return
+		case <-ctx.Done():
+			return
+		case e, ok := <-ch:
+			if !ok {
+				return
+			}
+			if _, ok := e.(ports.SaveCompleted); ok {
+				goto saved
+			}
+		}
+	}
+saved:
+
+	local, err := s.localStore.Get(ctx)
+	if err != nil || local == nil {
+		return
+	}
+	remote, err := s.remoteStore.Get(ctx)
+	if err != nil || remote == nil {
+		return
+	}
+
+	newState, err := s.syncer.Upload(ctx, local.Worlds.SyncState, remote.Worlds.SyncState)
+	if err != nil {
+		return
+	}
+
+	local.Worlds.SyncState = newState
+	remote.Worlds.SyncState = newState
+	remote.HeartbeatAt = time.Now().UTC()
+
+	_ = s.localStore.Save(ctx, local)
+	_ = s.remoteStore.Save(ctx, remote)
 }
