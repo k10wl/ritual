@@ -48,6 +48,12 @@ func main() {
 
 func handleConsoleCommand(cmd string) bool {
 	switch cmd {
+	case "save-off":
+		fmt.Println("[Server thread/INFO]: Automatic saving is now disabled")
+		return false
+	case "save-on":
+		fmt.Println("[Server thread/INFO]: Automatic saving is now enabled")
+		return false
 	case "save-all flush", "save-all":
 		fmt.Println("[Server thread/INFO]: Saving the game (this may take a moment!)")
 		fmt.Println("[Server thread/INFO]: Saved the game")

@@ -41,6 +41,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1356,4 +1357,35 @@ func TestIntegration_LiveSyncAfterCleanStop_RemoteHasSyncedState(t *testing.T) {
 		"clean stop — region files should persist on remote")
 	ritual.assertManifestUnlocked(t,
 		"lock should be cleared after clean stop with live sync")
+}
+
+func TestIntegration_ServerBecomesReady_AutosavesDisabled(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorldWithShortHeartbeat(t, ritual,
+		file("world/level.dat", []byte("level data")),
+	)
+
+	ch, unsub := ritual.bus.Subscribe()
+	defer unsub()
+
+	ritual.startRitualWithLiveSync(t)
+
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			ritual.sendStop()
+			t.Fatal("timed out waiting for save-off confirmation — autosaves should be disabled when server becomes ready")
+		case e, ok := <-ch:
+			if !ok {
+				t.Fatal("event channel closed while waiting for save-off confirmation")
+			}
+			if out, ok := e.(ports.ServerOutputInfo); ok && strings.Contains(out.Line, "Automatic saving is now disabled") {
+				ritual.sendStop()
+				waitForIntegrationStatus(t, ch, app.Failed, 10*time.Second)
+				return
+			}
+		}
+	}
 }

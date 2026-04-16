@@ -49,7 +49,12 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 
 	outCh := make(chan string, 64)
 	go scanOutput(outR, outCh, rs.Bus)
-	go s.waitReady(ctx, rs.Bus)
+	go func() {
+		if err := s.readiness.Wait(ctx); err == nil {
+			io.WriteString(stdinW, "save-off\n")
+			publish(rs.Bus, ports.ServerReadyInfo{})
+		}
+	}()
 	go listenCommands(ctx, stdinW, outCh, rs.Bus)
 
 	publish(rs.Bus, ports.ServerStartingInfo{})
@@ -66,12 +71,6 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 	publish(rs.Bus, ports.ServerStoppedInfo{})
 	publish(rs.Bus, ports.FinishInfo{Operation: "server"})
 	return s.onNext, nil
-}
-
-func (s *Strategy) waitReady(ctx context.Context, bus ports.EventBus) {
-	if err := s.readiness.Wait(ctx); err == nil {
-		publish(bus, ports.ServerReadyInfo{})
-	}
 }
 
 func scanOutput(r io.Reader, outCh chan<- string, bus ports.EventBus) {
@@ -99,9 +98,6 @@ func listenCommands(ctx context.Context, stdin io.WriteCloser, outCh <-chan stri
 		case e, ok := <-ch:
 			if !ok {
 				return
-			}
-			if _, ok := e.(ports.ServerReadyInfo); ok {
-				io.WriteString(stdin, "save-off\n")
 			}
 			if _, ok := e.(ports.SaveRequested); ok {
 				io.WriteString(stdin, "save-all flush\n")
