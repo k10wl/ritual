@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"testing"
 	"time"
@@ -94,4 +95,121 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 	waitForStatus(t, ch, app.Done, 5*time.Second)
 
 	assert.True(t, true, "pipeline reached Done")
+}
+
+// --- failOnceUpdater ---
+
+type failOnceUpdater struct {
+	calls int
+}
+
+func (f *failOnceUpdater) Run(_ context.Context) error {
+	f.calls++
+	if f.calls == 1 {
+		return fmt.Errorf("network timeout")
+	}
+	return nil
+}
+
+func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
+	bus := adapters.NewEventBus(128)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	flaky := &failOnceUpdater{}
+	r := app.New(
+		bus,
+		fakeStorage{}, fakeStorage{},
+		fakeManifestStore{}, fakeManifestStore{},
+		[]ports.ConditionService{noopCondition{}},
+		[]ports.UpdaterService{flaky},
+		[]ports.UpdaterService{noopUpdater{}},
+		[]ports.RetentionService{noopRetention{}},
+		fakeCmdBuilder{},
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.Listen(ctx)
+	time.Sleep(20 * time.Millisecond)
+
+	bus.Publish(app.StartRequested{})
+	waitForStatus(t, ch, app.Failed, 5*time.Second)
+
+	bus.Publish(app.RetryRequested{})
+	waitForStatus(t, ch, app.Done, 5*time.Second)
+
+	assert.Equal(t, 2, flaky.calls, "updater called twice: fail + retry")
+}
+
+// --- blockingCmdBuilder ---
+
+type blockingCmdBuilder struct {
+	ready chan struct{}
+}
+
+func (b *blockingCmdBuilder) Build(ctx context.Context) (*exec.Cmd, error) {
+	close(b.ready)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestRitual_Stop_CancelsRunning(t *testing.T) {
+	bus := adapters.NewEventBus(128)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	blocker := &blockingCmdBuilder{ready: make(chan struct{})}
+	r := app.New(
+		bus,
+		fakeStorage{}, fakeStorage{},
+		fakeManifestStore{}, fakeManifestStore{},
+		nil, nil, nil, nil,
+		blocker,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.Listen(ctx)
+	time.Sleep(20 * time.Millisecond)
+
+	bus.Publish(app.StartRequested{})
+	<-blocker.ready
+
+	bus.Publish(app.StopRequested{})
+	waitForStatus(t, ch, app.Failed, 5*time.Second)
+}
+
+func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
+	bus := adapters.NewEventBus(128)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	r := app.New(
+		bus,
+		fakeStorage{}, fakeStorage{},
+		fakeManifestStore{}, fakeManifestStore{},
+		nil, nil, nil, nil,
+		fakeCmdBuilder{},
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.Listen(ctx)
+	time.Sleep(20 * time.Millisecond)
+
+	bus.Publish(app.RetryRequested{})
+
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case <-deadline:
+			return // no crash, acceptable
+		case e := <-ch:
+			if sc, ok := e.(app.StatusChanged); ok && sc.Err != nil {
+				assert.Contains(t, sc.Err.Error(), "cannot retry")
+				return
+			}
+		}
+	}
 }

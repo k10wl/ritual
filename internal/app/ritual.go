@@ -109,12 +109,14 @@ func (r *Ritual) start(ctx context.Context) {
 	runState := &ritual.RunState{RunID: runID, Bus: r.bus}
 	r.runner = ritual.NewRunner(runState)
 
-	err := r.runner.Run(ctx, r.entry)
-	if err != nil {
-		r.setStatus(Failed)
-		return
-	}
-	r.setStatus(Done)
+	go func() {
+		err := r.runner.Run(ctx, r.entry)
+		if err != nil || ctx.Err() != nil {
+			r.setStatus(Failed)
+			return
+		}
+		r.setStatus(Done)
+	}()
 }
 
 func (r *Ritual) stop() {
@@ -135,12 +137,14 @@ func (r *Ritual) retry(ctx context.Context) {
 	ctx, r.cancel = context.WithCancel(ctx)
 
 	r.runner.RunState().Err = nil
-	err := r.runner.RunCurrent(ctx)
-	if err != nil {
-		r.setStatus(Failed)
-		return
-	}
-	r.setStatus(Done)
+	go func() {
+		err := r.runner.RunCurrent(ctx)
+		if err != nil || ctx.Err() != nil {
+			r.setStatus(Failed)
+			return
+		}
+		r.setStatus(Done)
+	}()
 }
 
 func (r *Ritual) setStatus(status Outcome) {
