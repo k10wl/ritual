@@ -1,0 +1,189 @@
+version: '3'
+
+includes:
+  common: ./build/Taskfile.yml
+  windows: ./build/windows/Taskfile.yml
+  darwin: ./build/darwin/Taskfile.yml
+  linux: ./build/linux/Taskfile.yml
+
+vars:
+  APP_NAME: "ritual"
+  BIN_DIR: "bin"
+  MAIN_PKG: "./cmd/gui"
+  VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+
+tasks:
+  # --- GUI (cmd/gui, real backend) ----------------------------------------
+  gui:build:
+    desc: Build GUI binary for host OS (bin/ritual[.exe]).
+    deps: [gui:assets]
+    cmds:
+      - task: "{{OS}}:build"
+
+  gui:run:
+    desc: Run last-built GUI binary.
+    cmds:
+      - task: "{{OS}}:run"
+
+  gui:dev:
+    desc: GUI dev mode — vite hot-reload + wails3 webview.
+    deps: [gui:assets]
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
+  gui:package:
+    desc: Package GUI for distribution (NSIS on win, .app on mac).
+    deps: [gui:assets]
+    cmds:
+      - task: "{{OS}}:package"
+
+  gui:assets:
+    desc: Regenerate GUI assets from assets/baiki-dev.ico (favicon, .icns).
+    sources:
+      - assets/baiki-dev.ico
+    generates:
+      - frontend/public/favicon.ico
+      - build/darwin/icons.icns
+    cmds:
+      - cmd: cp assets/baiki-dev.ico frontend/public/favicon.ico
+        platforms: [linux, darwin]
+      - cmd: powershell -NoProfile -Command "Copy-Item assets\baiki-dev.ico frontend\public\favicon.ico -Force"
+        platforms: [windows]
+      - cmd: sips -s format icns assets/baiki-dev.ico --out build/darwin/icons.icns
+        platforms: [darwin]
+
+  # --- CLI (cmd/cli, host-native) -----------------------------------------
+  cli:build:
+    desc: Build CLI (ENV=dev|prod). Reads R2 creds from .env.{ENV}.local.
+    vars:
+      ENV: '{{.ENV | default "dev"}}'
+      ARCH: '{{.ARCH | default ARCH}}'
+      OUT: '{{.BIN_DIR}}/ritual_{{.ENV}}{{exeExt}}'
+    dotenv:
+      - '.env.{{.ENV}}.local'
+    preconditions:
+      - sh: '[ -n "$R2_ACCOUNT_ID" ]'
+        msg: "R2_ACCOUNT_ID missing from .env.{{.ENV}}.local"
+      - sh: '[ -n "$R2_ACCESS_KEY_ID" ]'
+        msg: "R2_ACCESS_KEY_ID missing from .env.{{.ENV}}.local"
+      - sh: '[ -n "$R2_SECRET_ACCESS_KEY" ]'
+        msg: "R2_SECRET_ACCESS_KEY missing from .env.{{.ENV}}.local"
+      - sh: '[ -n "$R2_BUCKET_NAME" ]'
+        msg: "R2_BUCKET_NAME missing from .env.{{.ENV}}.local"
+    cmds:
+      - task: cli:build:syso
+        vars:
+          ENV: '{{.ENV}}'
+          ARCH: '{{.ARCH}}'
+      - cmd: >-
+          go build
+          -ldflags "-X main.envAccountID=$R2_ACCOUNT_ID
+          -X main.envAccessKeyID=$R2_ACCESS_KEY_ID
+          -X main.envSecretAccessKey=$R2_SECRET_ACCESS_KEY
+          -X main.envBucket=$R2_BUCKET_NAME
+          -X ritual/internal/config.AppName=$APP_NAME"
+          -o {{.OUT}} ./cmd/cli
+      - cmd: rm -f cmd/cli/ritual_cli.syso cmd/cli/info.json
+        platforms: [linux, darwin]
+      - cmd: powershell -NoProfile -Command "Remove-Item cmd/cli/ritual_cli.syso, cmd/cli/info.json -ErrorAction SilentlyContinue"
+        platforms: [windows]
+
+  cli:build:syso:
+    internal: true
+    vars:
+      ENV: '{{.ENV | default "dev"}}'
+      ARCH: '{{.ARCH | default ARCH}}'
+    cmds:
+      - cmd: go run ./cmd/genversioninfo cmd/cli/info.json
+        platforms: [windows]
+      - cmd: wails3 generate syso -arch {{.ARCH}} -icon assets/baiki-{{.ENV}}.ico -info cmd/cli/info.json -out cmd/cli/ritual_cli.syso
+        platforms: [windows]
+
+  cli:build:dev:
+    desc: Build CLI dev binary (bin/ritual_dev[.exe]).
+    cmds:
+      - task: cli:build
+        vars:
+          ENV: dev
+
+  cli:build:prod:
+    desc: Build CLI prod binary (bin/ritual_prod[.exe]).
+    cmds:
+      - task: cli:build
+        vars:
+          ENV: prod
+
+  cli:dev:
+    desc: Build + run CLI dev binary.
+    cmds:
+      - task: cli:build:dev
+      - '{{.BIN_DIR}}/ritual_dev{{exeExt}}'
+
+  cli:prod:
+    desc: Build + run CLI prod binary.
+    cmds:
+      - task: cli:build:prod
+      - '{{.BIN_DIR}}/ritual_prod{{exeExt}}'
+
+  # --- Tests --------------------------------------------------------------
+  test:
+    desc: Run testhelpers first (critical fixtures), then the rest.
+    cmds:
+      - task: test:helpers
+      - task: test:unit
+
+  test:helpers:
+    desc: Run internal/testhelpers fixture tests.
+    cmds:
+      - go test ./internal/testhelpers/...
+
+  test:unit:
+    desc: Run Go unit tests (excluding testhelpers).
+    cmds:
+      - cmd: go test $(go list ./... | grep -v /internal/testhelpers)
+        platforms: [linux, darwin]
+      - cmd: powershell -NoProfile -Command "go test (go list ./... | Where-Object { $_ -notmatch '/internal/testhelpers' })"
+        platforms: [windows]
+
+  test:race:
+    desc: Run unit tests with race detector.
+    cmds:
+      - cmd: go test -race $(go list ./... | grep -v /internal/testhelpers)
+        platforms: [linux, darwin]
+      - cmd: powershell -NoProfile -Command "go test -race (go list ./... | Where-Object { $_ -notmatch '/internal/testhelpers' })"
+        platforms: [windows]
+
+  # --- Aliases (wails3 template convention) -------------------------------
+  build:
+    desc: Alias for gui:build.
+    cmds:
+      - task: gui:build
+  run:
+    desc: Alias for gui:run.
+    cmds:
+      - task: gui:run
+  dev:
+    desc: Alias for gui:dev.
+    cmds:
+      - task: gui:dev
+  package:
+    desc: Alias for gui:package.
+    cmds:
+      - task: gui:package
+
+  # --- Docker / server mode (wails3 template, broken on darwin alpha.74) --
+  build:server:
+    cmds:
+      - task: common:build:server
+  run:server:
+    cmds:
+      - task: common:run:server
+  build:docker:
+    cmds:
+      - task: common:build:docker
+  run:docker:
+    cmds:
+      - task: common:run:docker
+  setup:docker:
+    cmds:
+      - task: common:setup:docker

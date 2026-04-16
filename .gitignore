@@ -48,3 +48,15 @@ Thumbs.db
 cmd/cli/versioninfo.json
 
 nul.gocache/
+
+# Wails3 — generated artifacts
+.task
+bin
+frontend/node_modules
+frontend/bindings
+frontend/public/favicon.ico
+build/darwin/icons.icns
+build/windows/info.json
+build/linux/appimage/build
+build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+

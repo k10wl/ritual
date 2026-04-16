@@ -79,32 +79,90 @@ R.I.T.U.A.L. follows a structured ritualistic workflow:
 
 ## Setup & Configuration
 
+Target platform is **Windows**. macOS is supported as a dev-iteration host only.
+
+### Prerequisites
+
+#### All platforms
+
+| Tool | Version | Purpose |
+|------|---------|---------|
+| [Go](https://go.dev/dl/) | 1.25+ | Compiler |
+| [Node.js](https://nodejs.org/) | 18+ | GUI frontend (npm + vite) |
+| [Task](https://taskfile.dev) | v3 | Build/test task runner (`Taskfile.yml`) |
+| [Wails3 CLI](https://v3.wails.io) | v3.0.0-alpha.74 | GUI build + bindings generator |
+
+Cross-platform installs for the two Go-based tools:
+
+```bash
+go install github.com/go-task/task/v3/cmd/task@latest
+go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74
+```
+
+#### Windows (target)
+
+- WebView2 runtime (preinstalled on Windows 10/11; otherwise NSIS installer bootstraps it)
+- PowerShell 5.1+
+- Task: `winget install Task.Task` (or `scoop install task`, or `choco install go-task`, or `go install` as above)
+- Wails3 CLI: `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74`
+- (Optional, for installer) [NSIS](https://nsis.sourceforge.io/Download)
+
+#### macOS (dev only)
+
+- Xcode Command Line Tools: `xcode-select --install` (needed for CGO + WKWebView)
+- `brew install go node`
+- Task: `brew install go-task/tap/go-task` (or `go install` as above)
+- Wails3 CLI: `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74`
+
+Verify each after install:
+
+```bash
+go version             # go1.25+
+node --version         # v18+
+task --version         # v3.x
+wails3 version         # v3.0.0-alpha.74
+```
+
 ### Environment Configuration
 
-Create environment configuration files:
+Copy `.env.example` to `.env.dev.local` / `.env.prod.local` (gitignored):
 
-• **Copy `.env.example` to `.env`**
-• **Configure R2 storage credentials**
+| Var | Purpose |
+|-----|---------|
+| `R2_ACCOUNT_ID` | Cloudflare R2 Account ID |
+| `R2_ACCESS_KEY_ID` | Cloudflare R2 Access Key ID |
+| `R2_SECRET_ACCESS_KEY` | Cloudflare R2 Secret Access Key |
+| `R2_BUCKET_NAME` | R2 Bucket Name |
+| `APP_NAME` | `ritualdev` (dev) or `ritual` (prod) — sets the user-data folder |
 
-Required environment variables:
-- `R2_ACCOUNT_ID` - Cloudflare R2 Account ID
-- `R2_ACCESS_KEY_ID` - Cloudflare R2 Access Key ID  
-- `R2_SECRET_ACCESS_KEY` - Cloudflare R2 Secret Access Key
-- `R2_BUCKET_NAME` - R2 Bucket Name
+Values are injected at build time via `ldflags` (no runtime `.env` reads).
 
 ### Quick Start
 
-1. Clone repository
-2. Copy `.env.example` to `.env`
-3. Fill in R2 credentials
-4. Run `go mod tidy`
-5. Execute `go run cmd/cli/main.go`
+```bash
+# 1. clone + install deps
+git clone <repo>
+cd ritual
+go mod tidy
+
+# 2. build CLI (host-native — .exe on Windows, unsuffixed on mac/linux)
+task cli:build:dev              # → bin/ritual_dev[.exe]
+task cli:build:prod             # → bin/ritual_prod[.exe]
+
+# 3. build GUI (Windows target)
+task build                      # → bin/ritual.exe
+task dev                        # dev mode with hot-reload
+```
+
+See [docs/taskfile.md](docs/taskfile.md) for the full task reference.
 
 ## Documentation
 
 ### Project Documentation
 - **[Architecture Overview](docs/overview.md)** - High-level system architecture and components
 - **[Project Structure](docs/structure.md)** - Detailed directory structure and component descriptions
+- **[Taskfile Reference](docs/taskfile.md)** - Build, dev, and CLI task usage for Windows & macOS
+- **[Build Process](docs/build.md)** - Environment files, version management, icon sources
 - **[Defensive Programming Standards](docs/coding-practices.md)** - NASA JPL Power of Ten compliance guidelines
 - **[Sprint Tracker](docs/progress.md)** - Development progress and sprint planning
 - **[Architecture Diagrams](docs/ritual.drawio)** - Visual system architecture diagrams

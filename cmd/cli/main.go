@@ -1,7 +1,5 @@
 package main
 
-//go:generate goversioninfo
-
 import (
 	"bufio"
 	"context"
