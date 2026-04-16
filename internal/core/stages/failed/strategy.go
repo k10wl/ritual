@@ -16,20 +16,36 @@ import (
 // constructed, one per origin stage, so the event accurately names the
 // source of the failure.
 type Strategy struct {
-	from string
+	from    string
+	onRetry machine.Strategy[ritual.RunState]
+	fired   bool
 }
 
 // New creates a Failed strategy that reports from the given origin stage.
 // Use one instance per origin (e.g. failed.New(ritual.StagePreparing)).
 func New(from string) *Strategy { return &Strategy{from: from} }
 
+// SetRetry wires the back-edge for retry. Called after the full chain
+// is constructed to break the circular dependency.
+func (s *Strategy) SetRetry(target machine.Strategy[ritual.RunState]) {
+	s.onRetry = target
+}
+
 func (*Strategy) Name() string { return ritual.StageFailed }
 
 func (s *Strategy) Run(_ context.Context, rs *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
+	// Retry path: already fired once, error cleared, follow back-edge
+	if s.fired && rs.Err == nil && s.onRetry != nil {
+		s.fired = false
+		return s.onRetry, nil
+	}
+
 	err := rs.Err
 	if err == nil {
 		err = errors.New("failed without recorded error")
 	}
+	rs.FailedStage = s.from
+	s.fired = true
 	publish(rs.Bus, ports.StateFailedInfo{State: s.from, RunID: rs.RunID, Err: err})
 	return nil, err
 }
