@@ -1376,10 +1376,10 @@ func TestIntegration_ServerBecomesReady_AutosavesDisabled(t *testing.T) {
 		select {
 		case <-deadline:
 			ritual.sendStop()
-			t.Fatal("timed out waiting for save-off confirmation — autosaves should be disabled when server becomes ready")
+			t.Fatal("timed out waiting for save-off — autosaves should be disabled when server becomes ready")
 		case e, ok := <-ch:
 			if !ok {
-				t.Fatal("event channel closed while waiting for save-off confirmation")
+				t.Fatal("event channel closed while waiting for save-off")
 			}
 			if out, ok := e.(ports.ServerOutputInfo); ok && strings.Contains(out.Line, "Automatic saving is now disabled") {
 				ritual.sendStop()
