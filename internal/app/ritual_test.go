@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func (noopRetention) Apply(_ context.Context) error { return nil }
 
 type fakeCmdBuilder struct{}
 
-func (fakeCmdBuilder) Build(_ context.Context) (*exec.Cmd, error) {
+func (fakeCmdBuilder) Build(_ context.Context, _ io.Reader, _ io.Writer) (*exec.Cmd, error) {
 	return exec.Command("echo", "ok"), nil
 }
 
@@ -84,6 +85,7 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 		[]ports.RetentionService{noopRetention{}},
 		nil,
 		fakeCmdBuilder{},
+		immediateReady{},
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -128,6 +130,7 @@ func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 		[]ports.RetentionService{noopRetention{}},
 		nil,
 		fakeCmdBuilder{},
+		immediateReady{},
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -150,7 +153,7 @@ type blockingCmdBuilder struct {
 	ready chan struct{}
 }
 
-func (b *blockingCmdBuilder) Build(ctx context.Context) (*exec.Cmd, error) {
+func (b *blockingCmdBuilder) Build(ctx context.Context, _ io.Reader, _ io.Writer) (*exec.Cmd, error) {
 	close(b.ready)
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -168,6 +171,7 @@ func TestRitual_Stop_CancelsRunning(t *testing.T) {
 		fakeManifestStore{}, fakeManifestStore{},
 		nil, nil, nil, nil, nil,
 		blocker,
+		immediateReady{},
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -193,6 +197,7 @@ func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
 		fakeManifestStore{}, fakeManifestStore{},
 		nil, nil, nil, nil, nil,
 		fakeCmdBuilder{},
+		immediateReady{},
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())

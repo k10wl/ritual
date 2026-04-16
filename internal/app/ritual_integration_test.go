@@ -41,6 +41,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -220,14 +221,32 @@ type fakeServerCmdBuilder struct {
 	server *fakeServer
 }
 
-func (b *fakeServerCmdBuilder) Build(ctx context.Context) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, b.server.binary, "--root", b.server.root)
-	pr, pw := io.Pipe()
-	cmd.Stdin = pr
-	cmd.Stderr = os.Stderr
-	b.server.stdin = pw
+func (b *fakeServerCmdBuilder) Build(_ context.Context, stdin io.Reader, stdout io.Writer) (*exec.Cmd, error) {
+	testR, testW := io.Pipe()
+	b.server.stdin = testW
+
+	// Merge stdin from running stage and test-controlled pipe into one reader.
+	mergedR, mergedW := io.Pipe()
+	go func() {
+		defer mergedW.Close()
+		var wg sync.WaitGroup
+		wg.Add(2)
+		copy := func(r io.Reader) { defer wg.Done(); io.Copy(mergedW, r) }
+		go copy(stdin)
+		go copy(testR)
+		wg.Wait()
+	}()
+
+	cmd := exec.Command(b.server.binary, "--root", b.server.root)
+	cmd.Stdin = mergedR
+	cmd.Stdout = stdout
+	cmd.Stderr = stdout
 	return cmd, nil
 }
+
+type immediateReady struct{}
+
+func (immediateReady) Wait(_ context.Context) error { return nil }
 
 // ---------- startRitual ----------
 
@@ -275,6 +294,7 @@ func (r *testRitual) startRitualFull(t *testing.T, conditions []ports.ConditionS
 		nil,
 		scanner,
 		cmdBuilder,
+		immediateReady{},
 	)
 
 	go ritual.Listen(r.ctx)
@@ -493,6 +513,7 @@ func (r *testRitual) startRitualWithRetention(t *testing.T) *fakeServer {
 		[]ports.RetentionService{localRetention, remoteRetention},
 		worldScanner,
 		cmdBuilder,
+		immediateReady{},
 	)
 
 	go rit.Listen(r.ctx)
@@ -884,6 +905,7 @@ func (r *testRitual) startRitualWithFlakyUpdater(t *testing.T, flaky ports.Updat
 		[]ports.UpdaterService{flaky},
 		nil, nil, nil,
 		cmdBuilder,
+		immediateReady{},
 	)
 
 	go rit.Listen(r.ctx)

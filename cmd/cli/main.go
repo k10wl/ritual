@@ -124,6 +124,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("cmd builder: %w", err)
 	}
+	readiness := adapters.NewTCPReadinessCheck(fmt.Sprintf("localhost:%d", settings.Port))
 
 	// --- Ritual: build once, listen for commands ---
 	r := app.New(
@@ -133,6 +134,7 @@ func run(ctx context.Context) error {
 		conds, sk.Updaters, sk.ExitUpdaters, rets,
 		sk.WorldScanner,
 		cmdBuilder,
+		readiness,
 	)
 
 	// Wait for terminal status via bus
