@@ -12,11 +12,13 @@ type Manifest struct {
 	RitualVersion   string    `json:"ritual_version"`
 	LockedBy        string    `json:"locked_by"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	HeartbeatAt     time.Time `json:"heartbeat_at,omitzero"`
 
 	MinRAMMB       int `json:"min_ram_mb"`
 	MinDiskMB      int `json:"min_disk_mb"`
 	MinJavaVersion int `json:"min_java_version"`
 
+	Lease           LeaseSettings  `json:"lease"`
 	Worlds          WorldsManifest `json:"worlds"`
 	Server          ServerManifest `json:"server"`
 	RemoteRetention RetentionRules `json:"remote_retention"`
@@ -50,9 +52,11 @@ func (m *Manifest) Clone() *Manifest {
 		RitualVersion:   m.RitualVersion,
 		LockedBy:        m.LockedBy,
 		UpdatedAt:       time.Now(),
+		HeartbeatAt:     m.HeartbeatAt,
 		MinRAMMB:        m.MinRAMMB,
 		MinDiskMB:       m.MinDiskMB,
 		MinJavaVersion:  m.MinJavaVersion,
+		Lease:           m.Lease,
 		Worlds: WorldsManifest{
 			SyncState: SyncState{
 				XXHashSyncAt: m.Worlds.XXHashSyncAt,
@@ -122,6 +126,22 @@ func (m *Manifest) ApplyDefaults() {
 	if m.RemoteRetention == (RetentionRules{}) {
 		m.RemoteRetention = DefaultRetentionRules()
 	}
+	if m.Lease.HeartbeatInterval == 0 {
+		m.Lease.HeartbeatInterval = Duration(config.DefaultHeartbeatInterval)
+	}
+	if m.Lease.TTL == 0 {
+		m.Lease.TTL = Duration(config.DefaultLeaseTTL)
+	}
+}
+
+// IsLeaseActive reports whether the lock is held by a still-living client
+// per lease TTL. A stale lease (no heartbeat within TTL) is considered
+// free for takeover by the next Acquiring.
+func (m *Manifest) IsLeaseActive(now time.Time) bool {
+	if m.LockedBy == "" {
+		return false
+	}
+	return now.Sub(m.HeartbeatAt) < time.Duration(m.Lease.TTL)
 }
 
 // UnmarshalJSON decodes a Manifest and applies domain defaults as the last

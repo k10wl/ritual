@@ -6,21 +6,30 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
-	"path/filepath"
-	"sync"
 	"time"
 
 	"ritual/internal/adapters"
 	"ritual/internal/config"
-	"ritual/internal/core/domain"
-	"ritual/internal/core/ports"
+	"ritual/internal/core/ritual"
 	"ritual/internal/core/services"
-	"ritual/internal/core/statemachine"
+	"ritual/internal/core/stages/acquiring"
+	"ritual/internal/core/stages/archiving"
+	"ritual/internal/core/stages/checking"
+	"ritual/internal/core/stages/failed"
+	"ritual/internal/core/stages/fetching"
+	"ritual/internal/core/stages/publishing"
+	"ritual/internal/core/stages/retaining"
+	"ritual/internal/core/stages/running"
+	"ritual/internal/core/stages/unlocking"
+	"ritual/internal/subsystems/conditions"
+	"ritual/internal/subsystems/heartbeat"
+	"ritual/internal/subsystems/logging"
+	"ritual/internal/subsystems/prompt"
+	"ritual/internal/subsystems/retention"
+	synckit "ritual/internal/subsystems/sync"
 )
 
-// Injected at build time via ldflags
 var (
 	envAccountID       string
 	envAccessKeyID     string
@@ -29,11 +38,9 @@ var (
 )
 
 func main() {
-	// Handle update process flags (--replace-old, --cleanup-update)
 	if services.HandleUpdateProcess() {
 		return
 	}
-
 	success := false
 	defer func() {
 		if !success {
@@ -41,334 +48,105 @@ func main() {
 			bufio.NewReader(os.Stdin).ReadBytes('\n')
 		}
 	}()
+	if err := run(); err != nil {
+		fmt.Printf("Ritual failed: %v\n", err)
+		return
+	}
+	success = true
+}
 
+func run() error {
 	if envAccountID == "" || envAccessKeyID == "" || envSecretAccessKey == "" || envBucket == "" {
-		fmt.Println("Build error: R2 credentials not injected")
-		return
+		return fmt.Errorf("build error: R2 credentials not injected")
 	}
-
-	// Ensure root directory exists
 	if err := os.MkdirAll(config.RootPath, config.DirPermission); err != nil {
-		fmt.Printf("Failed to create root directory: %v\n", err)
-		return
+		return fmt.Errorf("create root: %w", err)
 	}
-
-	// Open work root
 	workRoot, err := os.OpenRoot(config.RootPath)
 	if err != nil {
-		fmt.Printf("Failed to open work root: %v\n", err)
-		return
+		return fmt.Errorf("open root: %w", err)
 	}
 	defer workRoot.Close()
 
-	// Create log file
-	logFile, logCleanup, err := createLogFile(workRoot)
+	logFile, logCleanup, err := logging.CreateLogFile(workRoot)
 	if err != nil {
-		fmt.Printf("Warning: failed to create log file: %v\n", err)
-		// Continue without logging to file
+		fmt.Printf("Warning: log file: %v\n", err)
 	}
 	if logCleanup != nil {
 		defer logCleanup()
 	}
 
-	// Create event bus + stdin prompter; start consumer subscription.
 	bus := adapters.NewEventBus(128)
-	prompter := newStdinPrompter(os.Stdin, os.Stdout)
-	busCh, cancelSub := bus.Subscribe()
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		consumeEvents(busCh, logFile)
-	}()
+	stopLog := logging.Attach(bus, logFile)
+	defer stopLog()
 
-	// Backwards-compat alias for callers still taking an events bus parameter.
-	events := bus
+	prompter := prompt.NewStdin(os.Stdin, os.Stdout)
 
-	// shutdown waits for the consumer to drain before returning.
-	shutdown := func() {
-		cancelSub()
-		wg.Wait()
-	}
-	_ = prompter // wired into services during state-machine cutover
-	_ = shutdown // used by error paths below
-
-	// Create local storage
 	localStorage, err := adapters.NewFSRepository(workRoot)
 	if err != nil {
-		fmt.Printf("Failed to create local storage: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
+		return fmt.Errorf("local storage: %w", err)
 	}
-
-	// Create remote storage (R2)
-	remoteStorage, err := adapters.NewR2Repository(envBucket, envAccountID, envAccessKeyID, envSecretAccessKey, events)
+	remoteStorage, err := adapters.NewR2Repository(envBucket, envAccountID, envAccessKeyID, envSecretAccessKey, bus)
 	if err != nil {
-		fmt.Printf("Failed to create remote storage: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
+		return fmt.Errorf("remote storage: %w", err)
 	}
-
-	// ManifestStore, two sides.
 	localManifests := adapters.NewManifestStore(localStorage)
 	remoteManifests := adapters.NewManifestStore(remoteStorage)
 
-	// Create updaters (ritual updater first - must self-update before anything else)
-	ritualUpdater, err := services.NewRitualUpdater(localManifests, remoteManifests, remoteStorage, config.AppVersion)
+	_, stopHeartbeat := heartbeat.Attach(bus, remoteManifests)
+	defer stopHeartbeat()
+
+	remoteManifest, err := remoteManifests.Get(context.Background())
 	if err != nil {
-		fmt.Printf("Failed to create ritual updater: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
+		return fmt.Errorf("get remote manifest: %w", err)
 	}
 
-	// Generate sync session ID (same format as lock ID for traceability)
-	hostname, _ := os.Hostname()
-	syncSessionID := fmt.Sprintf("%s%s%d", hostname, config.LockIDSeparator, time.Now().UnixNano())
-
-	// Staging bases
-	localStagingBase := filepath.Join(config.TempRitualPath(), fmt.Sprintf(config.SyncStagingPattern, time.Now().UnixNano()))
-	remoteStagingBase := "sync/" + syncSessionID
-
-	// Scanners — use fs.Sub for scoped FS per target
-	worldsPath := filepath.Join(config.RootPath, config.WorldsDir)
-	serverPath := filepath.Join(config.RootPath, config.ServerDir)
-
-	// Ensure directories exist
-	os.MkdirAll(worldsPath, config.DirPermission)
-	os.MkdirAll(serverPath, config.DirPermission)
-
-	worldsFS, _ := fs.Sub(workRoot.FS(), config.WorldsDir)
-	serverFS, _ := fs.Sub(workRoot.FS(), config.ServerDir)
-
-	// Parse .ritualsync filters
-	worldsFilter, err := adapters.ParseRitualSync(worldsFS)
+	sk, err := synckit.Build(workRoot, localStorage, remoteStorage, localManifests, remoteManifests, bus)
 	if err != nil {
-		fmt.Printf("Failed to parse worlds .ritualsync: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
+		return fmt.Errorf("sync: %w", err)
 	}
-	serverFilter, err := adapters.ParseRitualSync(serverFS)
+	conds, err := conditions.Build(remoteManifest, remoteManifests)
 	if err != nil {
-		fmt.Printf("Failed to parse server .ritualsync: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
+		return fmt.Errorf("conditions: %w", err)
 	}
-
-	// World scanner: MtimeScanner if previous hash map exists, FullScanner otherwise
-	var worldInnerScanner ports.DirectoryScanner
-	localManifestForScanner, scannerManifestErr := localManifests.Get(context.Background())
-	if scannerManifestErr == nil && localManifestForScanner != nil && len(localManifestForScanner.Worlds.XXHashMap) > 0 {
-		mtimeScanner, err := adapters.NewMtimeScanner(worldsPath, localManifestForScanner.Worlds.XXHashSyncAt, localManifestForScanner.Worlds.XXHashMap)
-		if err != nil {
-			fmt.Printf("Failed to create mtime scanner, falling back to full: %v\n", err)
-			worldInnerScanner = adapters.NewFullScanner(worldsFS)
-		} else {
-			worldInnerScanner = mtimeScanner
-		}
-	} else {
-		worldInnerScanner = adapters.NewFullScanner(worldsFS)
-	}
-	worldScanner := adapters.NewFilteredScanner(worldInnerScanner, worldsFilter)
-
-	// Server scanner: always FullScanner (small file count)
-	serverScanner := adapters.NewFilteredScanner(adapters.NewFullScanner(serverFS), serverFilter)
-
-	// Two sync services — same code, different config.
-	// remoteStorage already retries on transient errors (inline in R2Repository).
-	worldSync := services.NewSyncService(
-		worldScanner, localStorage, remoteStorage, events,
-		services.SyncConfig{Prefix: config.WorldsDir, LocalDir: worldsPath},
-		filepath.Join(localStagingBase, config.WorldsDir),
-		remoteStagingBase+"/"+config.WorldsDir,
-	)
-	serverSync := services.NewSyncService(
-		serverScanner, localStorage, remoteStorage, events,
-		services.SyncConfig{Prefix: config.ServerDir, LocalDir: serverPath},
-		filepath.Join(localStagingBase, config.ServerDir),
-		remoteStagingBase+"/"+config.ServerDir,
-	)
-
-	// Updaters
-	worldSyncDownloader := services.NewSyncDownloadUpdater(worldSync, localManifests, remoteManifests, func(m *domain.Manifest) *domain.SyncState {
-		return &m.Worlds.SyncState
-	})
-	serverSyncDownloader := services.NewSyncDownloadUpdater(serverSync, localManifests, remoteManifests, func(m *domain.Manifest) *domain.SyncState {
-		return &m.Server.SyncState
-	})
-	updaters := []ports.UpdaterService{ritualUpdater, serverSyncDownloader, worldSyncDownloader}
-
-	// Create conditions (pre-flight checks before updaters run)
-	// Fetch remote manifest to get thresholds for conditions
-	remoteManifestForConditions, err := remoteManifests.Get(context.Background())
+	rets, err := retention.Build(localStorage, remoteStorage, bus, remoteManifest)
 	if err != nil {
-		fmt.Printf("Failed to get remote manifest for conditions: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
+		return fmt.Errorf("retention: %w", err)
 	}
 
-	// Create system info adapter for RAM and disk space checks
-	systemInfo := adapters.NewWindowsSystemInfo()
-
-	// Create Java info adapter for Java version check
-	javaInfo := adapters.NewJavaInfo()
-
-	// Create manifest lock condition
-	lockCondition, err := services.NewManifestLockCondition(remoteManifests)
+	executor := adapters.NewCommandExecutorAdapter()
+	serverRunner, err := adapters.NewServerRunner(config.RootPath, workRoot, remoteManifest.Server.StartScript, executor)
 	if err != nil {
-		fmt.Printf("Failed to create lock condition: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
+		return fmt.Errorf("server runner: %w", err)
 	}
-
-	// Create RAM condition
-	ramCondition, err := services.NewRAMCondition(remoteManifestForConditions.GetMinRAMMB(), systemInfo)
+	settings, err := services.PromptSettings(bus, prompter, remoteManifest.GetMinRAMMB())
 	if err != nil {
-		fmt.Printf("Failed to create RAM condition: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
+		return fmt.Errorf("settings: %w", err)
 	}
-
-	// Create disk space condition
-	diskCondition, err := services.NewDiskSpaceCondition(remoteManifestForConditions.GetMinDiskMB(), config.RootPath, systemInfo)
-	if err != nil {
-		fmt.Printf("Failed to create disk condition: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
-	}
-
-	// Create Java version condition
-	javaCondition, err := services.NewJavaVersionCondition(remoteManifestForConditions.GetMinJavaVersion(), javaInfo)
-	if err != nil {
-		fmt.Printf("Failed to create Java condition: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
-	}
-
-	conditions := []ports.ConditionService{lockCondition, ramCondition, diskCondition, javaCondition}
-
-	// Parse strategy chain (v2 dir + v1 tar compatibility)
-	parseBackupTimestamp := services.ChainStrategies(
-		services.ParseTimestampDir,
-		services.ParseTimestampTar,
-	)
-
-	// Load host settings for local retention rules
-	retentionSettings, err := domain.LoadSettings()
-	if err != nil {
-		fmt.Printf("Failed to load settings: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
-	}
-
-	// Apply defaults if zero
-	localRules := retentionSettings.LocalRetention
-	if localRules == (domain.RetentionRules{}) {
-		localRules = domain.DefaultRetentionRules()
-	}
-	remoteRules := remoteManifestForConditions.RemoteRetention
-	if remoteRules == (domain.RetentionRules{}) {
-		remoteRules = domain.DefaultRetentionRules()
-	}
-
-	// Generic retentions (local + R2) + log retention (unchanged)
-	localRetention, err := services.NewRetention(localStorage, localRules, config.BackupsDir, parseBackupTimestamp)
-	if err != nil {
-		fmt.Printf("Failed to create local retention: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
-	}
-	r2Retention, err := services.NewRetention(remoteStorage, remoteRules, config.BackupsDir, parseBackupTimestamp)
-	if err != nil {
-		fmt.Printf("Failed to create R2 retention: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
-	}
-	logRetention, err := services.NewLogRetention(localStorage, events)
-	if err != nil {
-		fmt.Printf("Failed to create log retention: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
-	}
-
-	retentions := []ports.RetentionService{localRetention, r2Retention, logRetention}
-
-	// Exit updaters — only worlds upload on exit
-	worldSyncUploader := services.NewSyncUploader(worldSync, localManifests, remoteManifests, func(m *domain.Manifest) *domain.SyncState {
-		return &m.Worlds.SyncState
-	})
-	exitUpdaters := []ports.UpdaterService{worldSyncUploader}
-
-	// Create server runner
-	commandExecutor := adapters.NewCommandExecutorAdapter()
-	serverRunner, err := adapters.NewServerRunner(config.RootPath, workRoot, remoteManifestForConditions.Server.StartScript, commandExecutor)
-	if err != nil {
-		fmt.Printf("Failed to create server runner: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
-	}
-
-	// Prompt for settings and create server config
-	// Pass min RAM from manifest so user can't enter less than required
-	settings, err := services.PromptSettings(bus, prompter, remoteManifestForConditions.GetMinRAMMB())
-	if err != nil {
-		fmt.Printf("Failed to get settings: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
-	}
-
 	server, err := settings.ToServerRuntime()
 	if err != nil {
-		fmt.Printf("Failed to create server config: %v\n", err)
-		shutdown()
-		wg.Wait()
-		return
+		return fmt.Errorf("server config: %w", err)
 	}
 
-	// Build state-machine Deps + factory, run lifecycle.
+	hostname, _ := os.Hostname()
 	runID := fmt.Sprintf("%s%s%d", hostname, config.LockIDSeparator, time.Now().UnixNano())
-	deps := statemachine.Deps{
-		Bus:             bus,
-		Prompter:        prompter,
-		RunID:           runID,
-		Server:          server,
-		LocalManifests:  localManifests,
-		RemoteManifests: remoteManifests,
-		LocalStore:      localStorage,
-		RemoteStore:     remoteStorage,
-		ServerRunner:    serverRunner,
-		Conditions:      conditions,
-		Updaters:        updaters,
-		ExitUpdaters:    exitUpdaters,
-		Retentions:      retentions,
-	}
-	factory := statemachine.NewFactory(deps)
-	machine := statemachine.NewMachine(factory.Preparing(), bus, factory.RunID())
+	rs := &ritual.RunState{RunID: runID, Bus: bus}
+
+	failCheck := failed.New(ritual.StageChecking)
+	failFetch := failed.New(ritual.StageFetching)
+	failAcq := failed.New(ritual.StageAcquiring)
+	failRet := failed.New(ritual.StageRetaining)
+
+	retain := retaining.New(rets, failRet)
+	unlock := unlocking.New(localManifests, remoteManifests, retain)
+	archive := archiving.New(localStorage, remoteStorage, localManifests, unlock)
+	publish := publishing.New(sk.ExitUpdaters, archive)
+	run := running.New(server, serverRunner, publish)
+	rollback := unlocking.New(localManifests, remoteManifests, failAcq)
+	acquire := acquiring.New(localManifests, remoteManifests, run, failAcq, rollback)
+	fetch := fetching.New(sk.Updaters, acquire, failFetch)
+	check := checking.New(conds, fetch, failCheck)
 
 	fmt.Println("Starting Ritual")
-	runErr := machine.Run(context.Background())
-	shutdown()
-	wg.Wait()
-
-	if runErr != nil {
-		fmt.Printf("Ritual failed: %v\n", runErr)
-		return
-	}
-	fmt.Println("Ritual completed successfully")
-	success = true
+	return ritual.Run(context.Background(), rs, check)
 }

@@ -1,6 +1,9 @@
 package ports
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Event is any fmt.Stringer. Open set, self-describing, compile-safe.
 //
@@ -58,6 +61,40 @@ type StateFailedInfo struct {
 }
 
 func (s StateFailedInfo) String() string { return fmt.Sprintf("failed in %s: %v", s.State, s.Err) }
+
+// LockAcquiredInfo is published by Acquiring once the remote lock is
+// taken. The heartbeat supervisor subscribes, starts a beat goroutine
+// for the run, and writes HeartbeatAt on Interval.
+type LockAcquiredInfo struct {
+	RunID    string
+	LockID   string
+	Interval time.Duration
+}
+
+func (l LockAcquiredInfo) String() string {
+	return fmt.Sprintf("lock acquired run=%s interval=%s", l.RunID, l.Interval)
+}
+
+// LockReleasedInfo is published by Unlocking after lock release. The
+// heartbeat supervisor stops its beat goroutine for the run.
+type LockReleasedInfo struct {
+	RunID string
+}
+
+func (l LockReleasedInfo) String() string { return fmt.Sprintf("lock released run=%s", l.RunID) }
+
+// LockLostInfo is published by the heartbeat supervisor when a beat
+// cycle discovers the manifest's LockedBy no longer matches this run,
+// meaning another client took over the stale lease. Locked-span stages
+// observe this event to cancel their work and short-circuit to Failed.
+type LockLostInfo struct {
+	RunID  string
+	Reason string
+}
+
+func (l LockLostInfo) String() string {
+	return fmt.Sprintf("lock lost run=%s reason=%s", l.RunID, l.Reason)
+}
 
 // RetryAttemptInfo is published by the R2 adapter on each retry attempt.
 // Key is the object key (or empty for ops that don't target a single key, e.g. List).

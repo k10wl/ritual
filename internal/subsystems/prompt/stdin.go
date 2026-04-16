@@ -1,4 +1,7 @@
-package main
+// Package prompt provides a stdin-backed implementation of
+// ports.Prompter for use by services.PromptSettings. Kept out of
+// cmd/cli so the composition root has one less concrete type.
+package prompt
 
 import (
 	"bufio"
@@ -10,15 +13,14 @@ import (
 	"ritual/internal/core/ports"
 )
 
-// stdinPrompter reads user input from stdin. Writes the prompt (with optional
-// default hint) to the provided writer; empty line or read error returns the
-// default, preserving the original consumer.handlePrompt semantics.
 type stdinPrompter struct {
 	in  *bufio.Reader
 	out io.Writer
 }
 
-func newStdinPrompter(in io.Reader, out io.Writer) ports.Prompter {
+// NewStdin wraps in/out in a Prompter. Empty input or read errors
+// return def.
+func NewStdin(in io.Reader, out io.Writer) ports.Prompter {
 	return &stdinPrompter{in: bufio.NewReader(in), out: out}
 }
 

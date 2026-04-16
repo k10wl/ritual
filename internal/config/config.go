@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Version info (single source of truth)
@@ -56,6 +57,12 @@ const (
 	DefaultMinRAMMB       = 4096 // 4GB
 	DefaultMinDiskMB      = 5120 // 5GB
 	DefaultMinJavaVersion = 21
+)
+
+// Lease defaults — applied by Manifest.ApplyDefaults when absent on decode.
+const (
+	DefaultHeartbeatInterval = 1 * time.Minute
+	DefaultLeaseTTL          = 10 * time.Minute
 )
 
 // Update process flags
