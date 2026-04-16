@@ -20,19 +20,27 @@ type countingStrategy struct {
 
 func (s *countingStrategy) Name() string { return s.name }
 
-func (s *countingStrategy) Run(_ context.Context, rs *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
+func (s *countingStrategy) Run(_ context.Context, _ *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
 	*s.count++
 	return s.next, nil
 }
 
-type failStrategy struct {
-	from string
+// failThenRetry terminates with error on first call, follows onRetry on second.
+type failThenRetry struct {
+	from    string
+	onRetry machine.Strategy[ritual.RunState]
+	fired   bool
 }
 
-func (s *failStrategy) Name() string { return ritual.StageFailed }
+func (s *failThenRetry) Name() string { return ritual.StageFailed }
 
-func (s *failStrategy) Run(_ context.Context, rs *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
+func (s *failThenRetry) Run(_ context.Context, rs *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
+	if s.fired && rs.Err == nil && s.onRetry != nil {
+		s.fired = false
+		return s.onRetry, nil
+	}
 	rs.FailedStage = s.from
+	s.fired = true
 	return nil, rs.Err
 }
 
@@ -40,26 +48,46 @@ func TestRunner_RunCurrent_ReentersAtFailedStage(t *testing.T) {
 	checkCount := 0
 	fetchCount := 0
 
-	fail := &failStrategy{from: ritual.StageFetching}
-	fetch := &countingStrategy{name: "Fetching", count: &fetchCount, next: fail}
+	fetch := &countingStrategy{name: "Fetching", count: &fetchCount}
 	check := &countingStrategy{name: "Checking", count: &checkCount, next: fetch}
+	fail := &failThenRetry{from: ritual.StageFetching, onRetry: fetch}
+	fetch.next = fail
 
 	rs := &ritual.RunState{Bus: nil, Err: fmt.Errorf("network error")}
 	runner := ritual.NewRunner(rs)
 
-	// First run: check → fetch → fail
+	// First run: check → fetch → fail (error)
 	err := runner.Run(context.Background(), check)
 	require.Error(t, err)
 	assert.Equal(t, 1, checkCount)
 	assert.Equal(t, 1, fetchCount)
 
-	// Fix the error, retry from failed stage
+	// Clear error, retry — RunCurrent re-enters at fail strategy,
+	// which follows onRetry back to fetch
 	rs.Err = nil
-	done := &countingStrategy{name: "Done", count: new(int), next: nil}
-	fetch.next = done
+	fetch.next = nil // fetch now terminates successfully
 
 	err = runner.RunCurrent(context.Background())
 	assert.NoError(t, err)
 	assert.Equal(t, 1, checkCount, "check must NOT run again")
-	assert.Equal(t, 2, fetchCount, "fetch must run again")
+	assert.Equal(t, 2, fetchCount, "fetch must run again via retry back-edge")
+}
+
+func TestRunner_RunCurrent_NilCurrent(t *testing.T) {
+	rs := &ritual.RunState{}
+	runner := ritual.NewRunner(rs)
+
+	err := runner.RunCurrent(context.Background())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no current strategy")
+}
+
+func TestRun_ConvenienceWrapper(t *testing.T) {
+	count := 0
+	stage := &countingStrategy{name: "Only", count: &count, next: nil}
+	rs := &ritual.RunState{}
+
+	err := ritual.Run(context.Background(), rs, stage)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, count)
 }
