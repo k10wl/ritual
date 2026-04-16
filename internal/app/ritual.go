@@ -165,7 +165,7 @@ func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
 	unlock := unlocking.New(r.localManifests, r.remoteManifests, retain)
 	publish := publishing.New(r.exitUpdaters, unlock)
 	archive := archiving.New(r.localStorage, r.remoteStorage, r.localManifests, r.scanner, publish)
-	run := running.New(r.cmdBuilder, archive)
+	run := running.New(r.cmdBuilder, archive, unlock)
 	rollback := unlocking.New(r.localManifests, r.remoteManifests, failAcq)
 	acquire := acquiring.New(r.localManifests, r.remoteManifests, run, failAcq, rollback)
 	fetch := fetching.New(r.updaters, acquire, failFetch)

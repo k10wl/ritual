@@ -11,13 +11,14 @@ import (
 type Strategy struct {
 	cmd    ports.CmdBuilder
 	onNext machine.Strategy[ritual.RunState]
+	onFail machine.Strategy[ritual.RunState]
 }
 
 func New(
 	cmd ports.CmdBuilder,
-	onNext machine.Strategy[ritual.RunState],
+	onNext, onFail machine.Strategy[ritual.RunState],
 ) *Strategy {
-	return &Strategy{cmd: cmd, onNext: onNext}
+	return &Strategy{cmd: cmd, onNext: onNext, onFail: onFail}
 }
 
 func (*Strategy) Name() string { return ritual.StageRunning }
@@ -26,12 +27,14 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 	publish(rs.Bus, ports.StartInfo{Operation: "server"})
 	cmd, err := s.cmd.Build(ctx)
 	if err != nil {
+		rs.Err = err
 		publish(rs.Bus, ports.ErrorInfo{Operation: "server", Err: err})
-		return s.onNext, nil
+		return s.onFail, nil
 	}
 	if err := cmd.Run(); err != nil {
+		rs.Err = err
 		publish(rs.Bus, ports.ErrorInfo{Operation: "server", Err: err})
-		return s.onNext, nil
+		return s.onFail, nil
 	}
 	publish(rs.Bus, ports.FinishInfo{Operation: "server"})
 	return s.onNext, nil

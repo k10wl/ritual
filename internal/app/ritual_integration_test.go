@@ -851,8 +851,6 @@ func TestIntegration_LeaseExpired_TakesOverAndCompletes(t *testing.T) {
 }
 
 func TestIntegration_ServerCrash_NoUploadLockReleased(t *testing.T) {
-	t.Skip("known gap: running/strategy.go does not set rs.Err on cmd failure — pipeline proceeds to publishing and uploads, then reaches Done instead of Failed")
-
 	ritual := newRitual(t)
 
 	seedRemoteWorld(t, ritual,
