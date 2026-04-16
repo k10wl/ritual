@@ -802,3 +802,90 @@ func TestIntegration_ServerCrash_NoUploadLockReleased(t *testing.T) {
 	ritual.assertManifestUnlocked(t,
 		"lock must be released even after server crash")
 }
+
+// ---------- integration tests: stop, retry, multi-host ----------
+
+func (r *testRitual) startRitualWithFlakyUpdater(t *testing.T, flaky ports.UpdaterService) *fakeServer {
+	t.Helper()
+	server := r.fakerun()
+	cmdBuilder := &fakeServerCmdBuilder{server: server}
+
+	rit := app.New(
+		r.bus,
+		r.local, r.remote,
+		r.localManifests, r.remoteManifests,
+		nil,
+		[]ports.UpdaterService{flaky},
+		nil, nil,
+		cmdBuilder,
+	)
+
+	go rit.Listen(r.ctx)
+	time.Sleep(20 * time.Millisecond)
+	r.bus.Publish(app.StartRequested{})
+	return server
+}
+
+func TestIntegration_StopMidGame_LockReleased(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("original")),
+	)
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	server.write("worlds/world/level.dat", []byte("mid-game state"))
+	time.Sleep(50 * time.Millisecond)
+
+	ritual.sendStop()
+	time.Sleep(50 * time.Millisecond)
+	server.stdin.Close()
+	ritual.waitFailed(t)
+
+	ritual.assertManifestUnlocked(t,
+		"lock must be released after graceful stop")
+}
+
+func TestIntegration_FetchFails_RetrySucceeds(t *testing.T) {
+	ritual := newRitual(t)
+
+	flaky := &failOnceIntegrationUpdater{}
+	server := ritual.startRitualWithFlakyUpdater(t, flaky)
+	ritual.waitFailed(t)
+
+	ritual.sendRetry()
+	server.waitReady(t)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	assert.Equal(t, 2, flaky.calls,
+		"updater should be called twice — fail on first, succeed on retry")
+}
+
+func TestIntegration_MultiHost_AUploads_BDownloadsPlaysUploads(t *testing.T) {
+	ritualA := newRitual(t)
+
+	seedLocalWorld(t, ritualA,
+		file("world/level.dat", []byte("host A level")),
+	)
+
+	serverA := ritualA.startRitual(t)
+	serverA.waitReady(t)
+	serverA.write("worlds/world/level.dat", []byte("host A modified"))
+	serverA.exit(0)
+	serverA.stdin.Close()
+	ritualA.waitDone(t)
+
+	ritualB := newRitualSharingRemote(t, ritualA)
+
+	serverB := ritualB.startRitual(t)
+	serverB.waitReady(t)
+	serverB.write("worlds/world/level.dat", []byte("host B modified"))
+	serverB.exit(0)
+	serverB.stdin.Close()
+	ritualB.waitDone(t)
+
+	ritualA.assertRemoteFileContent(t, "world/level.dat", []byte("host B modified"),
+		"remote should have Host B's changes — B was the last to upload")
+}
