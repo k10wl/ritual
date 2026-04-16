@@ -154,7 +154,7 @@ task build                      # → bin/ritual.exe
 task dev                        # dev mode with hot-reload
 ```
 
-See [docs/taskfile.md](docs/taskfile.md) for the full task reference.
+Every task has a `desc:` — run `task --list` for the full menu. See [docs/taskfile.md](docs/taskfile.md) for conventions and troubleshooting.
 
 ## Documentation
 
