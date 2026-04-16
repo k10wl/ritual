@@ -7,21 +7,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
+	"os/signal"
+	"syscall"
 
 	"ritual/internal/adapters"
+	"ritual/internal/app"
 	"ritual/internal/config"
-	"ritual/internal/core/ritual"
 	"ritual/internal/core/services"
-	"ritual/internal/core/stages/acquiring"
-	"ritual/internal/core/stages/archiving"
-	"ritual/internal/core/stages/checking"
-	"ritual/internal/core/stages/failed"
-	"ritual/internal/core/stages/fetching"
-	"ritual/internal/core/stages/publishing"
-	"ritual/internal/core/stages/retaining"
-	"ritual/internal/core/stages/running"
-	"ritual/internal/core/stages/unlocking"
 	"ritual/internal/subsystems/conditions"
 	"ritual/internal/subsystems/heartbeat"
 	"ritual/internal/subsystems/logging"
@@ -41,6 +33,10 @@ func main() {
 	if services.HandleUpdateProcess() {
 		return
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	success := false
 	defer func() {
 		if !success {
@@ -48,17 +44,20 @@ func main() {
 			bufio.NewReader(os.Stdin).ReadBytes('\n')
 		}
 	}()
-	if err := run(); err != nil {
+	if err := run(ctx); err != nil {
 		fmt.Printf("Ritual failed: %v\n", err)
 		return
 	}
 	success = true
 }
 
-func run() error {
+func run(ctx context.Context) error {
+	// --- Environment validation ---
 	if envAccountID == "" || envAccessKeyID == "" || envSecretAccessKey == "" || envBucket == "" {
 		return fmt.Errorf("build error: R2 credentials not injected")
 	}
+
+	// --- Infrastructure setup (filesystem, logging, event bus) ---
 	if err := os.MkdirAll(config.RootPath, config.DirPermission); err != nil {
 		return fmt.Errorf("create root: %w", err)
 	}
@@ -82,6 +81,7 @@ func run() error {
 
 	prompter := prompt.NewStdin(os.Stdin, os.Stdout)
 
+	// --- Storage and manifest adapters ---
 	localStorage, err := adapters.NewFSRepository(workRoot)
 	if err != nil {
 		return fmt.Errorf("local storage: %w", err)
@@ -101,13 +101,14 @@ func run() error {
 		return fmt.Errorf("get remote manifest: %w", err)
 	}
 
+	// --- Subsystem builders (CLI-specific wiring) ---
 	sk, err := synckit.Build(workRoot, localStorage, remoteStorage, localManifests, remoteManifests, bus)
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)
 	}
 	sysInfo := adapters.NewSystemInfo()
 	javaInfo := adapters.NewJavaInfo()
-	conds, err := conditions.Build(remoteManifest, remoteManifests, sysInfo, sysInfo, javaInfo)
+	conds, err := conditions.Build(remoteManifest, remoteManifests, sysInfo, javaInfo)
 	if err != nil {
 		return fmt.Errorf("conditions: %w", err)
 	}
@@ -115,40 +116,44 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("retention: %w", err)
 	}
-
-	executor := adapters.NewCommandExecutorAdapter()
-	serverRunner, err := adapters.NewServerRunner(config.RootPath, workRoot, remoteManifest.Server.StartScript, executor)
-	if err != nil {
-		return fmt.Errorf("server runner: %w", err)
-	}
 	settings, err := services.PromptSettings(bus, prompter, remoteManifest.GetMinRAMMB())
 	if err != nil {
 		return fmt.Errorf("settings: %w", err)
 	}
-	server, err := settings.ToServerRuntime()
+	cmdBuilder, err := adapters.NewServerCmdBuilder(workRoot, remoteManifest.Server.StartScript, settings.ToServerRuntime)
 	if err != nil {
-		return fmt.Errorf("server config: %w", err)
+		return fmt.Errorf("cmd builder: %w", err)
 	}
 
-	hostname, _ := os.Hostname()
-	runID := fmt.Sprintf("%s%s%d", hostname, config.LockIDSeparator, time.Now().UnixNano())
-	rs := &ritual.RunState{RunID: runID, Bus: bus}
+	// --- Ritual: build once, listen for commands ---
+	r := app.New(
+		bus,
+		localStorage, remoteStorage,
+		localManifests, remoteManifests,
+		conds, sk.Updaters, sk.ExitUpdaters, rets,
+		cmdBuilder,
+	)
 
-	failCheck := failed.New(ritual.StageChecking)
-	failFetch := failed.New(ritual.StageFetching)
-	failAcq := failed.New(ritual.StageAcquiring)
-	failRet := failed.New(ritual.StageRetaining)
+	// Wait for terminal status via bus
+	done := make(chan error, 1)
+	ch, unsub := bus.Subscribe()
+	go func() {
+		defer unsub()
+		for event := range ch {
+			if sc, ok := event.(app.StatusChanged); ok {
+				switch sc.Status {
+				case app.Done:
+					done <- nil
+					return
+				case app.Failed:
+					done <- sc.Err
+					return
+				}
+			}
+		}
+	}()
 
-	retain := retaining.New(rets, failRet)
-	unlock := unlocking.New(localManifests, remoteManifests, retain)
-	archive := archiving.New(localStorage, remoteStorage, localManifests, unlock)
-	publish := publishing.New(sk.ExitUpdaters, archive)
-	run := running.New(server, serverRunner, publish)
-	rollback := unlocking.New(localManifests, remoteManifests, failAcq)
-	acquire := acquiring.New(localManifests, remoteManifests, run, failAcq, rollback)
-	fetch := fetching.New(sk.Updaters, acquire, failFetch)
-	check := checking.New(conds, fetch, failCheck)
-
-	fmt.Println("Starting Ritual")
-	return ritual.Run(context.Background(), rs, check)
+	go r.Listen(ctx)
+	bus.Publish(app.StartRequested{})
+	return <-done
 }
