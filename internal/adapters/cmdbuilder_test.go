@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const forgeBat = "@echo off\njava %1 @user_jvm_args.txt @libraries/net/minecraftforge/forge/win_args.txt nogui\n"
+const ritualRun = "java %1 @user_jvm_args.txt @libraries/net/minecraftforge/forge/win_args.txt nogui\n"
 
 func stubRuntime(port, memory int) func() (*domain.ServerRuntime, error) {
 	return func() (*domain.ServerRuntime, error) {
@@ -78,7 +78,7 @@ func TestServerCmdBuilder_Build(t *testing.T) {
 
 	startScript := filepath.Join("instance", "run.bat")
 	scriptPath := filepath.Join(tempDir, startScript)
-	require.NoError(t, os.WriteFile(scriptPath, []byte(forgeBat), 0644))
+	require.NoError(t, os.WriteFile(scriptPath, []byte(ritualRun), 0644))
 
 	b, err := NewServerCmdBuilder(workRoot, startScript, stubRuntime(25565, 1024))
 	require.NoError(t, err)
@@ -134,22 +134,22 @@ func TestServerCmdBuilder_Build_RuntimeError(t *testing.T) {
 	assert.Contains(t, err.Error(), "settings unavailable")
 }
 
-func TestServerCmdBuilder_Build_NoJavaLine(t *testing.T) {
+func TestServerCmdBuilder_Build_EmptyScript(t *testing.T) {
 	tempDir := t.TempDir()
 	workRoot, err := os.OpenRoot(tempDir)
 	require.NoError(t, err)
 	defer workRoot.Close()
 
-	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "run.bat"), []byte("@echo off\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, ".ritual_run"), []byte("   \n"), 0644))
 
-	b, err := NewServerCmdBuilder(workRoot, "run.bat", stubRuntime(25565, 1024))
+	b, err := NewServerCmdBuilder(workRoot, ".ritual_run", stubRuntime(25565, 1024))
 	require.NoError(t, err)
 
 	cmd, err := b.Build(context.Background(), nil, nil)
 
 	assert.Error(t, err)
 	assert.Nil(t, cmd)
-	assert.Contains(t, err.Error(), "no java invocation found")
+	assert.Contains(t, err.Error(), "empty start script")
 }
 
 func TestServerCmdBuilder_Build_ContextWired(t *testing.T) {
@@ -158,7 +158,7 @@ func TestServerCmdBuilder_Build_ContextWired(t *testing.T) {
 	require.NoError(t, err)
 	defer workRoot.Close()
 
-	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "run.bat"), []byte(forgeBat), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "run.bat"), []byte(ritualRun), 0644))
 
 	b, err := NewServerCmdBuilder(workRoot, "run.bat", stubRuntime(25565, 1024))
 	require.NoError(t, err)

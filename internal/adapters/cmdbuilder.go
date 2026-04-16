@@ -1,7 +1,6 @@
 package adapters
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -55,10 +54,16 @@ func (b *ServerCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io
 	}
 	defer f.Close()
 
-	memoryArg := "-Xmx" + strconv.Itoa(server.Memory) + "M"
-	parts, err := parseJavaInvocation(f, memoryArg)
+	content, err := io.ReadAll(f)
 	if err != nil {
-		return nil, fmt.Errorf("parse start script %s: %w", b.startScript, err)
+		return nil, fmt.Errorf("read start script %s: %w", b.startScript, err)
+	}
+
+	memoryArg := "-Xmx" + strconv.Itoa(server.Memory) + "M"
+	line := strings.ReplaceAll(strings.TrimSpace(string(content)), "%1", memoryArg)
+	parts := strings.Fields(line)
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("empty start script %s", b.startScript)
 	}
 
 	scriptPath := filepath.Join(b.workRoot.Name(), b.startScript)
@@ -69,24 +74,4 @@ func (b *ServerCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io
 	cmd.Stderr = stdout
 
 	return cmd, nil
-}
-
-func parseJavaInvocation(r io.Reader, memoryArg string) ([]string, error) {
-	sc := bufio.NewScanner(r)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "@") || strings.HasPrefix(strings.ToLower(line), "rem ") {
-			continue
-		}
-		line = strings.ReplaceAll(line, "%1", memoryArg)
-		parts := strings.Fields(line)
-		if len(parts) == 0 {
-			continue
-		}
-		return parts, nil
-	}
-	if err := sc.Err(); err != nil {
-		return nil, err
-	}
-	return nil, fmt.Errorf("no java invocation found")
 }
