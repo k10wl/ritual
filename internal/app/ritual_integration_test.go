@@ -614,3 +614,120 @@ func (f *failOnceIntegrationUpdater) Run(_ context.Context) error {
 	}
 	return nil
 }
+
+// ---------- fakeServer wait helper ----------
+
+func (s *fakeServer) waitReady(t *testing.T) {
+	t.Helper()
+	deadline := time.After(10 * time.Second)
+	for s.stdin == nil {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for fakerun stdin to be connected")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+// ---------- integration tests: happy paths ----------
+
+func TestIntegration_FirstLaunch_NoLocalFiles_DownloadsEverything(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("level data")),
+		file("world/region/r.0.0.mca", []byte("region data")),
+	)
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	server.exit(0)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	ritual.assertLocalHasFile(t, "world/level.dat",
+		"first launch — world files should be downloaded from remote")
+	ritual.assertLocalHasFile(t, "world/region/r.0.0.mca",
+		"first launch — region files should be downloaded from remote")
+	ritual.assertManifestUnlocked(t,
+		"lock should be cleared after successful first run")
+}
+
+func TestIntegration_PlayedAndExitClean_ChangesUploadedAndBackedUp(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("original level")),
+		file("world/region/r.0.0.mca", []byte("region data")),
+		file("world/playerdata/old.dat", []byte("old player")),
+	)
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	server.write("worlds/world/level.dat", []byte("modified level"))
+	server.write("worlds/world/playerdata/new.dat", []byte("new player"))
+	server.exit(0)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	ritual.assertRemoteFileContent(t, "world/level.dat", []byte("modified level"),
+		"server modified level.dat — remote should reflect the change after publish")
+	ritual.assertRemoteHasFile(t, "world/playerdata/new.dat",
+		"server created new player file — should exist on remote after publish")
+	ritual.assertRemoteHasFile(t, "world/region/r.0.0.mca",
+		"untouched region file should still exist on remote")
+	ritual.assertManifestXXHashCount(t, 4,
+		"3 original + 1 new file = 4 entries in xxhash map")
+	ritual.assertManifestUnlocked(t,
+		"lock should be cleared after successful pipeline completion")
+}
+
+func TestIntegration_AlreadySynced_NoTransfersNoBackup(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedSyncedWorld(t, ritual,
+		file("world/level.dat", []byte("level")),
+	)
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	server.exit(0)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	ritual.assertNoBackup(t,
+		"no file changes during run — backup should not be created")
+	ritual.assertManifestUnlocked(t,
+		"lock should be cleared even when no work was done")
+}
+
+func TestIntegration_ServerMutatesFiles_AllChangesReflectedOnRemote(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorld(t, ritual,
+		file("world/a.dat", []byte("original a")),
+		file("world/b.dat", []byte("original b")),
+		file("world/c.dat", []byte("original c")),
+	)
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	server.write("worlds/world/a.dat", []byte("modified a"))
+	server.write("worlds/world/d.dat", []byte("brand new"))
+	server.delete("worlds/world/c.dat")
+	server.exit(0)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	ritual.assertRemoteFileContent(t, "world/a.dat", []byte("modified a"),
+		"modified file should have new content on remote")
+	ritual.assertRemoteFileContent(t, "world/b.dat", []byte("original b"),
+		"untouched file should remain unchanged")
+	ritual.assertRemoteHasFile(t, "world/d.dat",
+		"new file created by server should appear on remote")
+	ritual.assertRemoteFileMissing(t, "world/c.dat",
+		"deleted file should be removed from remote")
+	ritual.assertManifestXXHashCount(t, 3,
+		"3 original - 1 deleted + 1 added = 3 entries in manifest")
+}
