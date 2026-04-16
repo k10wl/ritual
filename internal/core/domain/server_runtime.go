@@ -1,80 +1,24 @@
 package domain
 
-import (
-	"fmt"
-	"net"
-	"strconv"
-)
+import "fmt"
 
 // ServerRuntime represents a Minecraft server configuration
 type ServerRuntime struct {
-	Address string `json:"address"`
-	IP      string `json:"ip"`
-	Port    int    `json:"port"`
-	Memory  int    `json:"memory"`
+	Port   int `json:"port"`
+	Memory int `json:"memory"`
 }
 
-// NewServerRuntime creates a new ServerRuntime instance with address parsing
-func NewServerRuntime(address string, memory int) (*ServerRuntime, error) {
-	if address == "" {
-		return nil, fmt.Errorf("address cannot be empty")
+// NewServerRuntime creates a new ServerRuntime instance
+func NewServerRuntime(port, memory int) (*ServerRuntime, error) {
+	if port <= 0 || port > 65535 {
+		return nil, fmt.Errorf("port must be between 1 and 65535")
 	}
 	if memory <= 0 {
 		return nil, fmt.Errorf("memory must be positive")
 	}
 
-	ip, port, err := parseAddress(address)
-	if err != nil {
-		return nil, fmt.Errorf("invalid address format: %w", err)
-	}
-
-	server := &ServerRuntime{
-		Address: address,
-		IP:      ip,
-		Port:    port,
-		Memory:  memory,
-	}
-
-	if server.IP == "" {
-		return nil, fmt.Errorf("parsed IP cannot be empty")
-	}
-	if server.Port <= 0 {
-		return nil, fmt.Errorf("parsed port must be positive")
-	}
-
-	return server, nil
-}
-
-// parseAddress extracts IP and port from address string
-func parseAddress(address string) (string, int, error) {
-	if address == "" {
-		return "", 0, fmt.Errorf("address cannot be empty")
-	}
-
-	host, portStr, err := net.SplitHostPort(address)
-	if err != nil {
-		return "", 0, fmt.Errorf("failed to split host and port: %w", err)
-	}
-
-	if host == "" {
-		return "", 0, fmt.Errorf("host cannot be empty")
-	}
-	if portStr == "" {
-		return "", 0, fmt.Errorf("port cannot be empty")
-	}
-
-	if net.ParseIP(host) == nil {
-		return "", 0, fmt.Errorf("host must be a valid IP address, got: %s", host)
-	}
-
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return "", 0, fmt.Errorf("invalid port format: %w", err)
-	}
-
-	if port <= 0 || port > 65535 {
-		return "", 0, fmt.Errorf("port must be between 1 and 65535")
-	}
-
-	return host, port, nil
+	return &ServerRuntime{
+		Port:   port,
+		Memory: memory,
+	}, nil
 }

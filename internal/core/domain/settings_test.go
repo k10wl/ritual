@@ -12,9 +12,6 @@ import (
 func TestDefaultSettings(t *testing.T) {
 	settings := DefaultSettings()
 
-	if settings.IP != "0.0.0.0" {
-		t.Errorf("expected IP 0.0.0.0, got %s", settings.IP)
-	}
 	if settings.Port != 25565 {
 		t.Errorf("expected Port 25565, got %d", settings.Port)
 	}
@@ -25,43 +22,38 @@ func TestDefaultSettings(t *testing.T) {
 
 func TestSettingsValidate(t *testing.T) {
 	tests := []struct {
-		name    string
+		name     string
 		settings *Settings
-		wantErr bool
+		wantErr  bool
 	}{
 		{
 			name:     "valid settings",
-			settings: &Settings{IP: "0.0.0.0", Port: 25565, Memory: 4096},
+			settings: &Settings{Port: 25565, Memory: 4096},
 			wantErr:  false,
 		},
 		{
-			name:     "empty IP",
-			settings: &Settings{IP: "", Port: 25565, Memory: 4096},
-			wantErr:  true,
-		},
-		{
 			name:     "zero port",
-			settings: &Settings{IP: "0.0.0.0", Port: 0, Memory: 4096},
+			settings: &Settings{Port: 0, Memory: 4096},
 			wantErr:  true,
 		},
 		{
 			name:     "negative port",
-			settings: &Settings{IP: "0.0.0.0", Port: -1, Memory: 4096},
+			settings: &Settings{Port: -1, Memory: 4096},
 			wantErr:  true,
 		},
 		{
 			name:     "port too high",
-			settings: &Settings{IP: "0.0.0.0", Port: 65536, Memory: 4096},
+			settings: &Settings{Port: 65536, Memory: 4096},
 			wantErr:  true,
 		},
 		{
 			name:     "zero memory",
-			settings: &Settings{IP: "0.0.0.0", Port: 25565, Memory: 0},
+			settings: &Settings{Port: 25565, Memory: 0},
 			wantErr:  true,
 		},
 		{
 			name:     "negative memory",
-			settings: &Settings{IP: "0.0.0.0", Port: 25565, Memory: -1},
+			settings: &Settings{Port: 25565, Memory: -1},
 			wantErr:  true,
 		},
 	}
@@ -77,16 +69,13 @@ func TestSettingsValidate(t *testing.T) {
 }
 
 func TestSettingsToServerRuntime(t *testing.T) {
-	settings := &Settings{IP: "192.168.1.1", Port: 25566, Memory: 8192}
+	settings := &Settings{Port: 25566, Memory: 8192}
 
 	server, err := settings.ToServerRuntime()
 	if err != nil {
 		t.Fatalf("ToServer() error = %v", err)
 	}
 
-	if server.IP != "192.168.1.1" {
-		t.Errorf("expected IP 192.168.1.1, got %s", server.IP)
-	}
 	if server.Port != 25566 {
 		t.Errorf("expected Port 25566, got %d", server.Port)
 	}
@@ -96,34 +85,27 @@ func TestSettingsToServerRuntime(t *testing.T) {
 }
 
 func TestSettingsSaveAndLoad(t *testing.T) {
-	// Create temp directory
 	tempDir := t.TempDir()
 	originalRootPath := config.RootPath
 	config.RootPath = tempDir
 	defer func() { config.RootPath = originalRootPath }()
 
-	// Save settings
-	settings := &Settings{IP: "10.0.0.1", Port: 25570, Memory: 2048}
+	settings := &Settings{Port: 25570, Memory: 2048}
 	err := settings.Save()
 	if err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
-	// Verify file exists
 	settingsPath := filepath.Join(tempDir, SettingsFilename)
 	if _, err := os.Stat(settingsPath); os.IsNotExist(err) {
 		t.Fatal("settings file was not created")
 	}
 
-	// Load settings
 	loaded, err := LoadSettings()
 	if err != nil {
 		t.Fatalf("LoadSettings() error = %v", err)
 	}
 
-	if loaded.IP != settings.IP {
-		t.Errorf("expected IP %s, got %s", settings.IP, loaded.IP)
-	}
 	if loaded.Port != settings.Port {
 		t.Errorf("expected Port %d, got %d", settings.Port, loaded.Port)
 	}
@@ -133,7 +115,6 @@ func TestSettingsSaveAndLoad(t *testing.T) {
 }
 
 func TestLoadSettingsReturnsDefaultWhenFileNotExists(t *testing.T) {
-	// Create temp directory with no settings file
 	tempDir := t.TempDir()
 	originalRootPath := config.RootPath
 	config.RootPath = tempDir
@@ -145,7 +126,7 @@ func TestLoadSettingsReturnsDefaultWhenFileNotExists(t *testing.T) {
 	}
 
 	defaults := DefaultSettings()
-	if settings.IP != defaults.IP || settings.Port != defaults.Port || settings.Memory != defaults.Memory {
+	if settings.Port != defaults.Port || settings.Memory != defaults.Memory {
 		t.Errorf("expected default settings, got %+v", settings)
 	}
 }
@@ -156,21 +137,18 @@ func TestSettingsSavePrettyPrints(t *testing.T) {
 	config.RootPath = tempDir
 	defer func() { config.RootPath = originalRootPath }()
 
-	settings := &Settings{IP: "0.0.0.0", Port: 25565, Memory: 4096}
+	settings := &Settings{Port: 25565, Memory: 4096}
 	err := settings.Save()
 	if err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
-	// Read raw file content
 	content, err := os.ReadFile(filepath.Join(tempDir, SettingsFilename))
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 
-	// Check for indentation (pretty print uses 2 spaces, same as manifest)
 	expected := `{
-  "ip": "0.0.0.0",
   "port": 25565,
   "memory": 4096,
   "local_retention": {
@@ -186,14 +164,14 @@ func TestSettingsSavePrettyPrints(t *testing.T) {
 }
 
 func TestLoadSettings_MissingRetention_UsesZeroValue(t *testing.T) {
-	data := []byte(`{"ip":"127.0.0.1","port":25565,"memory":8192}`)
+	data := []byte(`{"port":25565,"memory":8192}`)
 
 	var s Settings
 	if err := json.Unmarshal(data, &s); err != nil {
 		t.Fatalf("should load v1 settings: %v", err)
 	}
-	if s.IP != "127.0.0.1" {
-		t.Errorf("IP=%s, want 127.0.0.1", s.IP)
+	if s.Port != 25565 {
+		t.Errorf("Port=%d, want 25565", s.Port)
 	}
 	if s.LocalRetention != (RetentionRules{}) {
 		t.Errorf("LocalRetention = %+v, want zero (missing field)", s.LocalRetention)

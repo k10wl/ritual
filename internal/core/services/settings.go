@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"fmt"
-	"net"
 	"strconv"
 
 	"ritual/internal/core/domain"
@@ -45,12 +44,6 @@ func PromptSettings(bus ports.EventBus, prompter ports.Prompter, minRAMMB int) (
 
 	ctx := context.Background()
 
-	ip, err := promptWithValidation(ctx, bus, prompter, "IP Address", settings.IP, validateIP)
-	if err != nil {
-		return nil, err
-	}
-	settings.IP = ip
-
 	portStr, err := promptWithValidation(ctx, bus, prompter, "Port", strconv.Itoa(settings.Port), validatePort)
 	if err != nil {
 		return nil, err
@@ -79,7 +72,7 @@ func PromptSettings(bus ports.EventBus, prompter ports.Prompter, minRAMMB int) (
 
 	publishEvt(bus, ports.UpdateInfo{
 		Operation: "Settings",
-		Message:   fmt.Sprintf("Saved: IP=%s, Port=%d, RAM=%dGB", settings.IP, settings.Port, settings.Memory/1024),
+		Message:   fmt.Sprintf("Saved: Port=%d, RAM=%dGB", settings.Port, settings.Memory/1024),
 	})
 	publishEvt(bus, ports.FinishInfo{Operation: "Settings"})
 
@@ -102,16 +95,6 @@ func promptWithValidation(ctx context.Context, bus ports.EventBus, prompter port
 		}
 		return response, nil
 	}
-}
-
-func validateIP(input string) error {
-	if input == "" {
-		return fmt.Errorf("IP cannot be empty")
-	}
-	if net.ParseIP(input) == nil {
-		return fmt.Errorf("invalid IP address: %s", input)
-	}
-	return nil
 }
 
 func validatePort(input string) error {

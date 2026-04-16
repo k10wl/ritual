@@ -13,7 +13,6 @@ const SettingsFilename = "settings.json"
 
 // Settings represents user-configurable server settings
 type Settings struct {
-	IP             string         `json:"ip"`
 	Port           int            `json:"port"`
 	Memory         int            `json:"memory"`
 	LocalRetention RetentionRules `json:"local_retention"`
@@ -22,7 +21,6 @@ type Settings struct {
 // DefaultSettings returns default settings values
 func DefaultSettings() *Settings {
 	return &Settings{
-		IP:             "0.0.0.0",
 		Port:           25565,
 		Memory:         4096,
 		LocalRetention: DefaultRetentionRules(),
@@ -73,15 +71,11 @@ func (s *Settings) Save() error {
 
 // ToServerRuntime creates a ServerRuntime instance from settings
 func (s *Settings) ToServerRuntime() (*ServerRuntime, error) {
-	address := fmt.Sprintf("%s:%d", s.IP, s.Port)
-	return NewServerRuntime(address, s.Memory)
+	return NewServerRuntime(s.Port, s.Memory)
 }
 
 // Validate checks if settings values are valid
 func (s *Settings) Validate() error {
-	if s.IP == "" {
-		return fmt.Errorf("IP cannot be empty")
-	}
 	if s.Port <= 0 || s.Port > 65535 {
 		return fmt.Errorf("port must be between 1 and 65535")
 	}
