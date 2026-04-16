@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"io"
 	"os/exec"
 	"ritual/internal/core/domain"
 )
@@ -36,9 +37,16 @@ type ValidatorService interface {
 }
 
 // CmdBuilder lazily creates the *exec.Cmd for the server process.
-// Build receives the context so exec.CommandContext can wire cancellation.
+// Caller provides IO interfaces for stdin/stdout wiring. Builder assigns
+// cmd.Stdin = stdin, cmd.Stdout = stdout, cmd.Stderr = stdout (merged).
 type CmdBuilder interface {
-	Build(ctx context.Context) (*exec.Cmd, error)
+	Build(ctx context.Context, stdin io.Reader, stdout io.Writer) (*exec.Cmd, error)
+}
+
+// ReadinessCheck waits until the server is ready to accept connections.
+// Implementation decides the mechanism (TCP dial, HTTP, etc).
+type ReadinessCheck interface {
+	Wait(ctx context.Context) error
 }
 
 // UpdaterService defines the interface for update operations
