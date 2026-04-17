@@ -20,6 +20,8 @@ func (f fakeLister) List() ([]services.Interface, error) {
 	return f.ifs, f.err
 }
 
+var localhost = services.JoinAddress{Label: "localhost", Address: "127.0.0.1:25565"}
+
 func TestNetInfoService_JoinAddresses(t *testing.T) {
 	cases := []struct {
 		name string
@@ -27,32 +29,37 @@ func TestNetInfoService_JoinAddresses(t *testing.T) {
 		want []services.JoinAddress
 	}{
 		{
+			name: "no interfaces returns localhost only",
+			ifs:  []services.Interface{},
+			want: []services.JoinAddress{localhost},
+		},
+		{
 			name: "skips down interfaces",
 			ifs: []services.Interface{
 				{Name: "Wi-Fi", Label: "Wi-Fi", Up: false, IPs: []net.IP{net.ParseIP("192.168.1.5")}},
 			},
-			want: []services.JoinAddress{},
+			want: []services.JoinAddress{localhost},
 		},
 		{
-			name: "skips loopback",
+			name: "skips loopback iface (localhost still emitted by default)",
 			ifs: []services.Interface{
 				{Name: "lo0", Label: "lo0", Up: true, Loop: true, IPs: []net.IP{net.ParseIP("127.0.0.1")}},
 			},
-			want: []services.JoinAddress{},
+			want: []services.JoinAddress{localhost},
 		},
 		{
 			name: "skips IPv6",
 			ifs: []services.Interface{
 				{Name: "Wi-Fi", Label: "Wi-Fi", Up: true, IPs: []net.IP{net.ParseIP("fe80::1"), net.ParseIP("2001:db8::1")}},
 			},
-			want: []services.JoinAddress{},
+			want: []services.JoinAddress{localhost},
 		},
 		{
 			name: "skips link-local IPv4",
 			ifs: []services.Interface{
 				{Name: "en0", Label: "Ethernet", Up: true, IPs: []net.IP{net.ParseIP("169.254.1.2")}},
 			},
-			want: []services.JoinAddress{},
+			want: []services.JoinAddress{localhost},
 		},
 		{
 			name: "keeps up non-loopback IPv4 with port and label",
@@ -60,6 +67,7 @@ func TestNetInfoService_JoinAddresses(t *testing.T) {
 				{Name: "en0", Label: "Wi-Fi", Up: true, IPs: []net.IP{net.ParseIP("192.168.1.6")}},
 			},
 			want: []services.JoinAddress{
+				localhost,
 				{Label: "Wi-Fi", Address: "192.168.1.6:25565"},
 			},
 		},
@@ -69,6 +77,7 @@ func TestNetInfoService_JoinAddresses(t *testing.T) {
 				{Name: "utun3", Label: "", Up: true, IPs: []net.IP{net.ParseIP("100.97.4.18")}},
 			},
 			want: []services.JoinAddress{
+				localhost,
 				{Label: "utun3", Address: "100.97.4.18:25565"},
 			},
 		},
@@ -77,28 +86,28 @@ func TestNetInfoService_JoinAddresses(t *testing.T) {
 			ifs: []services.Interface{
 				{Name: "vEthernet (Default Switch)", Label: "vEthernet (Default Switch)", Up: true, IPs: []net.IP{net.ParseIP("172.20.0.1")}},
 			},
-			want: []services.JoinAddress{},
+			want: []services.JoinAddress{localhost},
 		},
 		{
 			name: "skips Docker bridge by raw name",
 			ifs: []services.Interface{
 				{Name: "docker0", Label: "docker0", Up: true, IPs: []net.IP{net.ParseIP("172.17.0.1")}},
 			},
-			want: []services.JoinAddress{},
+			want: []services.JoinAddress{localhost},
 		},
 		{
 			name: "skips macOS awdl by raw name even with friendly label",
 			ifs: []services.Interface{
 				{Name: "awdl0", Label: "AWDL", Up: true, IPs: []net.IP{net.ParseIP("10.0.0.5")}},
 			},
-			want: []services.JoinAddress{},
+			want: []services.JoinAddress{localhost},
 		},
 		{
 			name: "skips macOS bridge by raw name",
 			ifs: []services.Interface{
 				{Name: "bridge0", Label: "Thunderbolt Bridge", Up: true, IPs: []net.IP{net.ParseIP("169.254.50.1")}},
 			},
-			want: []services.JoinAddress{},
+			want: []services.JoinAddress{localhost},
 		},
 		{
 			name: "keeps VPN tunnel utun",
@@ -106,6 +115,7 @@ func TestNetInfoService_JoinAddresses(t *testing.T) {
 				{Name: "utun3", Label: "utun3", Up: true, IPs: []net.IP{net.ParseIP("100.97.4.18")}},
 			},
 			want: []services.JoinAddress{
+				localhost,
 				{Label: "utun3", Address: "100.97.4.18:25565"},
 			},
 		},
@@ -119,6 +129,7 @@ func TestNetInfoService_JoinAddresses(t *testing.T) {
 				{Name: "en4", Label: "Ethernet 2", Up: false, IPs: []net.IP{net.ParseIP("10.0.0.1")}},
 			},
 			want: []services.JoinAddress{
+				localhost,
 				{Label: "Wi-Fi", Address: "192.168.1.6:25565"},
 				{Label: "Radmin VPN", Address: "26.14.23.5:25565"},
 			},

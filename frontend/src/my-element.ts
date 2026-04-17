@@ -21,11 +21,16 @@ export class MyElement extends LitElement {
     @property({attribute: false})
     ips: {label: string, address: string}[] = []
 
+    @property({type: Boolean})
+    online: boolean = navigator.onLine
+
     private ramTimer?: number
     private ipsTimer?: number
     private onVisibility = () => this.syncIpsPolling()
     private onFocus = () => this.syncIpsPolling()
     private onBlur = () => this.syncIpsPolling()
+    private onOnline = () => { this.online = true }
+    private onOffline = () => { this.online = false }
 
     constructor() {
         super();
@@ -42,6 +47,8 @@ export class MyElement extends LitElement {
         document.addEventListener('visibilitychange', this.onVisibility);
         window.addEventListener('focus', this.onFocus);
         window.addEventListener('blur', this.onBlur);
+        window.addEventListener('online', this.onOnline);
+        window.addEventListener('offline', this.onOffline);
         this.syncIpsPolling();
     }
 
@@ -52,6 +59,8 @@ export class MyElement extends LitElement {
         document.removeEventListener('visibilitychange', this.onVisibility);
         window.removeEventListener('focus', this.onFocus);
         window.removeEventListener('blur', this.onBlur);
+        window.removeEventListener('online', this.onOnline);
+        window.removeEventListener('offline', this.onOffline);
     }
 
     private shouldPollIps(): boolean {
@@ -106,6 +115,10 @@ export class MyElement extends LitElement {
         return html`
             <div class="container">
                 <h1>Ritual</h1>
+                <output class="net-status" role="status" aria-live="polite">
+                    <span class="net-dot ${this.online ? 'net-on' : 'net-off'}" aria-hidden="true"></span>
+                    ${this.online ? 'online' : 'offline'}
+                </output>
                 <div aria-label="result" class="result">${this.result}</div>
                 <div class="card">
                     <div class="input-box">
@@ -204,6 +217,28 @@ export class MyElement extends LitElement {
         .ips-label::after {
             content: ':';
             margin-right: 0.4em;
+        }
+        .net-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.8em;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            opacity: 0.75;
+            margin-bottom: 0.5rem;
+            user-select: none;
+        }
+        .net-dot {
+            width: 0.55em;
+            height: 0.55em;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .net-on {
+            background: rgb(80, 200, 120);
+        }
+        .net-off {
+            background: rgb(220, 80, 80);
         }
         .stats {
             margin-top: 1.5rem;

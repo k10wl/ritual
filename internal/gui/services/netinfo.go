@@ -67,7 +67,9 @@ func (s *NetInfoService) JoinAddresses() (JoinAddresses, error) {
 	if err != nil {
 		return JoinAddresses{}, err
 	}
-	out := []JoinAddress{}
+	out := []JoinAddress{
+		{Label: "localhost", Address: fmt.Sprintf("127.0.0.1:%d", s.port)},
+	}
 	for _, iface := range ifaces {
 		if !iface.Up || iface.Loop {
 			continue
