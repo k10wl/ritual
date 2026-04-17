@@ -94,6 +94,8 @@ func TestServerCmdBuilder_Build(t *testing.T) {
 		"@user_jvm_args.txt",
 		"@libraries/net/minecraftforge/forge/win_args.txt",
 		"nogui",
+		"--port",
+		"25565",
 	}
 	assert.Equal(t, expected, cmd.Args)
 }

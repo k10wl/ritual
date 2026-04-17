@@ -65,6 +65,7 @@ func (b *ServerCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io
 	if len(parts) == 0 {
 		return nil, fmt.Errorf("empty start script %s", b.startScript)
 	}
+	parts = append(parts, "--port", strconv.Itoa(server.Port))
 
 	scriptPath := filepath.Join(b.workRoot.Name(), b.startScript)
 	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
