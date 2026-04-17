@@ -6,6 +6,7 @@ import (
 
 	"ritual"
 	"ritual/internal/config"
+	"ritual/internal/core/domain"
 	"ritual/internal/gui/services"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -27,6 +28,10 @@ func init() {
 // and starts a goroutine that emits a time-based event every second. It subsequently runs the application and
 // logs any error that might occur.
 func main() {
+	settings, err := domain.LoadSettings()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Create a new Wails application by providing the necessary options.
 	// Variables 'Name' and 'Description' are for application metadata.
@@ -39,6 +44,7 @@ func main() {
 		Services: []application.Service{
 			application.NewService(&services.GreetService{}),
 			application.NewService(&services.SysInfoService{}),
+			application.NewService(services.NewNetInfoService(settings.Port, services.NewSysInterfaceLister())),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(ritual.GUIAssets),
@@ -75,7 +81,7 @@ func main() {
 	}()
 
 	// Run the application. This blocks until the application has been exited.
-	err := app.Run()
+	err = app.Run()
 
 	// If an error occurred while running the application, log it and exit.
 	if err != nil {

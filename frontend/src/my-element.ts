@@ -1,7 +1,7 @@
 import {css, html, LitElement} from 'lit'
 import {customElement, property} from 'lit/decorators.js'
 import {Events} from "@wailsio/runtime";
-import {GreetService, SysInfoService} from '../bindings/ritual/internal/gui/services';
+import {GreetService, SysInfoService, NetInfoService} from '../bindings/ritual/internal/gui/services';
 
 @customElement('my-element')
 export class MyElement extends LitElement {
@@ -18,7 +18,14 @@ export class MyElement extends LitElement {
     @property()
     ramLine: string = 'RAM: —'
 
+    @property({attribute: false})
+    ips: {label: string, address: string}[] = []
+
     private ramTimer?: number
+    private ipsTimer?: number
+    private onVisibility = () => this.syncIpsPolling()
+    private onFocus = () => this.syncIpsPolling()
+    private onBlur = () => this.syncIpsPolling()
 
     constructor() {
         super();
@@ -31,11 +38,50 @@ export class MyElement extends LitElement {
         super.connectedCallback();
         this.refreshRAM();
         this.ramTimer = window.setInterval(() => this.refreshRAM(), 1000);
+
+        document.addEventListener('visibilitychange', this.onVisibility);
+        window.addEventListener('focus', this.onFocus);
+        window.addEventListener('blur', this.onBlur);
+        this.syncIpsPolling();
     }
 
     disconnectedCallback() {
         super.disconnectedCallback();
         if (this.ramTimer) clearInterval(this.ramTimer);
+        this.stopIpsPolling();
+        document.removeEventListener('visibilitychange', this.onVisibility);
+        window.removeEventListener('focus', this.onFocus);
+        window.removeEventListener('blur', this.onBlur);
+    }
+
+    private shouldPollIps(): boolean {
+        return !document.hidden && document.hasFocus();
+    }
+
+    private syncIpsPolling() {
+        if (this.shouldPollIps()) this.startIpsPolling();
+        else this.stopIpsPolling();
+    }
+
+    private startIpsPolling() {
+        if (this.ipsTimer) return;
+        this.refreshIps();
+        this.ipsTimer = window.setInterval(() => this.refreshIps(), 1000);
+    }
+
+    private stopIpsPolling() {
+        if (!this.ipsTimer) return;
+        clearInterval(this.ipsTimer);
+        this.ipsTimer = undefined;
+    }
+
+    async refreshIps() {
+        try {
+            const payload = await NetInfoService.JoinAddresses();
+            this.ips = payload.addresses;
+        } catch (err) {
+            console.log('ips err', err);
+        }
     }
 
     async refreshRAM() {
@@ -68,6 +114,14 @@ export class MyElement extends LitElement {
                                type="text" autocomplete="off"/>
                         <button aria-label="greet-btn" class="btn" @click=${this.doGreet}>Greet</button>
                     </div>
+                </div>
+                <div class="ips" aria-label="join-addresses">
+                    <div class="ips-title">Join addresses</div>
+                    ${this.ips.length === 0
+                        ? html`<div class="ips-empty">—</div>`
+                        : html`<ul class="ips-list">
+                            ${this.ips.map(ip => html`<li><span class="ips-label">${ip.label}</span> ${ip.address}</li>`)}
+                        </ul>`}
                 </div>
                 <div class="stats">
                     <div>${this.ramLine}</div>
@@ -121,6 +175,35 @@ export class MyElement extends LitElement {
             border-radius: 3px;
             border: none;
             cursor: pointer;
+        }
+        .ips {
+            margin-top: 1.5rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.95em;
+        }
+        .ips-title {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+            opacity: 0.85;
+        }
+        .ips-empty {
+            opacity: 0.6;
+        }
+        .ips-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+        }
+        .ips-label {
+            font-weight: 600;
+            opacity: 0.85;
+        }
+        .ips-label::after {
+            content: ':';
+            margin-right: 0.4em;
         }
         .stats {
             margin-top: 1.5rem;

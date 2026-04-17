@@ -54,6 +54,7 @@ nul.gocache/
 bin
 frontend/node_modules
 frontend/bindings
+frontend/dist
 frontend/public/favicon.ico
 build/darwin/icons.icns
 build/windows/info.json
