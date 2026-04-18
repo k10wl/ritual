@@ -71,10 +71,11 @@ type ConditionService interface {
 	Check(ctx context.Context) error
 }
 
-// DirectoryScanner produces an xxhash map of all files in the worlds directory.
-// Implementations determine scanning strategy (full walk vs mtime-filtered).
+// DirectoryScanner produces a file map keyed by relative path with content
+// hash + size for every file in the worlds directory. Implementations
+// determine scanning strategy (full walk vs mtime-filtered).
 type DirectoryScanner interface {
-	Scan(ctx context.Context) (map[string]string, error)
+	Scan(ctx context.Context) (map[string]domain.FileEntry, error)
 }
 
 // SyncService handles bidirectional synchronization between local and remote states.

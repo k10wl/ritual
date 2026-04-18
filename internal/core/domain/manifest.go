@@ -72,14 +72,14 @@ func (m *Manifest) Clone() *Manifest {
 	}
 
 	if m.Worlds.XXHashMap != nil {
-		clone.Worlds.XXHashMap = make(map[string]string, len(m.Worlds.XXHashMap))
+		clone.Worlds.XXHashMap = make(map[string]FileEntry, len(m.Worlds.XXHashMap))
 		for k, v := range m.Worlds.XXHashMap {
 			clone.Worlds.XXHashMap[k] = v
 		}
 	}
 
 	if m.Server.XXHashMap != nil {
-		clone.Server.XXHashMap = make(map[string]string, len(m.Server.XXHashMap))
+		clone.Server.XXHashMap = make(map[string]FileEntry, len(m.Server.XXHashMap))
 		for k, v := range m.Server.XXHashMap {
 			clone.Server.XXHashMap[k] = v
 		}

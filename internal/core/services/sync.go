@@ -159,8 +159,8 @@ func (s *SyncService) commitDownload() error {
 	})
 }
 
-// cleanLocalGhosts removes local files not present in the remote hash map.
-func (s *SyncService) cleanLocalGhosts(xxhashMap map[string]string) {
+// cleanLocalGhosts removes local files not present in the remote file map.
+func (s *SyncService) cleanLocalGhosts(remoteMap map[string]domain.FileEntry) {
 	filepath.WalkDir(s.config.LocalDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -169,7 +169,7 @@ func (s *SyncService) cleanLocalGhosts(xxhashMap map[string]string) {
 		if relErr != nil {
 			return nil
 		}
-		if _, exists := xxhashMap[filepath.ToSlash(rel)]; !exists {
+		if _, exists := remoteMap[filepath.ToSlash(rel)]; !exists {
 			os.Remove(path)
 		}
 		return nil

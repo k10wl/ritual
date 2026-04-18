@@ -340,9 +340,9 @@ func TestSyncIntegration_DownloadDeletesLocalGhosts(t *testing.T) {
 	env.saveLocalManifest(t, &domain.Manifest{
 		Worlds: domain.WorldsManifest{
 			SyncState: domain.SyncState{
-				XXHashMap: map[string]string{
-					"world/level.dat": "stale_hash",
-					"world/ghost.dat": "ghost_hash",
+				XXHashMap: map[string]domain.FileEntry{
+					"world/level.dat": {Hash: "stale_hash", Size: 9},
+					"world/ghost.dat": {Hash: "ghost_hash", Size: 17},
 				},
 			},
 		},
@@ -362,7 +362,7 @@ func TestSyncIntegration_DownloadDeletesLocalGhosts(t *testing.T) {
 func TestSyncIntegration_EmptyDiff_NoTransfers(t *testing.T) {
 	env := newSyncTestEnv(t)
 
-	hashMap := map[string]string{"world/level.dat": "abc123"}
+	hashMap := map[string]domain.FileEntry{"world/level.dat": {Hash: "abc123", Size: 5}}
 	env.saveLocalManifest(t, &domain.Manifest{
 		Worlds: domain.WorldsManifest{
 			SyncState: domain.SyncState{XXHashMap: hashMap},

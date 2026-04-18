@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/cespare/xxhash/v2"
+	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )
 
@@ -21,8 +22,8 @@ func NewFullScanner(fsys fs.FS) *FullScanner {
 	return &FullScanner{fsys: fsys}
 }
 
-func (s *FullScanner) Scan(ctx context.Context) (map[string]string, error) {
-	result := make(map[string]string)
+func (s *FullScanner) Scan(ctx context.Context) (map[string]domain.FileEntry, error) {
+	result := make(map[string]domain.FileEntry)
 	err := fs.WalkDir(s.fsys, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -35,11 +36,15 @@ func (s *FullScanner) Scan(ctx context.Context) (map[string]string, error) {
 		if d.IsDir() || path == "." {
 			return nil
 		}
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			return fmt.Errorf("stat %s: %w", path, infoErr)
+		}
 		hash, hashErr := hashFSFile(s.fsys, path)
 		if hashErr != nil {
 			return fmt.Errorf("hashing %s: %w", path, hashErr)
 		}
-		result[path] = hash
+		result[path] = domain.FileEntry{Hash: hash, Size: info.Size()}
 		return nil
 	})
 	if err != nil {

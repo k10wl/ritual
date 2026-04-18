@@ -22,9 +22,10 @@ func TestFullScanner_Scan(t *testing.T) {
 	assert.Len(t, result, 2)
 	assert.Contains(t, result, "world/level.dat")
 	assert.Contains(t, result, "world/region/r.0.0.mca")
-	// Verify hashes are non-empty hex strings
-	for _, hash := range result {
-		assert.Len(t, hash, 16, "xxhash should be 16 hex chars")
+	// Verify hashes are non-empty hex strings and sizes match content.
+	for path, entry := range result {
+		assert.Len(t, entry.Hash, 16, "xxhash should be 16 hex chars")
+		assert.Greater(t, entry.Size, int64(0), "size must be populated for %s", path)
 	}
 }
 

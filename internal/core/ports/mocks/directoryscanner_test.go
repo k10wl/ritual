@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"ritual/internal/core/domain"
 )
 
 func TestMockDirectoryScanner_Scan_Success(t *testing.T) {
@@ -36,9 +37,9 @@ func TestMockDirectoryScanner_Scan_WithFunction(t *testing.T) {
 	mock := NewMockDirectoryScanner()
 	ctx := context.Background()
 	expectedErr := errors.New("scan failed")
-	expectedMap := map[string]string{"a.dat": "hash1"}
+	expectedMap := map[string]domain.FileEntry{"a.dat": {Hash: "hash1", Size: 5}}
 
-	mock.ScanFunc = func(ctx context.Context) (map[string]string, error) {
+	mock.ScanFunc = func(ctx context.Context) (map[string]domain.FileEntry, error) {
 		return expectedMap, expectedErr
 	}
 
@@ -72,7 +73,7 @@ func TestMockDirectoryScanner_Reset(t *testing.T) {
 	mock := NewMockDirectoryScanner()
 	ctx := context.Background()
 
-	mock.ScanFunc = func(ctx context.Context) (map[string]string, error) {
+	mock.ScanFunc = func(ctx context.Context) (map[string]domain.FileEntry, error) {
 		return nil, nil
 	}
 	_, _ = mock.Scan(ctx)

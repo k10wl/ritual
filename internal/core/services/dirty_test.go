@@ -8,16 +8,26 @@ import (
 )
 
 func TestShouldBackup_EqualMaps_False(t *testing.T) {
-	local := domain.SyncState{XXHashMap: map[string]string{"a": "h1", "b": "h2"}}
-	remote := domain.SyncState{XXHashMap: map[string]string{"a": "h1", "b": "h2"}}
+	local := domain.SyncState{XXHashMap: map[string]domain.FileEntry{
+		"a": {Hash: "h1", Size: 10},
+		"b": {Hash: "h2", Size: 20},
+	}}
+	remote := domain.SyncState{XXHashMap: map[string]domain.FileEntry{
+		"a": {Hash: "h1", Size: 10},
+		"b": {Hash: "h2", Size: 20},
+	}}
 	if services.ShouldBackup(local, remote) {
 		t.Error("equal maps: want false, got true")
 	}
 }
 
 func TestShouldBackup_DifferentMaps_True(t *testing.T) {
-	local := domain.SyncState{XXHashMap: map[string]string{"a": "h1"}}
-	remote := domain.SyncState{XXHashMap: map[string]string{"a": "h2"}}
+	local := domain.SyncState{XXHashMap: map[string]domain.FileEntry{
+		"a": {Hash: "h1", Size: 10},
+	}}
+	remote := domain.SyncState{XXHashMap: map[string]domain.FileEntry{
+		"a": {Hash: "h2", Size: 11},
+	}}
 	if !services.ShouldBackup(local, remote) {
 		t.Error("different hashes: want true, got false")
 	}
@@ -25,7 +35,9 @@ func TestShouldBackup_DifferentMaps_True(t *testing.T) {
 
 func TestShouldBackup_LocalEmpty_True(t *testing.T) {
 	local := domain.SyncState{}
-	remote := domain.SyncState{XXHashMap: map[string]string{"a": "h1"}}
+	remote := domain.SyncState{XXHashMap: map[string]domain.FileEntry{
+		"a": {Hash: "h1", Size: 10},
+	}}
 	if !services.ShouldBackup(local, remote) {
 		t.Error("local empty: want true, got false")
 	}

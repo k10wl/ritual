@@ -2,7 +2,7 @@ package domain
 
 import "sort"
 
-// DiffResult contains the sets of files that differ between two xxhash maps.
+// DiffResult contains the sets of files that differ between two file maps.
 // Upload = files changed or new in local vs remote.
 // Download = files changed or new in remote vs local.
 // Delete = files present in remote but absent in local.
@@ -12,24 +12,25 @@ type DiffResult struct {
 	Delete   []string
 }
 
-// ComputeDiff compares local and remote xxhash maps and produces three sorted sets.
-// Pure function — no IO, no side effects.
-func ComputeDiff(local, remote map[string]string) DiffResult {
+// ComputeDiff compares local and remote file maps by content hash and produces
+// three sorted sets. Pure function — no IO, no side effects. Size differences
+// alone do not produce a diff entry.
+func ComputeDiff(local, remote map[string]FileEntry) DiffResult {
 	var result DiffResult
 
-	for path, localHash := range local {
-		remoteHash, exists := remote[path]
-		if !exists || localHash != remoteHash {
+	for path, localEntry := range local {
+		remoteEntry, exists := remote[path]
+		if !exists || localEntry.Hash != remoteEntry.Hash {
 			result.Upload = append(result.Upload, path)
 		}
 	}
 
-	for path, remoteHash := range remote {
-		localHash, exists := local[path]
+	for path, remoteEntry := range remote {
+		localEntry, exists := local[path]
 		if !exists {
 			result.Download = append(result.Download, path)
 			result.Delete = append(result.Delete, path)
-		} else if remoteHash != localHash {
+		} else if remoteEntry.Hash != localEntry.Hash {
 			result.Download = append(result.Download, path)
 		}
 	}

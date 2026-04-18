@@ -1261,8 +1261,8 @@ func TestIntegration_CrashRecovery_LocalNewerKept(t *testing.T) {
 	remoteManifest.Lease.HeartbeatInterval = domain.Duration(200 * time.Millisecond)
 	remoteManifest.Lease.TTL = domain.Duration(2 * time.Second)
 	remoteManifest.Worlds.SyncState.XXHashSyncAt = time.Now().Add(-time.Hour)
-	remoteManifest.Worlds.SyncState.XXHashMap = map[string]string{
-		"world/level.dat": "remote-hash-old",
+	remoteManifest.Worlds.SyncState.XXHashMap = map[string]domain.FileEntry{
+		"world/level.dat": {Hash: "remote-hash-old", Size: 16},
 	}
 	require.NoError(t, ritual.remoteManifests.Save(ritual.ctx, remoteManifest), "save remote manifest for crash recovery")
 

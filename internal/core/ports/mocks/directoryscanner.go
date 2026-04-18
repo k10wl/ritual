@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 
+	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )
 
 // MockDirectoryScanner is a mock implementation of DirectoryScanner for testing
 type MockDirectoryScanner struct {
-	ScanFunc   func(ctx context.Context) (map[string]string, error)
+	ScanFunc   func(ctx context.Context) (map[string]domain.FileEntry, error)
 	ScanCalled bool
 	ScanCount  int
 }
@@ -22,8 +23,8 @@ func NewMockDirectoryScanner() *MockDirectoryScanner {
 	return &MockDirectoryScanner{}
 }
 
-// Scan produces an xxhash map of world files
-func (m *MockDirectoryScanner) Scan(ctx context.Context) (map[string]string, error) {
+// Scan produces a file map of world files.
+func (m *MockDirectoryScanner) Scan(ctx context.Context) (map[string]domain.FileEntry, error) {
 	if m == nil {
 		return nil, errors.New("mock directory scanner cannot be nil")
 	}
@@ -37,7 +38,7 @@ func (m *MockDirectoryScanner) Scan(ctx context.Context) (map[string]string, err
 	if m.ScanFunc != nil {
 		return m.ScanFunc(ctx)
 	}
-	return map[string]string{}, nil
+	return map[string]domain.FileEntry{}, nil
 }
 
 // Reset clears the mock state

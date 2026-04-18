@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"ritual/internal/adapters"
+	"ritual/internal/core/domain"
 )
 
 func TestParseRitualSync(t *testing.T) {
@@ -84,12 +85,12 @@ func TestParseRitualSync(t *testing.T) {
 }
 
 func TestFilteredScanner_WhitelistApplied(t *testing.T) {
-	inner := &mockScanner{result: map[string]string{
-		".ritualsync":     "hash0",
-		"server.jar":      "hash1",
-		"config/a.cfg":    "hash2",
-		"logs/latest.log": "hash3",
-		"cache/data":      "hash4",
+	inner := &mockScanner{result: map[string]domain.FileEntry{
+		".ritualsync":     {Hash: "hash0", Size: 1},
+		"server.jar":      {Hash: "hash1", Size: 100},
+		"config/a.cfg":    {Hash: "hash2", Size: 50},
+		"logs/latest.log": {Hash: "hash3", Size: 200},
+		"cache/data":      {Hash: "hash4", Size: 80},
 	}}
 	filter := func(path string) bool {
 		return path == "server.jar" || strings.HasPrefix(path, "config/")
@@ -113,11 +114,11 @@ func TestFilteredScanner_InnerError(t *testing.T) {
 }
 
 type mockScanner struct {
-	result map[string]string
+	result map[string]domain.FileEntry
 	err    error
 }
 
-func (m *mockScanner) Scan(ctx context.Context) (map[string]string, error) {
+func (m *mockScanner) Scan(ctx context.Context) (map[string]domain.FileEntry, error) {
 	if m.err != nil {
 		return nil, m.err
 	}

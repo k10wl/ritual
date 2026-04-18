@@ -15,7 +15,9 @@ import (
 )
 
 func TestSyncService_Download_EmptyDiff(t *testing.T) {
-	state := domain.SyncState{XXHashMap: map[string]string{"a": "h1"}}
+	state := domain.SyncState{XXHashMap: map[string]domain.FileEntry{
+		"a": {Hash: "h1", Size: 10},
+	}}
 	svc := services.NewSyncService(nil, nil, nil, nil,
 		services.SyncConfig{Prefix: "test", LocalDir: t.TempDir()},
 		t.TempDir(), "sync/test",
@@ -26,9 +28,11 @@ func TestSyncService_Download_EmptyDiff(t *testing.T) {
 }
 
 func TestSyncService_Upload_EmptyDiff(t *testing.T) {
-	hashMap := map[string]string{"a": "h1"}
+	hashMap := map[string]domain.FileEntry{
+		"a": {Hash: "h1", Size: 10},
+	}
 	mockScanner := &mocks.MockDirectoryScanner{
-		ScanFunc: func(ctx context.Context) (map[string]string, error) {
+		ScanFunc: func(ctx context.Context) (map[string]domain.FileEntry, error) {
 			return maps.Clone(hashMap), nil
 		},
 	}
@@ -44,8 +48,13 @@ func TestSyncService_Upload_EmptyDiff(t *testing.T) {
 }
 
 func TestSyncService_Download_ValueSemantics(t *testing.T) {
-	local := domain.SyncState{XXHashMap: map[string]string{"a": "h1"}}
-	remote := domain.SyncState{XXHashMap: map[string]string{"a": "h2", "b": "h3"}}
+	local := domain.SyncState{XXHashMap: map[string]domain.FileEntry{
+		"a": {Hash: "h1", Size: 10},
+	}}
+	remote := domain.SyncState{XXHashMap: map[string]domain.FileEntry{
+		"a": {Hash: "h2", Size: 11},
+		"b": {Hash: "h3", Size: 12},
+	}}
 	originalLocal := maps.Clone(local.XXHashMap)
 
 	mockRemote := &mocks.MockStorageRepository{
@@ -64,8 +73,10 @@ func TestSyncService_Download_ValueSemantics(t *testing.T) {
 }
 
 func TestSyncService_Download_StageFailure(t *testing.T) {
-	local := domain.SyncState{XXHashMap: map[string]string{}}
-	remote := domain.SyncState{XXHashMap: map[string]string{"a": "h1"}}
+	local := domain.SyncState{XXHashMap: map[string]domain.FileEntry{}}
+	remote := domain.SyncState{XXHashMap: map[string]domain.FileEntry{
+		"a": {Hash: "h1", Size: 10},
+	}}
 
 	mockRemote := &mocks.MockStorageRepository{
 		GetFunc: func(ctx context.Context, key string) ([]byte, error) {

@@ -74,9 +74,9 @@ func TestManifest_XXHashMap_MarshalRoundtrip(t *testing.T) {
 		RitualVersion:   "2.0.0",
 		Worlds: WorldsManifest{
 			SyncState: SyncState{
-				XXHashMap: map[string]string{
-					"world/region/r.0.0.mca": "a1b2c3d4e5f6",
-					"world/level.dat":        "1a2b3c4d5e6f",
+				XXHashMap: map[string]FileEntry{
+					"world/region/r.0.0.mca": {Hash: "a1b2c3d4e5f6", Size: 1024},
+					"world/level.dat":        {Hash: "1a2b3c4d5e6f", Size: 256},
 				},
 				XXHashSyncAt: time.Date(2026, 4, 14, 10, 30, 0, 0, time.UTC),
 			},
@@ -109,8 +109,8 @@ func TestManifest_Clone_DeepCopiesXXHashMap(t *testing.T) {
 	original := &Manifest{
 		Worlds: WorldsManifest{
 			SyncState: SyncState{
-				XXHashMap: map[string]string{
-					"world/level.dat": "abc123",
+				XXHashMap: map[string]FileEntry{
+					"world/level.dat": {Hash: "abc123", Size: 512},
 				},
 				XXHashSyncAt: time.Date(2026, 4, 14, 10, 0, 0, 0, time.UTC),
 			},
@@ -123,8 +123,8 @@ func TestManifest_Clone_DeepCopiesXXHashMap(t *testing.T) {
 	assert.True(t, original.Worlds.XXHashSyncAt.Equal(clone.Worlds.XXHashSyncAt))
 
 	// mutating clone must not affect original
-	clone.Worlds.XXHashMap["world/level.dat"] = "modified"
-	assert.Equal(t, "abc123", original.Worlds.XXHashMap["world/level.dat"])
+	clone.Worlds.XXHashMap["world/level.dat"] = FileEntry{Hash: "modified", Size: 1}
+	assert.Equal(t, "abc123", original.Worlds.XXHashMap["world/level.dat"].Hash)
 }
 
 func TestManifest_Clone_NilXXHashMap(t *testing.T) {

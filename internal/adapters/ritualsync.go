@@ -9,6 +9,7 @@ import (
 	"maps"
 	"strings"
 
+	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )
 
@@ -66,19 +67,21 @@ func ParseRitualSync(fsys fs.FS) (func(string) bool, error) {
 }
 
 // scannerFunc adapts a function to the DirectoryScanner interface.
-type scannerFunc func(context.Context) (map[string]string, error)
+type scannerFunc func(context.Context) (map[string]domain.FileEntry, error)
 
-func (f scannerFunc) Scan(ctx context.Context) (map[string]string, error) { return f(ctx) }
+func (f scannerFunc) Scan(ctx context.Context) (map[string]domain.FileEntry, error) {
+	return f(ctx)
+}
 
 // NewFilteredScanner wraps a scanner with a path filter.
 // .ritualsync itself always passes (exempt from its own filter).
 func NewFilteredScanner(inner ports.DirectoryScanner, filter func(string) bool) ports.DirectoryScanner {
-	return scannerFunc(func(ctx context.Context) (map[string]string, error) {
+	return scannerFunc(func(ctx context.Context) (map[string]domain.FileEntry, error) {
 		m, err := inner.Scan(ctx)
 		if err != nil {
 			return nil, err
 		}
-		maps.DeleteFunc(m, func(path, _ string) bool {
+		maps.DeleteFunc(m, func(path string, _ domain.FileEntry) bool {
 			return path != ritualSyncFile && !filter(path)
 		})
 		return m, nil
