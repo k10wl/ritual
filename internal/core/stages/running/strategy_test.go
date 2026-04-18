@@ -217,6 +217,15 @@ func hasEvent[T ports.Event](events []ports.Event) bool {
 	return false
 }
 
+func findEvent[T ports.Event](events []ports.Event) *T {
+	for _, e := range events {
+		if v, ok := e.(T); ok {
+			return &v
+		}
+	}
+	return nil
+}
+
 // Story 5.3 — outside stop: ctx cancel after readiness must trigger a
 // graceful stdin `stop\n` rather than TerminateProcess. Server responds,
 // exits 0, classifier routes to onNext with full lifecycle.
@@ -445,4 +454,43 @@ func TestRunning_OutsideStop_ForceKillFallback_StillStopped(t *testing.T) {
 	assert.True(t, hasEvent[ports.ServerStoppingInfo](*events), "ServerStoppingInfo must be published even when force-killed")
 	assert.True(t, hasEvent[ports.ServerStoppedInfo](*events), "ServerStoppedInfo must be published after force-kill")
 	assert.False(t, hasEvent[ports.ServerCrashedInfo](*events), "force-kill after ctx-cancel is not a crash")
+
+	stopped := findEvent[ports.ServerStoppedInfo](*events)
+	require.NotNil(t, stopped, "ServerStoppedInfo must be present")
+	assert.True(t, stopped.Forced, "force-killed stop must set Forced=true so UI can distinguish from graceful")
+}
+
+// Fix 2 — cmd.Cancel publishes ServerStopRequestedInfo so the UI can show
+// "Stopping…" (user intent) immediately, separate from ServerStoppingInfo
+// which only fires when stop\n is actually delivered to the server.
+func TestRunning_UserCancel_PublishesStopRequested(t *testing.T) {
+	bus := adapters.NewEventBus(64)
+	events, stopCollect := collectEvents(t, bus)
+	defer stopCollect()
+
+	onNext := &sentinel{name: "NEXT"}
+	onCrash := &sentinel{name: "CRASH"}
+
+	strategy := running.New(
+		&helperCmdBuilder{mode: "outside_stop_respects"},
+		&stubReadiness{err: nil},
+		onNext,
+		onCrash,
+	)
+	strategy.SetStopGracePeriod(500 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 1*time.Second)
+	defer cancel()
+	time.AfterFunc(40*time.Millisecond, cancel)
+
+	rs := &ritual.RunState{Bus: bus}
+	_, err := strategy.Run(ctx, rs)
+	require.NoError(t, err)
+
+	stopCollect()
+	assert.True(t, hasEvent[ports.ServerStopRequestedInfo](*events), "cmd.Cancel must publish ServerStopRequestedInfo")
+
+	stopped := findEvent[ports.ServerStoppedInfo](*events)
+	require.NotNil(t, stopped, "ServerStoppedInfo must be present")
+	assert.False(t, stopped.Forced, "graceful stop must leave Forced=false")
 }

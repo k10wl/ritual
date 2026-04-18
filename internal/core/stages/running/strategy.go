@@ -29,12 +29,23 @@ type Strategy struct {
 	inFlight        atomic.Bool
 }
 
+// DefaultStopGracePeriod is the WaitDelay applied when the caller does not
+// override via SetStopGracePeriod. Generous enough to cover Minecraft cold
+// start + save on graceful stop; force-kill fires only if truly hung.
+const DefaultStopGracePeriod = 5 * time.Minute
+
 func New(
 	cmd ports.CmdBuilder,
 	readiness ports.ReadinessCheck,
 	onNext, onCrash machine.Strategy[ritual.RunState],
 ) *Strategy {
-	return &Strategy{cmd: cmd, readiness: readiness, onNext: onNext, onCrash: onCrash}
+	return &Strategy{
+		cmd:             cmd,
+		readiness:       readiness,
+		onNext:          onNext,
+		onCrash:         onCrash,
+		stopGracePeriod: DefaultStopGracePeriod,
+	}
 }
 
 // SetStopGracePeriod bounds how long Go waits after ctx.Done — and the
@@ -74,7 +85,11 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 	stoppingDetectedCh := make(chan struct{}, 1)
 	coordDone := make(chan struct{})
 
-	cmd.Cancel = func() error { signal(stopCh); return nil }
+	cmd.Cancel = func() error {
+		publish(rs.Bus, ports.ServerStopRequestedInfo{})
+		signal(stopCh)
+		return nil
+	}
 	cmd.WaitDelay = s.stopGracePeriod
 
 	publish(rs.Bus, ports.StartInfo{Operation: "server"})
@@ -111,7 +126,11 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 		publish(rs.Bus, ports.ServerCrashedInfo{Err: waitErr})
 		return s.onCrash, nil
 	}
-	publish(rs.Bus, ports.ServerStoppedInfo{})
+	// With Cancel set, Go's exec returns ctx.Err() as waitErr even on clean
+	// process exit. ProcessState reflects the actual exit code; Success()
+	// is the true signal for "exited cleanly within grace period".
+	forced := ctx.Err() != nil && cmd.ProcessState != nil && !cmd.ProcessState.Success()
+	publish(rs.Bus, ports.ServerStoppedInfo{Forced: forced})
 	publish(rs.Bus, ports.FinishInfo{Operation: "server"})
 	return s.onNext, nil
 }
@@ -134,8 +153,15 @@ func coordinate(
 	emitStopping := func() {
 		stoppingOnce.Do(func() { publish(bus, ports.ServerStoppingInfo{}) })
 	}
+	writeStdin := func(s string) error {
+		_, err := io.WriteString(stdin, s)
+		if err != nil {
+			publish(bus, ports.ErrorInfo{Operation: "server", Err: err})
+		}
+		return err
+	}
 	writeStop := func() {
-		if _, err := io.WriteString(stdin, "stop\n"); err == nil {
+		if writeStdin("stop\n") == nil {
 			emitStopping()
 		}
 	}
@@ -145,7 +171,7 @@ func coordinate(
 		case <-done:
 			return
 		case <-readyCh:
-			io.WriteString(stdin, "save-off\n")
+			writeStdin("save-off\n")
 			ready = true
 			publish(bus, ports.ServerReadyInfo{})
 			if stopQueued {
@@ -164,9 +190,10 @@ func coordinate(
 				return
 			}
 			if _, ok := e.(ports.SaveRequested); ok {
-				io.WriteString(stdin, "save-all flush\n")
-				if waitForLine(outCh, "Saved the game", 30*time.Second) {
-					publish(bus, ports.SaveCompleted{})
+				if writeStdin("save-all flush\n") == nil {
+					if waitForLine(outCh, "Saved the game", 30*time.Second) {
+						publish(bus, ports.SaveCompleted{})
+					}
 				}
 			}
 		}

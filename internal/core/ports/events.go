@@ -125,13 +125,24 @@ type ServerOutputInfo struct{ Line string }
 
 func (s ServerOutputInfo) String() string { return s.Line }
 
+type ServerStopRequestedInfo struct{}
+
+func (ServerStopRequestedInfo) String() string { return "server stop requested" }
+
 type ServerStoppingInfo struct{}
 
 func (ServerStoppingInfo) String() string { return "server stopping" }
 
-type ServerStoppedInfo struct{}
+// ServerStoppedInfo fires on any graceful terminal state. Forced=true means
+// the server did not exit within the grace period and was TerminateProcess'd.
+type ServerStoppedInfo struct{ Forced bool }
 
-func (ServerStoppedInfo) String() string { return "server stopped" }
+func (s ServerStoppedInfo) String() string {
+	if s.Forced {
+		return "server stopped (forced)"
+	}
+	return "server stopped"
+}
 
 type ServerCrashedInfo struct{ Err error }
 
