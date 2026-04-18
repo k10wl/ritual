@@ -39,7 +39,8 @@ func (s *Scanning) Run(ctx context.Context, rs *RunState) (machine.Strategy[RunS
 		// manifest" path uses DstManifestRead from inverted wiring). For
 		// symmetry, scan emits empty SrcMap.
 		rs.SrcMap = map[string]domain.FileEntry{}
-	} else {
+	}
+	if s.scanner != nil {
 		m, err := s.scanner.Scan(ctx)
 		if err != nil {
 			return s.fail(rs, fmt.Errorf("scan src: %w", err))

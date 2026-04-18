@@ -25,14 +25,11 @@ func NewPlanning(onContinue, onEmpty machine.Strategy[RunState]) *Planning {
 func (p *Planning) Run(_ context.Context, rs *RunState) (machine.Strategy[RunState], error) {
 	rs.Diff = domain.ComputeDiff(rs.SrcMap, rs.DstMap)
 
-	addBytes := sumSizes(rs.Diff.Upload, rs.SrcMap, rs.DstMap)
 	addCount, updateCount := splitAddVsUpdate(rs.Diff.Upload, rs.DstMap)
-	addOnlyBytes, updateOnlyBytes := splitAddVsUpdateBytes(rs.Diff.Upload, rs.SrcMap, rs.DstMap)
+	addBytes, updateBytes := splitAddVsUpdateBytes(rs.Diff.Upload, rs.SrcMap, rs.DstMap)
 	deleteBytes := sumSizes(rs.Diff.Delete, rs.DstMap, rs.SrcMap)
 
-	_ = addBytes // computed for clarity; total exposed via add+update bytes
-
-	rs.TransferBytes = addOnlyBytes + updateOnlyBytes
+	rs.TransferBytes = addBytes + updateBytes
 	rs.DeleteBytes = deleteBytes
 
 	env := rs.envelope()
@@ -41,8 +38,8 @@ func (p *Planning) Run(_ context.Context, rs *RunState) (machine.Strategy[RunSta
 		Adds:        addCount,
 		Updates:     updateCount,
 		Deletes:     len(rs.Diff.Delete),
-		AddBytes:    addOnlyBytes,
-		UpdateBytes: updateOnlyBytes,
+		AddBytes:    addBytes,
+		UpdateBytes: updateBytes,
 		DeleteBytes: deleteBytes,
 	})
 

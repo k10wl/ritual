@@ -42,9 +42,8 @@ func (s *Committing) Run(ctx context.Context, rs *RunState) (machine.Strategy[Ru
 		if err := rs.Dst.Copy(ctx, stagedKey, path); err != nil {
 			return s.fail(rs, path, fmt.Errorf("copy %s: %w", path, err))
 		}
-		// Delete the staging key after successful copy. Failure here is
-		// non-fatal — staging cleanup will sweep anything left.
-		_ = rs.Dst.Delete(ctx, stagedKey)
+		// Per-key delete is intentionally omitted: StagingDirCleanup
+		// sweeps the entire staging tree at end-of-run.
 		bytesDone += rs.SrcMap[path].Size
 		rs.Publish(SyncCommitProgressInfo{
 			syncBase:   env,

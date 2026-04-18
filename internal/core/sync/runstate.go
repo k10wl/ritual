@@ -49,9 +49,9 @@ type RunState struct {
 	DstMap map[string]domain.FileEntry
 
 	// Diff and totals are populated by Planning.
-	Diff           domain.DiffResult
-	TransferBytes  int64
-	DeleteBytes    int64
+	Diff          domain.DiffResult
+	TransferBytes int64
+	DeleteBytes   int64
 
 	// StagingID + StagingPath are set by StageDirInit.
 	StagingID   string
