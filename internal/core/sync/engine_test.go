@@ -6,27 +6,27 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"ritual/internal/adapters"
-	"ritual/internal/adapters/observed"
-	"ritual/internal/core/domain"
-	"ritual/internal/core/ports"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"ritual/internal/adapters"
+	"ritual/internal/adapters/observed"
+	"ritual/internal/core/domain"
+	"ritual/internal/core/ports"
 	syncpkg "ritual/internal/core/sync"
 )
 
-// drainTypes consumes all events on ch into a list of reflect.Type values.
-// Returns once the channel is empty for one tick.
-func drainTypes(ch <-chan ports.Event, prefix string) []string {
+// drainTypes consumes events on ch into a list of type-name strings,
+// keeping only those whose package portion equals pkgName.
+func drainTypes(ch <-chan ports.Event, pkgName string) []string {
 	var names []string
 	for {
 		select {
 		case evt := <-ch:
 			tn := reflect.TypeOf(evt).String()
-			if prefix == "" || hasPkgPrefix(tn, prefix) {
+			if pkgName == "" || hasPkgPrefix(tn, pkgName+".") {
 				names = append(names, tn)
 			}
 		default:
@@ -64,6 +64,14 @@ func readFile(t *testing.T, root, rel string) []byte {
 	return data
 }
 
+func scanFS(t *testing.T, root string) map[string]domain.FileEntry {
+	t.Helper()
+	scanner := adapters.NewFullScanner(os.DirFS(root))
+	m, err := scanner.Scan(t.Context())
+	require.NoError(t, err)
+	return m
+}
+
 func TestSyncEngine_HappyPath_LocalToLocal(t *testing.T) {
 	srcRepo, srcDir := setupFS(t, "fs-src")
 	dstRepo, dstDir := setupFS(t, "fs-dst")
@@ -78,24 +86,21 @@ func TestSyncEngine_HappyPath_LocalToLocal(t *testing.T) {
 	src := observed.NewStorage(srcRepo, bus)
 	dst := observed.NewStorage(dstRepo, bus)
 
-	scanner := adapters.NewFullScanner(os.DirFS(srcDir))
-	dstManifest := func() (map[string]domain.FileEntry, error) {
-		return map[string]domain.FileEntry{}, nil
-	}
+	srcMap := scanFS(t, srcDir)
+	dstMap := map[string]domain.FileEntry{}
 
-	rs, err := syncpkg.Run(t.Context(), src, dst, scanner, dstManifest, syncpkg.DirectionUpload, bus)
+	rs, err := syncpkg.Run(t.Context(), src, dst, srcMap, dstMap, syncpkg.DirectionUpload, bus)
 	require.NoError(t, err)
 	require.NoError(t, rs.Err)
 
 	assert.Equal(t, []byte("alpha"), readFile(t, dstDir, "a.dat"))
 	assert.Equal(t, []byte("beta"), readFile(t, dstDir, "nested/b.dat"))
 
-	// Staging dir gone after success.
 	stagingPath := filepath.Join(dstDir, rs.StagingPath)
 	_, statErr := os.Stat(stagingPath)
 	assert.True(t, os.IsNotExist(statErr), "staging dir must be removed after success: stat err = %v", statErr)
 
-	syncTypes := drainTypes(ch, "sync.")
+	syncTypes := drainTypes(ch, "sync")
 	assert.Contains(t, syncTypes, "sync.SyncStartedInfo")
 	assert.Contains(t, syncTypes, "sync.SyncPlanInfo")
 	assert.Contains(t, syncTypes, "sync.SyncStagingDirCreatedInfo")
@@ -118,16 +123,13 @@ func TestSyncEngine_EmptyDiff_ShortCircuits(t *testing.T) {
 	src := observed.NewStorage(srcRepo, bus)
 	dst := observed.NewStorage(dstRepo, bus)
 
-	scanner := mapScanner(map[string]domain.FileEntry{})
-	dstManifest := func() (map[string]domain.FileEntry, error) {
-		return map[string]domain.FileEntry{}, nil
-	}
-
-	rs, err := syncpkg.Run(t.Context(), src, dst, scanner, dstManifest, syncpkg.DirectionUpload, bus)
+	rs, err := syncpkg.Run(t.Context(), src, dst,
+		map[string]domain.FileEntry{}, map[string]domain.FileEntry{},
+		syncpkg.DirectionUpload, bus)
 	require.NoError(t, err)
 	assert.Empty(t, rs.StagingID, "no staging dir should be created on empty diff")
 
-	syncTypes := drainTypes(ch, "sync.")
+	syncTypes := drainTypes(ch, "sync")
 	assert.Contains(t, syncTypes, "sync.SyncStartedInfo")
 	assert.Contains(t, syncTypes, "sync.SyncPlanInfo")
 	assert.NotContains(t, syncTypes, "sync.SyncStagingDirCreatedInfo")
@@ -148,16 +150,15 @@ func TestSyncEngine_StagingFailure_CleansUp(t *testing.T) {
 	dst := &failingPutStorage{inner: dstRepo, failOn: "a.dat"}
 	dstObserved := observed.NewStorage(dst, bus)
 
-	scanner := adapters.NewFullScanner(os.DirFS(srcDir))
-	dstManifest := func() (map[string]domain.FileEntry, error) {
-		return map[string]domain.FileEntry{}, nil
-	}
+	srcMap := scanFS(t, srcDir)
 
-	_, err := syncpkg.Run(t.Context(), src, dstObserved, scanner, dstManifest, syncpkg.DirectionUpload, bus)
+	_, err := syncpkg.Run(t.Context(), src, dstObserved,
+		srcMap, map[string]domain.FileEntry{},
+		syncpkg.DirectionUpload, bus)
 	require.Error(t, err, "expected stage failure to surface")
 	assert.Contains(t, err.Error(), "put a.dat")
 
-	syncTypes := drainTypes(ch, "sync.")
+	syncTypes := drainTypes(ch, "sync")
 	assert.Contains(t, syncTypes, "sync.SyncStageFailedInfo")
 	assert.Contains(t, syncTypes, "sync.SyncFailedInfo")
 	assert.Contains(t, syncTypes, "sync.SyncStagingDirCleanedInfo")
@@ -172,6 +173,7 @@ type failingPutStorage struct {
 }
 
 func (f *failingPutStorage) String() string { return "failing::" + f.failOn }
+
 func (f *failingPutStorage) Get(ctx context.Context, key string) ([]byte, error) {
 	return f.inner.Get(ctx, key)
 }
@@ -213,11 +215,4 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
-}
-
-// mapScanner is a DirectoryScanner that returns a fixed map.
-type mapScanner map[string]domain.FileEntry
-
-func (m mapScanner) Scan(_ context.Context) (map[string]domain.FileEntry, error) {
-	return m, nil
 }

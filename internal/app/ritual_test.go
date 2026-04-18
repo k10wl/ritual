@@ -50,8 +50,8 @@ func (noopRetention) Apply(_ context.Context) error { return nil }
 
 type fakeCmdBuilder struct{}
 
-func (fakeCmdBuilder) Build(_ context.Context, _ io.Reader, _ io.Writer) (*exec.Cmd, error) {
-	return exec.Command("echo", "ok"), nil
+func (fakeCmdBuilder) Build(ctx context.Context, _ io.Reader, _ io.Writer) (*exec.Cmd, error) {
+	return exec.CommandContext(ctx, "echo", "ok"), nil
 }
 
 func waitForStatus(t *testing.T, ch <-chan ports.Event, want app.Outcome, timeout time.Duration) {

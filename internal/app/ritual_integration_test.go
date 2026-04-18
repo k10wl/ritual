@@ -227,11 +227,21 @@ type fakeServerCmdBuilder struct {
 	server *fakeServer
 }
 
-func (b *fakeServerCmdBuilder) Build(_ context.Context, _ io.Reader, stdout io.Writer) (*exec.Cmd, error) {
-	pr, pw := io.Pipe()
+func (b *fakeServerCmdBuilder) Build(ctx context.Context, _ io.Reader, stdout io.Writer) (*exec.Cmd, error) {
+	// os.Pipe (not io.Pipe): exec dups the read fd directly into the
+	// subprocess, avoiding a copier goroutine. The test's writes to pw
+	// land in the kernel buffer immediately, even before exec.Cmd.Start
+	// returns, so a quick exit() right after waitReady never deadlocks.
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
 	b.server.ready <- pw
 
-	cmd := exec.Command(b.server.binary, "--root", b.server.root)
+	// exec.CommandContext (not exec.Command): the running stage sets
+	// cmd.Cancel, which Go only accepts on a ctx-bound Cmd. Same binding
+	// as the production ServerCmdBuilder.
+	cmd := exec.CommandContext(ctx, b.server.binary, "--root", b.server.root)
 	cmd.Stdin = pr
 	cmd.Stdout = stdout
 	cmd.Stderr = stdout
@@ -1061,8 +1071,8 @@ type liveSyncCmdBuilder struct {
 	root   string
 }
 
-func (b *liveSyncCmdBuilder) Build(_ context.Context, stdin io.Reader, stdout io.Writer) (*exec.Cmd, error) {
-	cmd := exec.Command(b.binary, "--root", b.root)
+func (b *liveSyncCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io.Writer) (*exec.Cmd, error) {
+	cmd := exec.CommandContext(ctx, b.binary, "--root", b.root)
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stdout

@@ -6,16 +6,13 @@ package sync
 
 import (
 	"fmt"
+	"time"
+
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
-	"time"
 )
 
-// Direction is the cleanup mode of a sync run. It is a wiring concern, not
-// an event field — orphan cleanup deletes from dst while ghost cleanup
-// deletes from dst as well, but in the context of a download direction.
-// Encoded here so a single engine wires both directions without inspecting
-// store identity.
+// Direction is the cleanup mode of a sync run.
 type Direction int
 
 // Direction values select the cleanup wiring of a sync run.
@@ -26,10 +23,9 @@ const (
 	DirectionDownload
 )
 
-// RunState is shared across strategies for a single sync run. Strategies
-// produce fields top-to-bottom: Scanning fills SrcMap+DstMap, Planning
-// fills Diff/TransferBytes/DeleteBytes, StageDirInit fills StagingID/
-// StagingPath, the rest read those fields.
+// RunState is shared across strategies for a single sync run. The engine
+// constructs it with src/dst stores and pre-built file maps; strategies
+// fill Diff, StagingID, StagingPath, and the failure fields as they run.
 type RunState struct {
 	// Wired at construction.
 	Src       ports.StorageRepository
@@ -39,16 +35,12 @@ type RunState struct {
 	Direction Direction
 	Bus       ports.EventBus
 
-	// Manifest plumbing — Scanning loads dst manifest via these.
-	DstManifestRead func() (map[string]domain.FileEntry, error)
-
-	// Started is set by Scanning; consumed by Done for total duration.
-	Started time.Time
-
-	// SrcMap is populated by Scanning.
+	// Pre-built by the caller before drive.
 	SrcMap map[string]domain.FileEntry
-	// DstMap is populated by Scanning (read from manifest).
 	DstMap map[string]domain.FileEntry
+
+	// Started is set by the engine before the chain runs.
+	Started time.Time
 
 	// Diff and totals are populated by Planning.
 	Diff          domain.DiffResult

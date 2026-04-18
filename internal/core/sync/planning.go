@@ -63,7 +63,10 @@ func (p *Planning) Run(_ context.Context, rs *RunState) (machine.Strategy[RunSta
 		})
 	}
 
-	if len(rs.Diff.Upload) == 0 && len(rs.Diff.Delete) == 0 {
+	// No file transfers → skip StageDirInit. Pure-delete runs go straight
+	// to the cleanup branch so we never allocate a staging dir we'd then
+	// have to clean up empty-handed.
+	if len(rs.Diff.Upload) == 0 {
 		return p.onEmpty, nil
 	}
 	return p.onContinue, nil
