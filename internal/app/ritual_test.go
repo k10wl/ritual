@@ -20,12 +20,14 @@ import (
 
 type fakeStorage struct{}
 
+func (fakeStorage) String() string                                     { return "fake::storage" }
 func (fakeStorage) Get(_ context.Context, _ string) ([]byte, error)    { return nil, nil }
 func (fakeStorage) Put(_ context.Context, _ string, _ []byte) error    { return nil }
 func (fakeStorage) Delete(_ context.Context, _ string) error           { return nil }
 func (fakeStorage) DeleteBatch(_ context.Context, _ []string) error    { return nil }
 func (fakeStorage) List(_ context.Context, _ string) ([]string, error) { return nil, nil }
 func (fakeStorage) Copy(_ context.Context, _, _ string) error          { return nil }
+func (fakeStorage) Rename(_ context.Context, _, _ string) error        { return nil }
 
 type fakeManifestStore struct{}
 

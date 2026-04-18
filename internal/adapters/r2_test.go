@@ -85,7 +85,10 @@ func TestR2Repository_SuccessCases(t *testing.T) {
 	t.Run("delete success", func(t *testing.T) {
 		key := "test-key"
 
-		mockClient.On("DeleteObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.DeleteObjectOutput{}, nil)
+		mockClient.On("ListObjectsV2", mock.Anything, mock.Anything, mock.Anything).Return(&s3.ListObjectsV2Output{
+			Contents: []types.Object{{Key: &key}},
+		}, nil).Once()
+		mockClient.On("DeleteObjects", mock.Anything, mock.Anything, mock.Anything).Return(&s3.DeleteObjectsOutput{}, nil).Once()
 
 		err := repo.Delete(context.Background(), key)
 
@@ -169,7 +172,10 @@ func TestR2Repository_ErrorConditions(t *testing.T) {
 		key := "test-key"
 		mockErr := errors.New("s3 error")
 
-		mockClient.On("DeleteObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.DeleteObjectOutput{}, mockErr)
+		mockClient.On("ListObjectsV2", mock.Anything, mock.Anything, mock.Anything).Return(&s3.ListObjectsV2Output{
+			Contents: []types.Object{{Key: &key}},
+		}, nil).Once()
+		mockClient.On("DeleteObjects", mock.Anything, mock.Anything, mock.Anything).Return(&s3.DeleteObjectsOutput{}, mockErr).Once()
 
 		err := repo.Delete(context.Background(), key)
 
@@ -346,17 +352,6 @@ func TestR2Repository_RetriesTransient(t *testing.T) {
 			},
 			invoke: func(repo *R2Repository) error { return repo.Put(context.Background(), "k", []byte("v")) },
 			call:   "PutObject",
-		},
-		{
-			name: "Delete",
-			setup: func(m *MockS3Client) {
-				m.On("DeleteObject", mock.Anything, mock.Anything, mock.Anything).
-					Return(&s3.DeleteObjectOutput{}, flaky).Twice()
-				m.On("DeleteObject", mock.Anything, mock.Anything, mock.Anything).
-					Return(&s3.DeleteObjectOutput{}, nil).Once()
-			},
-			invoke: func(repo *R2Repository) error { return repo.Delete(context.Background(), "k") },
-			call:   "DeleteObject",
 		},
 		{
 			name: "List",

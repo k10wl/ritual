@@ -7,12 +7,33 @@ import (
 
 // MockStorageRepository is a mock implementation of StorageRepository for testing
 type MockStorageRepository struct {
+	Label           string
 	GetFunc         func(ctx context.Context, key string) ([]byte, error)
 	PutFunc         func(ctx context.Context, key string, data []byte) error
 	DeleteFunc      func(ctx context.Context, key string) error
 	DeleteBatchFunc func(ctx context.Context, keys []string) error
 	ListFunc        func(ctx context.Context, prefix string) ([]string, error)
 	CopyFunc        func(ctx context.Context, sourceKey string, destKey string) error
+	RenameFunc      func(ctx context.Context, sourceKey string, destKey string) error
+}
+
+// String returns adapter label, defaulting to "mock::storage" when unset.
+func (m *MockStorageRepository) String() string {
+	if m.Label != "" {
+		return m.Label
+	}
+	return "mock::storage"
+}
+
+// Rename moves data from sourceKey to destKey.
+func (m *MockStorageRepository) Rename(ctx context.Context, sourceKey string, destKey string) error {
+	if m.RenameFunc != nil {
+		return m.RenameFunc(ctx, sourceKey, destKey)
+	}
+	if err := m.Copy(ctx, sourceKey, destKey); err != nil {
+		return err
+	}
+	return m.Delete(ctx, sourceKey)
 }
 
 // NewMockStorageRepository creates a new mock storage repository

@@ -2,31 +2,29 @@ package ports
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os/exec"
 	"ritual/internal/core/domain"
 )
 
-// StorageRepository defines the interface for storage operations
-// This abstraction allows switching between local filesystem and cloud storage
+// StorageRepository defines the interface for storage operations.
+// Embeds fmt.Stringer so adapters self-describe in observability events
+// (e.g. "fs::./worlds", "r2::bucket/prefix").
+//
+// Delete semantics: tree-delete. If key matches a single object, that object
+// is removed. If key is a prefix of multiple objects (or a directory on local
+// FS), the entire subtree is removed in one logical operation.
 type StorageRepository interface {
-	// Get retrieves data by key
+	fmt.Stringer
+
 	Get(ctx context.Context, key string) ([]byte, error)
-
-	// Put stores data with the given key
 	Put(ctx context.Context, key string, data []byte) error
-
-	// Delete removes data by key
 	Delete(ctx context.Context, key string) error
-
-	// DeleteBatch removes multiple keys in a single operation
 	DeleteBatch(ctx context.Context, keys []string) error
-
-	// List returns all keys with the given prefix
 	List(ctx context.Context, prefix string) ([]string, error)
-
-	// Copy copies data from source key to destination key
 	Copy(ctx context.Context, sourceKey string, destKey string) error
+	Rename(ctx context.Context, sourceKey string, destKey string) error
 }
 
 // ValidatorService defines the validation interface

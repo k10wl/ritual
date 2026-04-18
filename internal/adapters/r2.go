@@ -42,7 +42,16 @@ type S3Client interface {
 type R2Repository struct {
 	client S3Client
 	bucket string
+	prefix string
 	bus    ports.EventBus
+}
+
+// String returns adapter label for observability events: "r2::<bucket>[/<prefix>]".
+func (r *R2Repository) String() string {
+	if r.prefix == "" {
+		return "r2::" + r.bucket
+	}
+	return "r2::" + r.bucket + "/" + r.prefix
 }
 
 func setupS3Client(accountID string, accessKeyID string, secretAccessKey string) (S3Client, error) {
@@ -80,6 +89,13 @@ func NewR2RepositoryWithClient(client S3Client, bucket string, bus ports.EventBu
 		bucket: bucket,
 		bus:    bus,
 	}
+}
+
+// WithPrefix returns r with its observability prefix set. Used by NewFSRepository
+// equivalent flow at composition time so String() shows "r2::bucket/prefix".
+func (r *R2Repository) WithPrefix(prefix string) *R2Repository {
+	r.prefix = prefix
+	return r
 }
 
 // publish emits an event on the bus (nil-safe).
@@ -138,18 +154,41 @@ func (r *R2Repository) Put(ctx context.Context, key string, data []byte) error {
 	}, r.retryOpts("r2.Put", key)...)
 }
 
+// Delete removes everything matching key as a tree-delete:
+//   - List keys under the prefix (1 key when key is an exact object).
+//   - Batch-delete the result.
+//
+// Returns "key not found" when the prefix yields zero keys (matches local FS
+// behaviour). Single-object delete still works — List returns one key and
+// DeleteBatch removes it in one round-trip.
 func (r *R2Repository) Delete(ctx context.Context, key string) error {
-	key = filepath.ToSlash(key)
+	keys, err := r.List(ctx, key)
+	if err != nil {
+		return fmt.Errorf("failed to list keys for delete %s: %w", key, err)
+	}
+	if len(keys) == 0 {
+		return fmt.Errorf("key not found: %s", key)
+	}
+	return r.DeleteBatch(ctx, keys)
+}
+
+// Rename copies the object to destKey then deletes the source. R2/S3 has no
+// native rename; this two-step is the standard idiom.
+func (r *R2Repository) Rename(ctx context.Context, sourceKey string, destKey string) error {
+	if err := r.Copy(ctx, sourceKey, destKey); err != nil {
+		return err
+	}
+	sourceKey = filepath.ToSlash(sourceKey)
 	return retry.DoVoid(ctx, func(ctx context.Context) error {
 		_, err := r.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 			Bucket: aws.String(r.bucket),
-			Key:    aws.String(key),
+			Key:    aws.String(sourceKey),
 		})
 		if err != nil {
-			return fmt.Errorf("failed to delete object %s: %w", key, err)
+			return fmt.Errorf("failed to delete source %s: %w", sourceKey, err)
 		}
 		return nil
-	}, r.retryOpts("r2.Delete", key)...)
+	}, r.retryOpts("r2.Rename.Delete", sourceKey)...)
 }
 
 func (r *R2Repository) List(ctx context.Context, prefix string) ([]string, error) {

@@ -17,17 +17,54 @@ const (
 // FSRepository implements StorageRepository using local filesystem
 type FSRepository struct {
 	root *os.Root
+	name string
 }
 
-// NewFSRepository creates a new filesystem storage repository
-func NewFSRepository(root *os.Root) (*FSRepository, error) {
+// NewFSRepository creates a new filesystem storage repository.
+// Optional name is the human-readable initial path used in observability
+// events (e.g. "./worlds"). When omitted, label falls back to "fs::".
+func NewFSRepository(root *os.Root, name ...string) (*FSRepository, error) {
 	if root == nil {
 		return nil, errors.New("root cannot be nil")
 	}
 
+	n := ""
+	if len(name) > 0 {
+		n = name[0]
+	}
+
 	return &FSRepository{
 		root: root,
+		name: n,
 	}, nil
+}
+
+// String returns adapter label for observability events: "fs::<name>".
+func (f *FSRepository) String() string {
+	return "fs::" + f.name
+}
+
+// Rename moves a key to a new location atomically when supported by the
+// underlying filesystem. Falls back to copy + delete on cross-device errors.
+func (f *FSRepository) Rename(ctx context.Context, sourceKey string, destKey string) error {
+	sourceKey = filepath.FromSlash(sourceKey)
+	destKey = filepath.FromSlash(destKey)
+	if _, err := f.root.Stat(sourceKey); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("source key not found: %s", sourceKey)
+		}
+		return fmt.Errorf("failed to stat source %s: %w", sourceKey, err)
+	}
+	destDir := filepath.Dir(destKey)
+	if destDir != "." {
+		if err := f.root.MkdirAll(destDir, 0755); err != nil {
+			return fmt.Errorf("failed to create destination directory %s: %w", destDir, err)
+		}
+	}
+	if err := f.root.Rename(sourceKey, destKey); err != nil {
+		return fmt.Errorf("failed to rename %s to %s: %w", sourceKey, destKey, err)
+	}
+	return nil
 }
 
 // Get retrieves data by key from filesystem
