@@ -3,9 +3,8 @@ package sync
 import (
 	"context"
 	"errors"
-	"time"
-
 	"ritual/internal/core/machine"
+	"time"
 )
 
 // Failed is the failure terminal. Emits SyncFailedInfo, then runs the

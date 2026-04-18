@@ -6,15 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"ritual/internal/adapters"
+	"ritual/internal/adapters/observed"
+	"ritual/internal/core/domain"
+	"ritual/internal/core/ports"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"ritual/internal/adapters"
-	"ritual/internal/adapters/observed"
-	"ritual/internal/core/domain"
-	"ritual/internal/core/ports"
 	syncpkg "ritual/internal/core/sync"
 )
 
@@ -175,24 +175,30 @@ func (f *failingPutStorage) String() string { return "failing::" + f.failOn }
 func (f *failingPutStorage) Get(ctx context.Context, key string) ([]byte, error) {
 	return f.inner.Get(ctx, key)
 }
+
 func (f *failingPutStorage) Put(ctx context.Context, key string, data []byte) error {
 	if f.failOn != "" && contains(key, f.failOn) {
 		return errors.New("forced put failure")
 	}
 	return f.inner.Put(ctx, key, data)
 }
+
 func (f *failingPutStorage) Copy(ctx context.Context, src, dst string) error {
 	return f.inner.Copy(ctx, src, dst)
 }
+
 func (f *failingPutStorage) Rename(ctx context.Context, src, dst string) error {
 	return f.inner.Rename(ctx, src, dst)
 }
+
 func (f *failingPutStorage) Delete(ctx context.Context, key string) error {
 	return f.inner.Delete(ctx, key)
 }
+
 func (f *failingPutStorage) DeleteBatch(ctx context.Context, keys []string) error {
 	return f.inner.DeleteBatch(ctx, keys)
 }
+
 func (f *failingPutStorage) List(ctx context.Context, prefix string) ([]string, error) {
 	return f.inner.List(ctx, prefix)
 }

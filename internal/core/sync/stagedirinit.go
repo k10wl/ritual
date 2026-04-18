@@ -3,10 +3,9 @@ package sync
 import (
 	"context"
 	"fmt"
+	"ritual/internal/core/machine"
 
 	"github.com/google/uuid"
-
-	"ritual/internal/core/machine"
 )
 
 // StagingPrefix is the conventional root under which per-run UUIDv4

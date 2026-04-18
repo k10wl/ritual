@@ -2,9 +2,8 @@ package sync
 
 import (
 	"context"
-	"time"
-
 	"ritual/internal/core/machine"
+	"time"
 )
 
 // StagingDirCleanup removes the per-run staging area from the destination.

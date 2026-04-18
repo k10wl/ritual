@@ -3,9 +3,8 @@ package observed
 import (
 	"context"
 	"fmt"
-	"time"
-
 	"ritual/internal/core/ports"
+	"time"
 )
 
 // observedStorage wraps a StorageRepository and publishes one completion

@@ -3,9 +3,8 @@ package sync
 import (
 	"context"
 	"fmt"
-	"time"
-
 	"ritual/internal/core/machine"
+	"time"
 )
 
 // OrphanCleanup batch-deletes destination keys that no longer exist in the

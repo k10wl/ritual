@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/machine"
 )

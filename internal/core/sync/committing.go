@@ -3,9 +3,8 @@ package sync
 import (
 	"context"
 	"fmt"
-	"time"
-
 	"ritual/internal/core/machine"
+	"time"
 )
 
 // Committing moves each staged file to its final destination key by

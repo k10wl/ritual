@@ -6,10 +6,9 @@ package sync
 
 import (
 	"fmt"
-	"time"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"time"
 )
 
 // Direction is the cleanup mode of a sync run. It is a wiring concern, not
@@ -19,9 +18,12 @@ import (
 // store identity.
 type Direction int
 
+// Direction values select the cleanup wiring of a sync run.
 const (
-	DirectionUpload   Direction = iota // dst is the upstream side; orphan cleanup applies
-	DirectionDownload                  // dst is the local side; ghost cleanup applies
+	// DirectionUpload — dst is the upstream side; orphan cleanup applies.
+	DirectionUpload Direction = iota
+	// DirectionDownload — dst is the local side; ghost cleanup applies.
+	DirectionDownload
 )
 
 // RunState is shared across strategies for a single sync run. Strategies

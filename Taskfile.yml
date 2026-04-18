@@ -153,6 +153,17 @@ tasks:
       - task: cli:build:prod
       - '{{.BIN_DIR}}/ritual_prod{{exeExt}}'
 
+  # --- Lint ---------------------------------------------------------------
+  lint:
+    desc: Run golangci-lint over the whole module (config in .golangci.yml).
+    cmds:
+      - golangci-lint run ./...
+
+  lint:fix:
+    desc: Run golangci-lint with autofix where supported.
+    cmds:
+      - golangci-lint run --fix ./...
+
   # --- Tests --------------------------------------------------------------
   test:
     desc: Run testhelpers first (critical fixtures), then the rest.

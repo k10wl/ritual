@@ -2,12 +2,12 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"time"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
+	"time"
 )
 
 // Scanning is the entry strategy. Emits SyncStartedInfo, builds SrcMap from
@@ -31,7 +31,7 @@ func (s *Scanning) Run(ctx context.Context, rs *RunState) (machine.Strategy[RunS
 	rs.Publish(SyncStartedInfo{syncBase: rs.envelope()})
 
 	if rs.DstManifestRead == nil {
-		return s.fail(rs, fmt.Errorf("dst manifest reader not wired"))
+		return s.fail(rs, errors.New("dst manifest reader not wired"))
 	}
 
 	if s.scanner == nil {

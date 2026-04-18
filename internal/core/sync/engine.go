@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
@@ -37,7 +36,7 @@ func Run(
 	switch direction {
 	case DirectionDownload:
 		deleteCleanup = NewGhostCleanup(cleanup, failed)
-	default:
+	case DirectionUpload:
 		deleteCleanup = NewOrphanCleanup(cleanup, failed)
 	}
 

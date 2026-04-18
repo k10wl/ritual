@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"ritual/internal/adapters"
+	"ritual/internal/adapters/observed"
+	"ritual/internal/core/ports"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"ritual/internal/adapters"
-	"ritual/internal/adapters/observed"
-	"ritual/internal/core/ports"
 	mocks "ritual/internal/core/ports/mocks"
 )
 

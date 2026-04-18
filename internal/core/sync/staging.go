@@ -3,9 +3,8 @@ package sync
 import (
 	"context"
 	"fmt"
-	"time"
-
 	"ritual/internal/core/machine"
+	"time"
 )
 
 // Staging copies each file in the diff from src into the destination's
