@@ -71,9 +71,32 @@ Unified design: **one ctx cascades all stop signals** (UI click, Go shutdown). S
   `internal/core/sync/stagedirinit.go` uses `uuid.NewString()` → `.staging/<uuid>`. Cleanup unconditional on both success and failure paths.
   _Classification: unit + integration._
 
-- [~] **#13 Archiving stage actually saves upstream** — local+remote write coded, **remote write not observable**
-  `internal/core/stages/archiving/strategy.go:63-64` calls `CreateBackupFrom(remoteStore, localStore)` + `CreateBackup(remoteStore)`, but errors swallowed by `_ = errors.Wrap(...)` and stage bypasses the observed storage decorator. Needs: propagate errors + route remote writes through `observed` so `StoragePutInfo` fires.
-  _Classification: integration._
+- [x] **#13 Backup stage saves upstream + observable** — rewritten as a post-publish, same-storage snapshot on both sides. Replaces the pre-publish cross-storage archive.
+
+  Refactor plan:
+  1. Rename stage `Archiving` → `Backup` (Go package + constant + event operation strings).
+  2. Pipeline reorder: `Run → Publish → Backup → Unlock → Retain` (was `Run → Archive → Publish → Unlock → Retain`). Crash still skips Publish + Backup.
+  3. Backup strategy does two same-storage `CreateBackup` calls: local→local, remote→remote. Drops `CreateBackupFrom` (no cross-storage bytes).
+  4. No-op detection by manifest comparison — if `rs.LocalBefore.Worlds.XXHashMap` equals post-publish local manifest's `XXHashMap`, skip backup. Drops scanner dependency.
+  5. Errors published as `ritual.ErrorInfo{Operation:"backup"}`, pipeline continues to Unlocking. Lock always releases.
+  6. Observability via existing `observed` decorator on both storage repos — `StorageCopyInfo` / `StorageListInfo` / `StoragePutInfo` emit per call, no extra wiring.
+
+  Story → test matrix. Completion rule: every row has a named test function.
+
+  | ID | Story | Layer | Test |
+  |---|---|---|---|
+  | B1 | Post-publish canonical backup — snapshot contains post-run world state on both sides | integration | `TestIntegration_BackupCreated_ContainsPostRunState` (`internal/app/ritual_integration_test.go`) |
+  | B2 | No-op session skip — unchanged `XXHashMap` → no `CreateBackup` calls | unit + integration | `TestStrategy_NoMutation_Skips` (`internal/core/stages/backup/strategy_test.go`) + `TestIntegration_NothingChanged_NoBackupCreated` |
+  | B3 | Same-storage only — zero remote Get calls during Backup stage window | unit + integration | `TestStrategy_Mutated_CopiesOnBothSides` (asserts `GetCalls==0`) + `TestIntegration_BackupUsesSameStorageOnly_NoRemoteReadDuringBackup` |
+  | B4 | Error non-fatal — `CreateBackup` failure emits `ErrorInfo{Operation:"backup"}`, strategy returns `onNext` | unit | `TestStrategy_CopyError_EmitsErrorInfo_ContinuesToOnNext` |
+  | B5 | Observability — Backup emits `StorageCopyInfo` with `DstKey` under `backups/` on both sides | integration | `TestIntegration_BackupEmitsStorageCopyEventsWithBackupsPrefix` |
+  | B6 | Crash skips Publish + Backup — `exit(1)` → `StateChangedInfo` sequence omits both stages | integration | `TestIntegration_ServerCrash_SkipsPublishAndBackup` |
+  | B7 | Retention post-backup — Backup forwards to Unlock → Retain; count matches `KeepLast` | integration | `TestIntegration_RetentionPrunesOldBackups` |
+  | B8 | Stage name is `"Backup"` — `StateChangedInfo` / events use the new label | unit | `TestStrategy_Name_IsBackup` |
+  | P1 | Pipeline order — `Checking→Fetching→Acquiring→Running→Publishing→Backup→Unlocking→Retaining` asserted end-to-end | integration | `TestIntegration_PipelineOrder_MatchesCheckFetchAcquireRunPublishBackupUnlockRetain` |
+  | R1 | Lock released on backup error — injected `scriptedStorage` copy failure → `ErrorInfo` emitted, `LockedBy` cleared on both manifests, status reaches `Done` | integration | `TestIntegration_BackupCopyError_EmitsErrorInfo_LockStillReleased` |
+
+  _Classification: unit + integration._
 
 - [x] **#14 Sync observability — both directions**
   Full event taxonomy in `internal/core/sync/events.go`: `SyncStartedInfo`, `SyncPlanInfo`, `SyncStagingDirCreatedInfo`, `SyncStage{Started,Progress,Finished,Failed}Info`, `SyncCommit{Started,Progress,Finished,Failed}Info`, `SyncStagingDirCleanedInfo`, `SyncOrphanCleanupInfo`/`SyncGhost{Deleted,CleanupFailed}Info`, `SyncFinishedInfo`/`SyncFailedInfo`. Storage decorator (`internal/adapters/observed/storage.go`) emits per-call `StorageGet/Put/Copy/Rename/Delete/DeleteBatch/ListInfo`. All events implement `String()`; bus publishes to logger + GUI. Parity upstream↔downstream via shared state machine. Ordering enforced by topology, asserted in `engine_test.go`.
@@ -98,14 +121,19 @@ Unified design: **one ctx cascades all stop signals** (UI click, Go shutdown). S
 
 ## UI / state machine
 
-- [ ] **#6 UI reflects lifecycle**
-  States DOWN / STARTING / STARTED / STOPPING visible, driven by backend events. No-payload events don't panic emitter. STOPPING is optimistic on Stop click.
-  _Classification: unit (state machine transitions) + integration (GUI subscription)._
+- [x] **#6 UI reflects lifecycle — backend events confirmed**
+  Backend emits `ServerStartingInfo → ServerReadyInfo → ServerStoppingInfo → ServerStoppedInfo` in order on a clean run+stop cycle. GUI state machine (future work) subscribes to these to drive DOWN / STARTING / STARTED / STOPPING. Scope here is confirming emission; rendering lands with the GUI.
+  _Test: `TestIntegration_ServerLifecycleEventsEmitted_StartingReadyStoppingStopped` (`internal/app/ritual_integration_test.go`)._
+  _Classification: integration._
 
-- [ ] **#7 Restart after completed run**
-  Start rejected only while Running. Terminal states (Done, Failed, Idle) all restartable.
-  _Classification: unit (state machine)._
+- [x] **#7 Restart after completed run**
+  `Ritual.start` now rejects only when `status == Running`. Terminal states (Done, Failed, Idle) all accept a fresh Start.
+  _Code: `internal/app/ritual.go:105-108`._
+  _Test: `TestRitual_Start_AfterDone_StartsAgain` (`internal/app/ritual_test.go`)._
+  _Classification: unit._
 
-- [ ] **#8 Graceful Stop ≠ Failed**
-  User-requested stop → Done, not Failed. Only stage-returned errors propagate Failed.
-  _Classification: unit (state machine)._
+- [x] **#8 Graceful Stop ≠ Failed**
+  User-requested stop sets `userStop` flag before cancelling ctx. `resolveStatus` treats `userStop=true + (nil err OR context.Canceled)` as Done; other stage errors still propagate Failed.
+  _Code: `internal/app/ritual.go:125-149` (`stop`, `resolveStatus`)._
+  _Tests: `TestRitual_Stop_CancelsRunning` + `TestIntegration_StopMidGame_LockReleased` (both updated to assert `Done`)._
+  _Classification: unit + integration._

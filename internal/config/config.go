@@ -63,8 +63,8 @@ const (
 
 // Lease defaults — applied by Manifest.ApplyDefaults when absent on decode.
 const (
-	DefaultHeartbeatInterval = 1 * time.Minute
-	DefaultLeaseTTL          = 10 * time.Minute
+	DefaultHeartbeatInterval = 5 * time.Minute
+	DefaultLeaseTTL          = 21 * time.Minute
 )
 
 // Update process flags

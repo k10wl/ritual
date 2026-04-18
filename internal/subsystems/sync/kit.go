@@ -22,7 +22,6 @@ import (
 type Kit struct {
 	Updaters     []ports.UpdaterService // check → fetch uses these
 	ExitUpdaters []ports.UpdaterService // serve → publish uses these
-	WorldScanner ports.DirectoryScanner // archiving uses this to detect server mutations
 	WorldSync    ports.SyncService      // heartbeat uses this for live sync during server running
 }
 
@@ -90,10 +89,10 @@ func Build(
 		return &m.Worlds.SyncState
 	})
 
+	_ = serverScanner
 	return Kit{
 		Updaters:     []ports.UpdaterService{ritualUpdater, serverDown, worldDown},
 		ExitUpdaters: []ports.UpdaterService{worldUp},
-		WorldScanner: worldScanner,
 		WorldSync:    worldSync,
 	}, nil
 }

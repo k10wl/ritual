@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"ritual/internal/config"
@@ -9,7 +10,7 @@ import (
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/acquiring"
-	"ritual/internal/core/stages/archiving"
+	"ritual/internal/core/stages/backup"
 	"ritual/internal/core/stages/checking"
 	"ritual/internal/core/stages/failed"
 	"ritual/internal/core/stages/fetching"
@@ -17,6 +18,7 @@ import (
 	"ritual/internal/core/stages/retaining"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/core/stages/unlocking"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,14 +35,14 @@ type Ritual struct {
 	updaters        []ports.UpdaterService
 	exitUpdaters    []ports.UpdaterService
 	retentions      []ports.RetentionService
-	scanner         ports.DirectoryScanner
 	cmdBuilder      ports.CmdBuilder
 	readiness       ports.ReadinessCheck
 
-	entry  machine.Strategy[ritual.RunState]
-	runner *ritual.Runner
-	status Outcome
-	cancel context.CancelFunc
+	entry    machine.Strategy[ritual.RunState]
+	runner   *ritual.Runner
+	status   Outcome
+	cancel   context.CancelFunc
+	userStop atomic.Bool
 }
 
 // New builds the Ritual orchestrator with the supplied ports and subsystems.
@@ -54,7 +56,6 @@ func New(
 	updaters []ports.UpdaterService,
 	exitUpdaters []ports.UpdaterService,
 	retentions []ports.RetentionService,
-	scanner ports.DirectoryScanner,
 	cmdBuilder ports.CmdBuilder,
 	readiness ports.ReadinessCheck,
 ) *Ritual {
@@ -68,7 +69,6 @@ func New(
 		updaters:        updaters,
 		exitUpdaters:    exitUpdaters,
 		retentions:      retentions,
-		scanner:         scanner,
 		cmdBuilder:      cmdBuilder,
 		readiness:       readiness,
 		status:          Idle,
@@ -103,10 +103,11 @@ func (r *Ritual) Listen(ctx context.Context) {
 }
 
 func (r *Ritual) start(ctx context.Context) {
-	if r.status != Idle {
-		r.bus.Publish(StatusChanged{Status: r.status, Err: fmt.Errorf("cannot start: status is %s", r.status)})
+	if r.status == Running {
+		r.bus.Publish(StatusChanged{Status: r.status, Err: fmt.Errorf("cannot start: already %s", r.status)})
 		return
 	}
+	r.userStop.Store(false)
 	r.setStatus(Running)
 	ctx, r.cancel = context.WithCancel(ctx)
 
@@ -117,11 +118,7 @@ func (r *Ritual) start(ctx context.Context) {
 
 	go func() {
 		err := r.runner.Run(ctx, r.entry)
-		if err != nil || ctx.Err() != nil {
-			r.setStatus(Failed)
-			return
-		}
-		r.setStatus(Done)
+		r.resolveStatus(ctx, err)
 	}()
 }
 
@@ -129,9 +126,27 @@ func (r *Ritual) stop() {
 	if r.status != Running {
 		return
 	}
+	r.userStop.Store(true)
 	if r.cancel != nil {
 		r.cancel()
 	}
+}
+
+// resolveStatus maps runner exit into Done/Failed. A user-initiated stop
+// is graceful: any errors downstream of the cancelled ctx (e.g.
+// cmd.Build returning context.Canceled mid-boot) are expected, not real
+// failures, so they resolve to Done. Non-cancel errors from stages still
+// propagate as Failed even during a user stop.
+func (r *Ritual) resolveStatus(ctx context.Context, runErr error) {
+	if r.userStop.Load() && (runErr == nil || errors.Is(runErr, context.Canceled)) {
+		r.setStatus(Done)
+		return
+	}
+	if runErr != nil || ctx.Err() != nil {
+		r.setStatus(Failed)
+		return
+	}
+	r.setStatus(Done)
 }
 
 func (r *Ritual) retry(ctx context.Context) {
@@ -142,14 +157,11 @@ func (r *Ritual) retry(ctx context.Context) {
 	r.setStatus(Running)
 	ctx, r.cancel = context.WithCancel(ctx)
 
+	r.userStop.Store(false)
 	r.runner.RunState().Err = nil
 	go func() {
 		err := r.runner.RunCurrent(ctx)
-		if err != nil || ctx.Err() != nil {
-			r.setStatus(Failed)
-			return
-		}
-		r.setStatus(Done)
+		r.resolveStatus(ctx, err)
 	}()
 }
 
@@ -166,9 +178,9 @@ func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
 
 	retain := retaining.New(r.retentions, failRet)
 	unlock := unlocking.New(r.localManifests, r.remoteManifests, retain)
-	publish := publishing.New(r.exitUpdaters, unlock)
-	archive := archiving.New(r.localStorage, r.remoteStorage, r.localManifests, r.scanner, publish)
-	run := running.New(r.cmdBuilder, r.readiness, archive, unlock)
+	backupStage := backup.New(r.localStorage, r.remoteStorage, r.localManifests, unlock)
+	publish := publishing.New(r.exitUpdaters, backupStage)
+	run := running.New(r.cmdBuilder, r.readiness, publish, unlock)
 	rollback := unlocking.New(r.localManifests, r.remoteManifests, failAcq)
 	acquire := acquiring.New(r.localManifests, r.remoteManifests, run, failAcq, rollback)
 	fetch := fetching.New(r.updaters, acquire, failFetch)

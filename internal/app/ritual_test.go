@@ -84,7 +84,6 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 		[]ports.UpdaterService{noopUpdater{}},
 		[]ports.UpdaterService{noopUpdater{}},
 		[]ports.RetentionService{noopRetention{}},
-		nil,
 		fakeCmdBuilder{},
 		immediateReady{},
 	)
@@ -129,7 +128,6 @@ func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 		[]ports.UpdaterService{flaky},
 		[]ports.UpdaterService{noopUpdater{}},
 		[]ports.RetentionService{noopRetention{}},
-		nil,
 		fakeCmdBuilder{},
 		immediateReady{},
 	)
@@ -170,7 +168,7 @@ func TestRitual_Stop_CancelsRunning(t *testing.T) {
 		bus,
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
-		nil, nil, nil, nil, nil,
+		nil, nil, nil, nil,
 		blocker,
 		immediateReady{},
 	)
@@ -184,7 +182,40 @@ func TestRitual_Stop_CancelsRunning(t *testing.T) {
 	<-blocker.ready
 
 	bus.Publish(app.StopRequested{})
-	waitForStatus(t, ch, app.Failed, 5*time.Second)
+	waitForStatus(t, ch, app.Done, 5*time.Second)
+}
+
+// Story #7 — Start is only rejected while Running. After terminal states
+// (Done, Failed), a fresh Start must begin a new pipeline — users retry by
+// starting again. Uses noopUpdater so pipelines complete instantly.
+func TestRitual_Start_AfterDone_StartsAgain(t *testing.T) {
+	bus := adapters.NewEventBus(128)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	r := app.New(
+		bus,
+		fakeStorage{}, fakeStorage{},
+		fakeManifestStore{}, fakeManifestStore{},
+		[]ports.ConditionService{noopCondition{}},
+		[]ports.UpdaterService{noopUpdater{}},
+		[]ports.UpdaterService{noopUpdater{}},
+		[]ports.RetentionService{noopRetention{}},
+		fakeCmdBuilder{},
+		immediateReady{},
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.Listen(ctx)
+	time.Sleep(20 * time.Millisecond)
+
+	bus.Publish(app.StartRequested{})
+	waitForStatus(t, ch, app.Done, 5*time.Second)
+
+	bus.Publish(app.StartRequested{})
+	waitForStatus(t, ch, app.Running, 5*time.Second)
+	waitForStatus(t, ch, app.Done, 5*time.Second)
 }
 
 func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
@@ -196,7 +227,7 @@ func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
 		bus,
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
-		nil, nil, nil, nil, nil,
+		nil, nil, nil, nil,
 		fakeCmdBuilder{},
 		immediateReady{},
 	)

@@ -8,7 +8,7 @@ const (
 	StageAcquiring  = "Acquiring"
 	StageRunning    = "Running"
 	StagePublishing = "Publishing"
-	StageArchiving  = "Archiving"
+	StageBackup     = "Backup"
 	StageUnlocking  = "Unlocking"
 	StageRetaining  = "Retaining"
 	StageFailed     = "Failed"

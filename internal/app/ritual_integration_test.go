@@ -43,6 +43,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"ritual/internal/adapters"
+	"ritual/internal/adapters/observed"
 	"ritual/internal/app"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
@@ -51,8 +52,11 @@ import (
 	"ritual/internal/core/stages/running"
 	"ritual/internal/subsystems/heartbeat"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	stagenames "ritual/internal/core/ritual"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -79,6 +83,16 @@ func TestMain(m *testing.M) {
 	}
 	fakerunBin = bin
 
+	// Pre-warm: first fakerun spawn pays OS-level cold costs (macOS
+	// Gatekeeper, disk cache miss). Amortize into TestMain so no
+	// individual test inherits the hit and exceeds the 1s ceiling.
+	warmup := exec.Command(fakerunBin, "--root", tmp)
+	stdin, _ := warmup.StdinPipe()
+	_ = warmup.Start()
+	_, _ = stdin.Write([]byte(`{"op":"exit","code":0}` + "\n"))
+	_ = stdin.Close()
+	_ = warmup.Wait()
+
 	code := m.Run()
 	os.RemoveAll(tmp)
 	os.Exit(code)
@@ -91,8 +105,8 @@ type testRitual struct {
 	remoteDir       string
 	localRoot       *os.Root
 	remoteRoot      *os.Root
-	local           *adapters.FSRepository
-	remote          *adapters.FSRepository
+	local           ports.StorageRepository
+	remote          ports.StorageRepository
 	localManifests  ports.ManifestStore
 	remoteManifests ports.ManifestStore
 	bus             ports.EventBus
@@ -102,6 +116,14 @@ type testRitual struct {
 }
 
 func newRitual(t *testing.T) *testRitual {
+	return newRitualWith(t, nil)
+}
+
+// newRitualWith builds the harness, applying an optional remote-storage
+// transform under the observed decorator. Test callers use the transform
+// to inject deterministic failures (e.g., scriptedStorage) while keeping
+// the production wiring order (bus ← observed ← transform ← FSRepository).
+func newRitualWith(t *testing.T, remoteTransform func(ports.StorageRepository) ports.StorageRepository) *testRitual {
 	t.Helper()
 
 	localDir := t.TempDir()
@@ -115,15 +137,23 @@ func newRitual(t *testing.T) *testRitual {
 	require.NoError(t, err, "open remote root")
 	t.Cleanup(func() { remoteRoot.Close() })
 
-	local, err := adapters.NewFSRepository(localRoot)
+	rawLocal, err := adapters.NewFSRepository(localRoot, "local")
 	require.NoError(t, err, "create local FSRepository")
 
-	remote, err := adapters.NewFSRepository(remoteRoot)
+	rawRemote, err := adapters.NewFSRepository(remoteRoot, "remote")
 	require.NoError(t, err, "create remote FSRepository")
 
 	bus := adapters.NewEventBus(128)
 	ch, unsub := bus.Subscribe()
 	t.Cleanup(unsub)
+
+	var remoteInner ports.StorageRepository = rawRemote
+	if remoteTransform != nil {
+		remoteInner = remoteTransform(rawRemote)
+	}
+
+	local := observed.NewStorage(rawLocal, bus)
+	remote := observed.NewStorage(remoteInner, bus)
 
 	localManifests := adapters.NewManifestStore(local)
 	remoteManifests := adapters.NewManifestStore(remote)
@@ -159,12 +189,14 @@ func newRitualSharingRemote(t *testing.T, other *testRitual) *testRitual {
 	require.NoError(t, err, "open local root (shared-remote)")
 	t.Cleanup(func() { localRoot.Close() })
 
-	local, err := adapters.NewFSRepository(localRoot)
+	rawLocal, err := adapters.NewFSRepository(localRoot, "local")
 	require.NoError(t, err, "create local FSRepository (shared-remote)")
 
 	bus := adapters.NewEventBus(128)
 	ch, unsub := bus.Subscribe()
 	t.Cleanup(unsub)
+
+	local := observed.NewStorage(rawLocal, bus)
 
 	localManifests := adapters.NewManifestStore(local)
 
@@ -297,7 +329,6 @@ func (r *testRitual) startRitualFull(t *testing.T, conditions []ports.ConditionS
 		[]ports.UpdaterService{downloader},
 		[]ports.UpdaterService{uploader},
 		nil,
-		scanner,
 		cmdBuilder,
 		immediateReady{},
 	)
@@ -323,12 +354,12 @@ func (r *testRitual) sendRetry() {
 
 func (r *testRitual) waitDone(t *testing.T) {
 	t.Helper()
-	waitForIntegrationStatus(t, r.ch, app.Done, 10*time.Second)
+	waitForIntegrationStatus(t, r.ch, app.Done, time.Second)
 }
 
 func (r *testRitual) waitFailed(t *testing.T) {
 	t.Helper()
-	waitForIntegrationStatus(t, r.ch, app.Failed, 10*time.Second)
+	waitForIntegrationStatus(t, r.ch, app.Failed, time.Second)
 }
 
 func waitForIntegrationStatus(t *testing.T, ch <-chan ports.Event, want app.Outcome, timeout time.Duration) {
@@ -516,7 +547,6 @@ func (r *testRitual) startRitualWithRetention(t *testing.T) *fakeServer {
 		[]ports.UpdaterService{worldDown},
 		[]ports.UpdaterService{worldUp},
 		[]ports.RetentionService{localRetention, remoteRetention},
-		worldScanner,
 		cmdBuilder,
 		immediateReady{},
 	)
@@ -707,6 +737,146 @@ func (f *failOnceIntegrationUpdater) Run(_ context.Context) error {
 		return errors.New("simulated transient failure")
 	}
 	return nil
+}
+
+// ---------- bus event collection + filters ----------
+// Used by backup stories to assert on stage transitions, storage decorator
+// emissions, and error events without coupling to the production subscriber.
+// A separate Subscribe per test avoids racing testRitual.ch (owned by
+// waitForIntegrationStatus).
+
+// collectBusEvents starts a fresh subscription and returns a drain function.
+// Callers invoke drain AFTER the session reaches a terminal status; it
+// unsubscribes, waits for the collector goroutine to exit, and returns a
+// safe snapshot. This pattern avoids data races with the running collector.
+func collectBusEvents(bus ports.EventBus) func() []ports.Event {
+	ch, unsub := bus.Subscribe()
+	var mu sync.Mutex
+	events := []ports.Event{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for e := range ch {
+			mu.Lock()
+			events = append(events, e)
+			mu.Unlock()
+		}
+	}()
+	return func() []ports.Event {
+		unsub()
+		<-done
+		mu.Lock()
+		defer mu.Unlock()
+		snapshot := make([]ports.Event, len(events))
+		copy(snapshot, events)
+		return snapshot
+	}
+}
+
+func stageSequence(events []ports.Event) []string {
+	seq := []string{}
+	push := func(name string) {
+		if name == stagenames.StageDone || name == stagenames.StageFailed {
+			return
+		}
+		if len(seq) > 0 && seq[len(seq)-1] == name {
+			return
+		}
+		seq = append(seq, name)
+	}
+	for _, e := range events {
+		sc, ok := e.(stagenames.StateChangedInfo)
+		if !ok {
+			continue
+		}
+		push(sc.From)
+		push(sc.To)
+	}
+	return seq
+}
+
+func countRemoteGetsBetween(events []ports.Event, operation string) int {
+	inWindow := false
+	count := 0
+	for _, e := range events {
+		switch v := e.(type) {
+		case stagenames.StartInfo:
+			if v.Operation == operation {
+				inWindow = true
+			}
+		case stagenames.FinishInfo:
+			if v.Operation == operation {
+				inWindow = false
+			}
+		case observed.StorageGetInfo:
+			if inWindow && v.Store == "fs::remote" {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func filterCopyInfoWithDstPrefix(events []ports.Event, prefix string) []observed.StorageCopyInfo {
+	out := []observed.StorageCopyInfo{}
+	for _, e := range events {
+		c, ok := e.(observed.StorageCopyInfo)
+		if ok && strings.HasPrefix(c.DstKey, prefix) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// serverEventTypeSequence picks the ordered lifecycle events the GUI
+// subscribes to. Skips intermediate stdout/stop-requested noise; asserts
+// only the transitions that drive UI state.
+func serverEventTypeSequence(events []ports.Event) []string {
+	seq := []string{}
+	for _, e := range events {
+		switch e.(type) {
+		case running.ServerStartingInfo:
+			seq = append(seq, "ServerStartingInfo")
+		case running.ServerReadyInfo:
+			seq = append(seq, "ServerReadyInfo")
+		case running.ServerStoppingInfo:
+			seq = append(seq, "ServerStoppingInfo")
+		case running.ServerStoppedInfo:
+			seq = append(seq, "ServerStoppedInfo")
+		case running.ServerCrashedInfo:
+			seq = append(seq, "ServerCrashedInfo")
+		}
+	}
+	return seq
+}
+
+func hasBackupErrorInfo(events []ports.Event) bool {
+	for _, e := range events {
+		ei, ok := e.(stagenames.ErrorInfo)
+		if ok && ei.Operation == "backup" {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------- scriptedStorage ----------
+// Decorator that injects deterministic failures by delegating to a rule
+// function. Currently only Copy is scripted — add more per story need.
+// Sits under the observed decorator so failures surface as StorageCopyInfo
+// with Err set, mirroring production error reporting.
+type scriptedStorage struct {
+	ports.StorageRepository
+	copyFail func(src, dst string) error
+}
+
+func (s *scriptedStorage) Copy(ctx context.Context, src, dst string) error {
+	if s.copyFail != nil {
+		if err := s.copyFail(src, dst); err != nil {
+			return err
+		}
+	}
+	return s.StorageRepository.Copy(ctx, src, dst)
 }
 
 // ---------- fakeServer wait helper ----------
@@ -904,7 +1074,7 @@ func (r *testRitual) startRitualWithFlakyUpdater(t *testing.T, flaky ports.Updat
 		r.localManifests, r.remoteManifests,
 		nil,
 		[]ports.UpdaterService{flaky},
-		nil, nil, nil,
+		nil, nil,
 		cmdBuilder,
 		immediateReady{},
 	)
@@ -930,7 +1100,7 @@ func TestIntegration_StopMidGame_LockReleased(t *testing.T) {
 	ritual.sendStop()
 	time.Sleep(50 * time.Millisecond)
 	server.stdin.Close()
-	ritual.waitFailed(t)
+	ritual.waitDone(t)
 
 	ritual.assertManifestUnlocked(t,
 		"lock must be released after graceful stop")
@@ -981,7 +1151,7 @@ func TestIntegration_MultiHost_AUploads_BDownloadsPlaysUploads(t *testing.T) {
 
 // ---------- integration tests: backup and retention ----------
 
-func TestIntegration_BackupCreated_ContainsPreRunState(t *testing.T) {
+func TestIntegration_BackupCreated_ContainsPostRunState(t *testing.T) {
 	ritual := newRitual(t)
 
 	seedRemoteWorld(t, ritual,
@@ -998,8 +1168,8 @@ func TestIntegration_BackupCreated_ContainsPreRunState(t *testing.T) {
 	ritual.assertBackupExists(t,
 		"files changed during run — backup should be created")
 	backupName := ritual.latestBackupName(t)
-	ritual.assertBackupFileContent(t, backupName, "worlds/world/level.dat", []byte("before run"),
-		"backup should contain pre-run snapshot, not post-mutation content")
+	ritual.assertBackupFileContent(t, backupName, "worlds/world/level.dat", []byte("after run"),
+		"backup should contain post-run snapshot (runs after publishing)")
 	ritual.assertBackupHasManifest(t, backupName,
 		"backup should contain manifest.json snapshot")
 }
@@ -1038,6 +1208,171 @@ func TestIntegration_RetentionPrunesOldBackups(t *testing.T) {
 
 	ritual.assertBackupCount(t, ritual.retentionLimit(),
 		"retention should prune oldest backups, keeping only N most recent")
+}
+
+func TestIntegration_BackupUsesSameStorageOnly_NoRemoteReadDuringBackup(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("before run")),
+	)
+
+	drain := collectBusEvents(ritual.bus)
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	server.write("worlds/world/level.dat", []byte("after run"))
+	server.exit(0)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	events := drain()
+
+	assert.Zero(t, countRemoteGetsBetween(events, "backup"),
+		"backup stage must not issue any Get on remote — same-storage CopyObject is server-side; any remote Get implies the cross-storage download path we removed")
+}
+
+func TestIntegration_BackupEmitsStorageCopyEventsWithBackupsPrefix(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("before run")),
+	)
+
+	drain := collectBusEvents(ritual.bus)
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	server.write("worlds/world/level.dat", []byte("after run"))
+	server.exit(0)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	events := drain()
+
+	copies := filterCopyInfoWithDstPrefix(events, config.BackupsDir+"/")
+	assert.GreaterOrEqual(t, len(copies), 2,
+		"backup must emit StorageCopyInfo per file per side — at least one local + one remote — so logs and GUI show the snapshot fanning out")
+}
+
+func TestIntegration_ServerCrash_SkipsPublishAndBackup(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("before run")),
+	)
+
+	drain := collectBusEvents(ritual.bus)
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	server.write("worlds/world/level.dat", []byte("mid crash"))
+	server.exit(1)
+	server.stdin.Close()
+	ritual.waitFailed(t)
+
+	events := drain()
+
+	stages := stageSequence(events)
+	assert.NotContains(t, stages, stagenames.StagePublishing,
+		"server crash (exit code != 0) must route straight Running → Unlocking — Publishing is unsafe when local is mid-mutation")
+	assert.NotContains(t, stages, stagenames.StageBackup,
+		"server crash must also skip Backup — no canonical state exists when the crash happened mid-mutation")
+	ritual.assertManifestUnlocked(t,
+		"crash path still must release the lock via Unlocking")
+}
+
+func TestIntegration_PipelineOrder_MatchesCheckFetchAcquireRunPublishBackupUnlockRetain(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("before run")),
+	)
+
+	drain := collectBusEvents(ritual.bus)
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	server.write("worlds/world/level.dat", []byte("after run"))
+	server.exit(0)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	events := drain()
+
+	want := []string{
+		stagenames.StageChecking,
+		stagenames.StageFetching,
+		stagenames.StageAcquiring,
+		stagenames.StageRunning,
+		stagenames.StagePublishing,
+		stagenames.StageBackup,
+		stagenames.StageUnlocking,
+		stagenames.StageRetaining,
+	}
+	assert.Equal(t, want, stageSequence(events),
+		"pipeline order is load-bearing — Publish writes remote, Backup snapshots post-publish canonical state; swapping them means backing up pre-run content instead")
+}
+
+func TestIntegration_ServerLifecycleEventsEmitted_StartingReadyStoppingStopped(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("level")),
+	)
+
+	drain := collectBusEvents(ritual.bus)
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	ritual.bus.Publish(app.StopRequested{})
+	time.Sleep(50 * time.Millisecond)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	events := drain()
+
+	types := serverEventTypeSequence(events)
+	assert.Equal(t,
+		[]string{"ServerStartingInfo", "ServerReadyInfo", "ServerStoppingInfo", "ServerStoppedInfo"},
+		types,
+		"server lifecycle events must fire in fixed order — GUI state machine subscribes to these to drive DOWN/STARTING/STARTED/STOPPING transitions; backend emission is the contract")
+}
+
+func TestIntegration_BackupCopyError_EmitsErrorInfo_LockStillReleased(t *testing.T) {
+	failingRemote := func(raw ports.StorageRepository) ports.StorageRepository {
+		return &scriptedStorage{
+			StorageRepository: raw,
+			copyFail: func(_, dst string) error {
+				if strings.HasPrefix(dst, config.BackupsDir+"/") {
+					return errors.New("simulated remote backup failure")
+				}
+				return nil
+			},
+		}
+	}
+
+	ritual := newRitualWith(t, failingRemote)
+
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("before run")),
+	)
+
+	drain := collectBusEvents(ritual.bus)
+
+	server := ritual.startRitual(t)
+	server.waitReady(t)
+	server.write("worlds/world/level.dat", []byte("after run"))
+	server.exit(0)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	events := drain()
+
+	assert.True(t, hasBackupErrorInfo(events),
+		"backup Copy failure must surface as ritual.ErrorInfo{Operation:backup} so operators see it in logs and the GUI")
+	ritual.assertManifestUnlocked(t,
+		"backup failure is non-fatal by design — Unlocking must still release the lease so the next session can acquire it")
 }
 
 func TestIntegration_OutdatedManifest_NoXXHash_FullSyncPopulatesMaps(t *testing.T) {
@@ -1116,7 +1451,6 @@ func (r *testRitual) startRitualWithLiveSync(t *testing.T) {
 		[]ports.UpdaterService{downloader},
 		[]ports.UpdaterService{uploader},
 		nil,
-		scanner,
 		cmdBuilder,
 		immediateReady{},
 	)
@@ -1226,7 +1560,7 @@ func TestIntegration_PlayingWithLiveSync_WorldsSyncEveryTick(t *testing.T) {
 
 	ritual.startRitualWithLiveSync(t)
 
-	waitForSaveCompletedThenStatus(t, ch, 2, ritual.sendStop, app.Failed, 10*time.Second)
+	waitForSaveCompletedThenStatus(t, ch, 2, ritual.sendStop, app.Done, time.Second)
 
 	ritual.assertRemoteHasFile(t, "world/level.dat",
 		"live sync — world files should remain on remote after sync ticks")
@@ -1250,7 +1584,7 @@ func TestIntegration_NothingChangedDuringPlay_NothingUploaded(t *testing.T) {
 
 	ritual.startRitualWithLiveSync(t)
 
-	waitForSaveCompletedThenStatus(t, ch, 2, ritual.sendStop, app.Failed, 10*time.Second)
+	waitForSaveCompletedThenStatus(t, ch, 2, ritual.sendStop, app.Done, time.Second)
 
 	ritual.assertRemoteFileContent(t, "world/level.dat", []byte("level data"),
 		"nothing changed during play — remote file content should be identical to seed")
@@ -1297,7 +1631,7 @@ func TestIntegration_CrashRecovery_LocalNewerKept(t *testing.T) {
 
 	ritual.startRitualWithLiveSync(t)
 
-	waitForSaveCompletedThenStatus(t, ch, 1, ritual.sendStop, app.Failed, 10*time.Second)
+	waitForSaveCompletedThenStatus(t, ch, 1, ritual.sendStop, app.Done, time.Second)
 
 	ritual.assertLocalFileContent(t, "world/level.dat", []byte("local newer data"),
 		"crash recovery — local is newer than remote, download should be skipped and local data preserved")
@@ -1317,14 +1651,14 @@ func TestIntegration_LiveSyncUploadsNewFiles_RemoteReflectsChanges(t *testing.T)
 
 	ritual.startRitualWithLiveSync(t)
 
-	waitForSaveCompleted(t, ch, 1, 10*time.Second)
+	waitForSaveCompleted(t, ch, 1, time.Second)
 
 	worldsPath := filepath.Join(ritual.localDir, config.WorldsDir)
 	newFilePath := filepath.Join(worldsPath, "world", "playerdata", "player1.dat")
 	require.NoError(t, os.MkdirAll(filepath.Dir(newFilePath), 0o755), "create playerdata dir")
 	require.NoError(t, os.WriteFile(newFilePath, []byte("player one"), 0o644), "write new player file")
 
-	waitForSaveCompletedThenStatus(t, ch, 1, ritual.sendStop, app.Failed, 10*time.Second)
+	waitForSaveCompletedThenStatus(t, ch, 1, ritual.sendStop, app.Done, time.Second)
 
 	ritual.assertRemoteHasFile(t, "world/level.dat",
 		"live sync — original file should still exist on remote")
@@ -1349,7 +1683,7 @@ func TestIntegration_LiveSyncAfterCleanStop_RemoteHasSyncedState(t *testing.T) {
 
 	ritual.startRitualWithLiveSync(t)
 
-	waitForSaveCompletedThenStatus(t, ch, 1, ritual.sendStop, app.Failed, 10*time.Second)
+	waitForSaveCompletedThenStatus(t, ch, 1, ritual.sendStop, app.Done, time.Second)
 
 	remoteManifest, err := ritual.remoteManifests.Get(ritual.ctx)
 	require.NoError(t, err, "get remote manifest after clean stop")
@@ -1383,7 +1717,7 @@ func TestIntegration_ServerBecomesReady_AutosavesDisabled(t *testing.T) {
 
 	ritual.startRitualWithLiveSync(t)
 
-	deadline := time.After(10 * time.Second)
+	deadline := time.After(time.Second)
 	for {
 		select {
 		case <-deadline:
@@ -1395,7 +1729,7 @@ func TestIntegration_ServerBecomesReady_AutosavesDisabled(t *testing.T) {
 			}
 			if out, ok := e.(running.ServerOutputInfo); ok && strings.Contains(out.Line, "Automatic saving is now disabled") {
 				ritual.sendStop()
-				waitForIntegrationStatus(t, ch, app.Failed, 10*time.Second)
+				waitForIntegrationStatus(t, ch, app.Done, time.Second)
 				return
 			}
 		}
