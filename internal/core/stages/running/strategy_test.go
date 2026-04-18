@@ -463,6 +463,9 @@ func TestRunning_OutsideStop_ForceKillFallback_StillStopped(t *testing.T) {
 // "Stopping…" (user intent) immediately, separate from ServerStoppingInfo
 // which only fires when stop\n is actually delivered to the server.
 func TestRunning_UserCancel_PublishesStopRequested(t *testing.T) {
+	if raceEnabled {
+		t.Skip("timing-sensitive: race-instrumented helper subprocess can exceed the tight grace period")
+	}
 	bus := adapters.NewEventBus(64)
 	events, stopCollect := collectEvents(t, bus)
 	defer stopCollect()
