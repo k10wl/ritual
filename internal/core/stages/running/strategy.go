@@ -3,9 +3,12 @@ package running
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"ritual/internal/core/machine"
@@ -13,11 +16,17 @@ import (
 	"ritual/internal/core/ritual"
 )
 
+// ErrAlreadyRunning rejects a second concurrent Run as a safety net under
+// the orchestrator-level guard that refuses Start while in Running state.
+var ErrAlreadyRunning = errors.New("running: another Run is in flight")
+
 type Strategy struct {
-	cmd       ports.CmdBuilder
-	readiness ports.ReadinessCheck
-	onNext    machine.Strategy[ritual.RunState]
-	onCrash   machine.Strategy[ritual.RunState]
+	cmd             ports.CmdBuilder
+	readiness       ports.ReadinessCheck
+	onNext          machine.Strategy[ritual.RunState]
+	onCrash         machine.Strategy[ritual.RunState]
+	stopGracePeriod time.Duration
+	inFlight        atomic.Bool
 }
 
 func New(
@@ -28,45 +37,76 @@ func New(
 	return &Strategy{cmd: cmd, readiness: readiness, onNext: onNext, onCrash: onCrash}
 }
 
+// SetStopGracePeriod bounds how long Go waits after ctx.Done — and the
+// graceful stdin stop — before TerminateProcess-ing the subprocess.
+func (s *Strategy) SetStopGracePeriod(d time.Duration) { s.stopGracePeriod = d }
+
 func (*Strategy) Name() string { return ritual.StageRunning }
 
 func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
-	stdinR, stdinW := io.Pipe()
-	outR, outW := io.Pipe()
+	if !s.inFlight.CompareAndSwap(false, true) {
+		return nil, ErrAlreadyRunning
+	}
+	defer s.inFlight.Store(false)
+
+	if ctx.Err() != nil {
+		return s.onNext, nil
+	}
+
+	fail := func(err error) (machine.Strategy[ritual.RunState], error) {
+		rs.Err = err
+		publish(rs.Bus, ports.ErrorInfo{Operation: "server", Err: err})
+		return s.onCrash, nil
+	}
+
+	stdinR, stdinW, outR, outW, err := openPipes()
+	if err != nil {
+		return fail(err)
+	}
 
 	cmd, err := s.cmd.Build(ctx, stdinR, outW)
 	if err != nil {
-		rs.Err = err
-		publish(rs.Bus, ports.ErrorInfo{Operation: "server", Err: err})
-		return s.onCrash, nil
+		return fail(err)
 	}
+
+	stopCh := make(chan struct{}, 1)
+	readyCh := make(chan struct{}, 1)
+	stoppingDetectedCh := make(chan struct{}, 1)
+	coordDone := make(chan struct{})
+
+	cmd.Cancel = func() error { signal(stopCh); return nil }
+	cmd.WaitDelay = s.stopGracePeriod
 
 	publish(rs.Bus, ports.StartInfo{Operation: "server"})
-	if err := cmd.Start(); err != nil {
-		rs.Err = err
-		publish(rs.Bus, ports.ErrorInfo{Operation: "server", Err: err})
-		return s.onCrash, nil
+	jobGuard, err := startGuarded(cmd)
+	if err != nil {
+		return fail(err)
 	}
+	defer jobGuard.Close()
+
+	// Readiness probes across user-initiated ctx cancellation so a queued
+	// stop can be flushed after the server finishes booting. Bounded by
+	// cmd.WaitDelay and torn down on return.
+	readinessCtx, readinessCancel := context.WithCancel(context.Background())
+	defer readinessCancel()
 
 	outCh := make(chan string, 64)
-	go scanOutput(outR, outCh, rs.Bus)
+	go scanOutput(outR, outCh, rs.Bus, stoppingDetectedCh)
 	go func() {
-		if err := s.readiness.Wait(ctx); err == nil {
-			io.WriteString(stdinW, "save-off\n")
-			publish(rs.Bus, ports.ServerReadyInfo{})
+		if err := s.readiness.Wait(readinessCtx); err == nil {
+			signal(readyCh)
 		}
 	}()
-	waitDone := make(chan struct{})
-	go listenCommands(ctx, stdinW, outCh, rs.Bus, cmd.Process, waitDone)
+	go coordinate(coordDone, stdinW, outCh, rs.Bus, stopCh, readyCh, stoppingDetectedCh)
 
 	publish(rs.Bus, ports.ServerStartingInfo{})
 
 	waitErr := cmd.Wait()
-	close(waitDone)
+	close(coordDone)
 	stdinR.Close()
 	outW.Close()
 
-	if waitErr != nil {
+	if ctx.Err() == nil && waitErr != nil {
 		rs.Err = waitErr
 		publish(rs.Bus, ports.ServerCrashedInfo{Err: waitErr})
 		return s.onCrash, nil
@@ -76,35 +116,50 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 	return s.onNext, nil
 }
 
-func scanOutput(r io.Reader, outCh chan<- string, bus ports.EventBus) {
-	sc := bufio.NewScanner(r)
-	for sc.Scan() {
-		line := sc.Text()
-		publish(bus, ports.ServerOutputInfo{Line: line})
-		select {
-		case outCh <- line:
-		default:
+// coordinate owns stdin writes and ServerStoppingInfo emission. Exits when
+// done closes (after cmd.Wait), which gives cmd.Cancel the whole run window
+// to deliver its stop signal.
+func coordinate(
+	done <-chan struct{},
+	stdin io.Writer,
+	outCh <-chan string,
+	bus ports.EventBus,
+	stopCh, readyCh, stoppingDetectedCh <-chan struct{},
+) {
+	sub, unsub := bus.Subscribe()
+	defer unsub()
+
+	var ready, stopQueued bool
+	var stoppingOnce sync.Once
+	emitStopping := func() {
+		stoppingOnce.Do(func() { publish(bus, ports.ServerStoppingInfo{}) })
+	}
+	writeStop := func() {
+		if _, err := io.WriteString(stdin, "stop\n"); err == nil {
+			emitStopping()
 		}
 	}
-	close(outCh)
-}
 
-func listenCommands(ctx context.Context, stdin io.WriteCloser, outCh <-chan string, bus ports.EventBus, process *os.Process, waitDone <-chan struct{}) {
-	ch, unsub := bus.Subscribe()
-	defer unsub()
-	defer stdin.Close()
 	for {
 		select {
-		case <-ctx.Done():
-			io.WriteString(stdin, "stop\n")
-			stdin.Close()
-			select {
-			case <-waitDone:
-			case <-time.After(time.Minute):
-				process.Kill()
-			}
+		case <-done:
 			return
-		case e, ok := <-ch:
+		case <-readyCh:
+			io.WriteString(stdin, "save-off\n")
+			ready = true
+			publish(bus, ports.ServerReadyInfo{})
+			if stopQueued {
+				writeStop()
+			}
+		case <-stopCh:
+			if ready {
+				writeStop()
+			} else {
+				stopQueued = true
+			}
+		case <-stoppingDetectedCh:
+			emitStopping()
+		case e, ok := <-sub:
 			if !ok {
 				return
 			}
@@ -116,6 +171,22 @@ func listenCommands(ctx context.Context, stdin io.WriteCloser, outCh <-chan stri
 			}
 		}
 	}
+}
+
+func scanOutput(r io.Reader, outCh chan<- string, bus ports.EventBus, stoppingDetectedCh chan<- struct{}) {
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		line := sc.Text()
+		publish(bus, ports.ServerOutputInfo{Line: line})
+		if strings.Contains(line, "Stopping the server") {
+			signal(stoppingDetectedCh)
+		}
+		select {
+		case outCh <- line:
+		default:
+		}
+	}
+	close(outCh)
 }
 
 func waitForLine(outCh <-chan string, match string, timeout time.Duration) bool {
@@ -133,6 +204,30 @@ func waitForLine(outCh <-chan string, match string, timeout time.Duration) bool 
 				return true
 			}
 		}
+	}
+}
+
+// openPipes uses os.Pipe (not io.Pipe) so exec dups the fds directly —
+// avoids the copier-goroutine trap where cmd.Wait blocks forever on a
+// never-closed pipe.
+func openPipes() (stdinR, stdinW, outR, outW *os.File, err error) {
+	stdinR, stdinW, err = os.Pipe()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	outR, outW, err = os.Pipe()
+	if err != nil {
+		stdinR.Close()
+		stdinW.Close()
+		return nil, nil, nil, nil, err
+	}
+	return
+}
+
+func signal(ch chan<- struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
 	}
 }
 

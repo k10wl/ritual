@@ -125,6 +125,10 @@ type ServerOutputInfo struct{ Line string }
 
 func (s ServerOutputInfo) String() string { return s.Line }
 
+type ServerStoppingInfo struct{}
+
+func (ServerStoppingInfo) String() string { return "server stopping" }
+
 type ServerStoppedInfo struct{}
 
 func (ServerStoppedInfo) String() string { return "server stopped" }
