@@ -6,22 +6,25 @@ import (
 	"io"
 	"io/fs"
 	"os"
-
-	"github.com/cespare/xxhash/v2"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+
+	"github.com/cespare/xxhash/v2"
 )
 
+// FullScanner walks a fs.FS and reports Hash+Size per regular file.
 type FullScanner struct {
 	fsys fs.FS
 }
 
 var _ ports.DirectoryScanner = (*FullScanner)(nil)
 
+// NewFullScanner returns a FullScanner backed by fsys.
 func NewFullScanner(fsys fs.FS) *FullScanner {
 	return &FullScanner{fsys: fsys}
 }
 
+// Scan walks the filesystem and returns every file keyed by its relative path.
 func (s *FullScanner) Scan(ctx context.Context) (map[string]domain.FileEntry, error) {
 	result := make(map[string]domain.FileEntry)
 	err := fs.WalkDir(s.fsys, ".", func(path string, d fs.DirEntry, err error) error {
@@ -55,11 +58,11 @@ func (s *FullScanner) Scan(ctx context.Context) (map[string]domain.FileEntry, er
 
 // hashFile computes xxhash of a file at an OS path. Used by MtimeScanner.
 func hashFile(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- path is project-scoped scanner input
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	h := xxhash.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return "", err
@@ -72,7 +75,7 @@ func hashFSFile(fsys fs.FS, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	h := xxhash.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return "", err

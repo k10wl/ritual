@@ -10,6 +10,7 @@ import (
 	"strings"
 )
 
+// ErrOpenRootDir is a printf template for failure to open a root directory.
 const (
 	ErrOpenRootDir = "failed to open root directory %s: %w"
 )
@@ -46,7 +47,7 @@ func (f *FSRepository) String() string {
 
 // Rename moves a key to a new location atomically when supported by the
 // underlying filesystem. Falls back to copy + delete on cross-device errors.
-func (f *FSRepository) Rename(ctx context.Context, sourceKey string, destKey string) error {
+func (f *FSRepository) Rename(_ context.Context, sourceKey string, destKey string) error {
 	sourceKey = filepath.FromSlash(sourceKey)
 	destKey = filepath.FromSlash(destKey)
 	if _, err := f.root.Stat(sourceKey); err != nil {
@@ -57,7 +58,7 @@ func (f *FSRepository) Rename(ctx context.Context, sourceKey string, destKey str
 	}
 	destDir := filepath.Dir(destKey)
 	if destDir != "." {
-		if err := f.root.MkdirAll(destDir, 0755); err != nil {
+		if err := f.root.MkdirAll(destDir, 0o755); err != nil {
 			return fmt.Errorf("failed to create destination directory %s: %w", destDir, err)
 		}
 	}
@@ -68,7 +69,7 @@ func (f *FSRepository) Rename(ctx context.Context, sourceKey string, destKey str
 }
 
 // Get retrieves data by key from filesystem
-func (f *FSRepository) Get(ctx context.Context, key string) ([]byte, error) {
+func (f *FSRepository) Get(_ context.Context, key string) ([]byte, error) {
 	key = filepath.FromSlash(key)
 	data, err := f.root.ReadFile(key)
 	if err != nil {
@@ -81,22 +82,22 @@ func (f *FSRepository) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 // Put stores data with the given key to filesystem
-func (f *FSRepository) Put(ctx context.Context, key string, data []byte) error {
+func (f *FSRepository) Put(_ context.Context, key string, data []byte) error {
 	key = filepath.FromSlash(key)
 	dir := filepath.Dir(key)
 	if dir != "." {
-		if err := f.root.MkdirAll(dir, 0755); err != nil {
+		if err := f.root.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
-	if err := f.root.WriteFile(key, data, 0644); err != nil {
+	if err := f.root.WriteFile(key, data, 0o644); err != nil {
 		return fmt.Errorf("failed to write file %s: %w", key, err)
 	}
 	return nil
 }
 
 // Delete removes data by key from filesystem
-func (f *FSRepository) Delete(ctx context.Context, key string) error {
+func (f *FSRepository) Delete(_ context.Context, key string) error {
 	key = filepath.FromSlash(key)
 	if _, err := f.root.Stat(key); err != nil {
 		if os.IsNotExist(err) {
@@ -111,7 +112,7 @@ func (f *FSRepository) Delete(ctx context.Context, key string) error {
 }
 
 // List returns all keys with the given prefix from filesystem
-func (f *FSRepository) List(ctx context.Context, prefix string) ([]string, error) {
+func (f *FSRepository) List(_ context.Context, prefix string) ([]string, error) {
 	var keys []string
 
 	if prefix == "" {
@@ -127,7 +128,7 @@ func (f *FSRepository) List(ctx context.Context, prefix string) ([]string, error
 		}
 		return nil, fmt.Errorf("failed to open directory %s: %w", prefix, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	info, err := file.Stat()
 	if err != nil {
@@ -154,19 +155,19 @@ func (f *FSRepository) List(ctx context.Context, prefix string) ([]string, error
 // Copy copies data from source key to destination key
 func (f *FSRepository) Copy(ctx context.Context, sourceKey string, destKey string) error {
 	if ctx == nil {
-		return fmt.Errorf("context cannot be nil")
+		return errors.New("context cannot be nil")
 	}
 	if f == nil {
-		return fmt.Errorf("filesystem repository cannot be nil")
+		return errors.New("filesystem repository cannot be nil")
 	}
 	if sourceKey == "" {
-		return fmt.Errorf("source key cannot be empty")
+		return errors.New("source key cannot be empty")
 	}
 	if destKey == "" {
-		return fmt.Errorf("destination key cannot be empty")
+		return errors.New("destination key cannot be empty")
 	}
 	if f.root == nil {
-		return fmt.Errorf("root filesystem cannot be nil")
+		return errors.New("root filesystem cannot be nil")
 	}
 
 	sourceKey = filepath.FromSlash(sourceKey)
@@ -191,17 +192,17 @@ func (f *FSRepository) Copy(ctx context.Context, sourceKey string, destKey strin
 
 	destDir := filepath.Dir(destKey)
 	if destDir != "." {
-		if err := f.root.MkdirAll(destDir, 0755); err != nil {
+		if err := f.root.MkdirAll(destDir, 0o755); err != nil {
 			return fmt.Errorf("failed to create destination directory %s: %w", destDir, err)
 		}
 	}
 
-	return f.root.WriteFile(destKey, data, 0644)
+	return f.root.WriteFile(destKey, data, 0o644)
 }
 
 // copyDir recursively copies a directory
 func (f *FSRepository) copyDir(ctx context.Context, sourceDir string, destDir string) error {
-	if err := f.root.MkdirAll(destDir, 0755); err != nil {
+	if err := f.root.MkdirAll(destDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create destination directory %s: %w", destDir, err)
 	}
 
@@ -209,7 +210,7 @@ func (f *FSRepository) copyDir(ctx context.Context, sourceDir string, destDir st
 	if err != nil {
 		return fmt.Errorf("failed to open source directory %s: %w", sourceDir, err)
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 
 	entries, err := dir.Readdir(0)
 	if err != nil {

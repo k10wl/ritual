@@ -121,7 +121,7 @@ func (u *RitualUpdater) Run(ctx context.Context) error {
 
 	// Launch new binary with replace flag - it will replace the old exe and restart
 	fmt.Println("Launching new version...")
-	cmd := exec.Command(updateExe, config.ReplaceFlag, currentExe)
+	cmd := exec.Command(updateExe, config.ReplaceFlag, currentExe) // #nosec G204 -- updateExe is project-controlled temp path
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -167,20 +167,20 @@ func handleReplace(oldExe string) {
 	time.Sleep(config.UpdateProcessDelayMs * time.Millisecond)
 
 	// Copy current exe over old exe
-	data, err := os.ReadFile(currentExe)
+	data, err := os.ReadFile(currentExe) // #nosec G304 -- currentExe is os.Executable output
 	if err != nil {
 		fmt.Printf("Failed to read current exe: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := os.WriteFile(oldExe, data, config.FilePermission); err != nil {
+	if err := os.WriteFile(oldExe, data, config.FilePermission); err != nil { // #nosec G304,G306,G703 -- project self-update path
 		fmt.Printf("Failed to replace old exe: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Launch the replaced exe with cleanup flag
 	fmt.Println("Starting updated version...")
-	cmd := exec.Command(oldExe, config.CleanupFlag, currentExe)
+	cmd := exec.Command(oldExe, config.CleanupFlag, currentExe) // #nosec G204,G702 -- oldExe is project self-update path
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -195,7 +195,7 @@ func handleReplace(oldExe string) {
 func handleCleanup(updateFile string) {
 	// Wait for update process to exit
 	time.Sleep(config.UpdateProcessDelayMs * time.Millisecond)
-	os.Remove(updateFile)
+	_ = os.Remove(updateFile) // #nosec G703 -- updateFile is project self-update temp path
 	// Remove cleanup args so app runs normally
 	os.Args = append(os.Args[:1], os.Args[3:]...)
 }
@@ -208,7 +208,7 @@ func cleanupLeftoverUpdateFile() {
 		return
 	}
 	for _, match := range matches {
-		os.Remove(match)
+		_ = os.Remove(match)
 	}
 }
 

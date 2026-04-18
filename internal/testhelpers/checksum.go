@@ -1,3 +1,4 @@
+// Package testhelpers provides integration-test fixture and checksum helpers.
 package testhelpers
 
 import (
@@ -11,7 +12,7 @@ import (
 func HashDir(path string) ([]byte, error) {
 	h := sha256.New()
 	var paths []string
-	filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(path, func(p string, info os.FileInfo, _ error) error {
 		if !info.IsDir() {
 			paths = append(paths, p)
 		}

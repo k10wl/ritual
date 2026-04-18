@@ -1,13 +1,13 @@
+// Package main launches the Wails GUI with the embedded frontend.
 package main
 
 import (
 	"log"
-	"time"
-
 	"ritual"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/gui/services"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -82,7 +82,6 @@ func main() {
 
 	// Run the application. This blocks until the application has been exited.
 	err = app.Run()
-
 	// If an error occurred while running the application, log it and exit.
 	if err != nil {
 		log.Fatal(err)

@@ -3,13 +3,11 @@ package failed_test
 import (
 	"context"
 	"errors"
-	"testing"
-
 	"ritual/internal/adapters"
 	"ritual/internal/core/machine"
-	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/failed"
+	"testing"
 )
 
 func TestFailedEmitsEventAndReturnsErr(t *testing.T) {
@@ -30,7 +28,7 @@ func TestFailedEmitsEventAndReturnsErr(t *testing.T) {
 
 	select {
 	case e := <-ch:
-		got, ok := e.(ports.StateFailedInfo)
+		got, ok := e.(ritual.StateFailedInfo)
 		if !ok {
 			t.Fatalf("want StateFailedInfo, got %T", e)
 		}
@@ -102,5 +100,5 @@ type mockStrategy struct {
 
 func (m *mockStrategy) Name() string { return m.name }
 func (m *mockStrategy) Run(_ context.Context, _ *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
-	return nil, nil
+	return nil, nil //nolint:nilnil // terminal test stub
 }

@@ -1,7 +1,9 @@
 package app
 
+// Outcome is the app-level terminal status exposed on the bus.
 type Outcome int
 
+// App status values. Terminal states are Done and Failed.
 const (
 	Idle Outcome = iota
 	Running

@@ -2,13 +2,14 @@ package domain
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-
 	"ritual/internal/config"
 )
 
+// SettingsFilename is the on-disk filename for the user settings file.
 const SettingsFilename = "settings.json"
 
 // Settings represents user-configurable server settings
@@ -37,7 +38,7 @@ func SettingsPath() string {
 func LoadSettings() (*Settings, error) {
 	path := SettingsPath()
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- project-scoped config path
 	if err != nil {
 		if os.IsNotExist(err) {
 			return DefaultSettings(), nil
@@ -77,10 +78,10 @@ func (s *Settings) ToServerRuntime() (*ServerRuntime, error) {
 // Validate checks if settings values are valid
 func (s *Settings) Validate() error {
 	if s.Port <= 0 || s.Port > 65535 {
-		return fmt.Errorf("port must be between 1 and 65535")
+		return errors.New("port must be between 1 and 65535")
 	}
 	if s.Memory <= 0 {
-		return fmt.Errorf("memory must be positive")
+		return errors.New("memory must be positive")
 	}
 	return nil
 }

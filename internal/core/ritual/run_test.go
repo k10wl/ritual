@@ -2,11 +2,10 @@ package ritual_test
 
 import (
 	"context"
-	"fmt"
-	"testing"
-
+	"errors"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ritual"
+	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,7 +52,7 @@ func TestRunner_RunCurrent_ReentersAtFailedStage(t *testing.T) {
 	fail := &failThenRetry{from: ritual.StageFetching, onRetry: fetch}
 	fetch.next = fail
 
-	rs := &ritual.RunState{Bus: nil, Err: fmt.Errorf("network error")}
+	rs := &ritual.RunState{Bus: nil, Err: errors.New("network error")}
 	runner := ritual.NewRunner(rs)
 
 	// First run: check → fetch → fail (error)

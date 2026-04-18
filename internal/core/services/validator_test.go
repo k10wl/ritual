@@ -8,7 +8,6 @@ import (
 )
 
 func TestNewValidatorService(t *testing.T) {
-
 	t.Run("valid_constructor", func(t *testing.T) {
 		validator, err := NewValidatorService()
 
@@ -18,7 +17,6 @@ func TestNewValidatorService(t *testing.T) {
 }
 
 func TestValidatorService_CheckLock(t *testing.T) {
-
 	validator, err := NewValidatorService()
 	assert.NoError(t, err)
 
@@ -211,7 +209,6 @@ func TestValidatorService_CheckManifestVersion(t *testing.T) {
 }
 
 func TestValidatorService_DefensiveValidation(t *testing.T) {
-
 	_, err := NewValidatorService()
 	assert.NoError(t, err)
 
@@ -237,4 +234,3 @@ func TestValidatorService_ConstructorError(t *testing.T) {
 		assert.NotNil(t, validator)
 	})
 }
-

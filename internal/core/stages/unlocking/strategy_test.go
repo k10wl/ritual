@@ -2,22 +2,13 @@ package unlocking_test
 
 import (
 	"context"
-	"testing"
-
 	"ritual/internal/adapters"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports/mocks"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/unlocking"
+	"testing"
 )
-
-type recordedNext struct{ called bool }
-
-func (r *recordedNext) Name() string { return "Sentinel" }
-func (r *recordedNext) Run(_ context.Context, _ *ritual.RunState) (any, error) {
-	r.called = true
-	return nil, nil
-}
 
 func TestUnlockingClearsLocksMatchingLockID(t *testing.T) {
 	local := &mocks.MockManifestStore{

@@ -5,7 +5,6 @@ package failed
 import (
 	"context"
 	"errors"
-
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
@@ -31,8 +30,10 @@ func (s *Strategy) SetRetry(target machine.Strategy[ritual.RunState]) {
 	s.onRetry = target
 }
 
+// Name returns the stage name.
 func (*Strategy) Name() string { return ritual.StageFailed }
 
+// Run publishes the failure, optionally following a retry back-edge.
 func (s *Strategy) Run(_ context.Context, rs *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
 	// Retry path: already fired once, error cleared, follow back-edge
 	if s.fired && rs.Err == nil && s.onRetry != nil {
@@ -46,7 +47,7 @@ func (s *Strategy) Run(_ context.Context, rs *ritual.RunState) (machine.Strategy
 	}
 	rs.FailedStage = s.from
 	s.fired = true
-	publish(rs.Bus, ports.StateFailedInfo{State: s.from, RunID: rs.RunID, Err: err})
+	publish(rs.Bus, ritual.StateFailedInfo{State: s.from, RunID: rs.RunID, Err: err})
 	return nil, err
 }
 

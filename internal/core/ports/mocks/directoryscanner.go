@@ -3,7 +3,6 @@ package mocks
 import (
 	"context"
 	"errors"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )

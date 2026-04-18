@@ -2,11 +2,10 @@ package sync
 
 import (
 	"context"
-	"time"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
+	"time"
 )
 
 // Run drives a single sync from src to dst using pre-built file maps.

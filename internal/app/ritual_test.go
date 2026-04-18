@@ -2,16 +2,15 @@ package app_test
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"io"
 	"os/exec"
-	"testing"
-	"time"
-
 	"ritual/internal/adapters"
 	"ritual/internal/app"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -111,7 +110,7 @@ type failOnceUpdater struct {
 func (f *failOnceUpdater) Run(_ context.Context) error {
 	f.calls++
 	if f.calls == 1 {
-		return fmt.Errorf("network timeout")
+		return errors.New("network timeout")
 	}
 	return nil
 }

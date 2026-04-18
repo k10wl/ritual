@@ -4,15 +4,14 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"ritual/internal/adapters"
+	"ritual/internal/core/domain"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/adapters"
-	"ritual/internal/core/domain"
 )
 
 func TestParseRitualSync(t *testing.T) {

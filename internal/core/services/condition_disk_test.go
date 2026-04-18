@@ -125,7 +125,7 @@ func TestDiskSpaceCondition_Check_DefensiveValidation(t *testing.T) {
 		condition, err := NewDiskSpaceCondition(5120, "C:\\", provider)
 		require.NoError(t, err)
 
-		err = condition.Check(nil)
+		err = condition.Check(nil) //nolint:staticcheck // intentional nil-ctx test
 		assert.Error(t, err)
 		assert.Equal(t, ErrDiskConditionCtxNil, err)
 	})

@@ -8,28 +8,31 @@ package publishing
 import (
 	"context"
 	"fmt"
-
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 )
 
+// Strategy implements the Publishing stage.
 type Strategy struct {
 	updaters []ports.UpdaterService
 	onNext   machine.Strategy[ritual.RunState]
 }
 
+// New builds a Publishing Strategy.
 func New(updaters []ports.UpdaterService, onNext machine.Strategy[ritual.RunState]) *Strategy {
 	return &Strategy{updaters: updaters, onNext: onNext}
 }
 
+// Name returns the stage name.
 func (*Strategy) Name() string { return ritual.StagePublishing }
 
+// Run runs the exit-time updaters that push local state back to remote.
 func (s *Strategy) Run(parentCtx context.Context, rs *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
-	publish(rs.Bus, ports.StartInfo{Operation: "publish"})
+	publish(rs.Bus, ritual.StartInfo{Operation: "publish"})
 
 	if rs.LockID == "" {
-		publish(rs.Bus, ports.FinishInfo{Operation: "publish"})
+		publish(rs.Bus, ritual.FinishInfo{Operation: "publish"})
 		return s.onNext, nil
 	}
 
@@ -41,7 +44,7 @@ func (s *Strategy) Run(parentCtx context.Context, rs *ritual.RunState) (machine.
 			return s.onNext, nil
 		}
 	}
-	publish(rs.Bus, ports.FinishInfo{Operation: "publish"})
+	publish(rs.Bus, ritual.FinishInfo{Operation: "publish"})
 	return s.onNext, nil
 }
 

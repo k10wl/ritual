@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"testing"
-
 	"ritual/internal/adapters"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/services"
+	"testing"
 )
 
 func TestCreateBackup_IntegrationFS(t *testing.T) {
@@ -18,10 +17,10 @@ func TestCreateBackup_IntegrationFS(t *testing.T) {
 
 	// Seed worlds/
 	worldsDir := filepath.Join(root, "worlds", "world")
-	if err := os.MkdirAll(worldsDir, 0755); err != nil {
+	if err := os.MkdirAll(worldsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(worldsDir, "level.dat"), []byte("LEVEL"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(worldsDir, "level.dat"), []byte("LEVEL"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

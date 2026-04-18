@@ -8,12 +8,11 @@ import (
 
 // Validation error constants
 var (
-	ErrOutdatedManifest              = errors.New("outdated manifest")
-	ErrLocalManifestNil              = errors.New("local manifest cannot be nil")
-	ErrRemoteManifestNil             = errors.New("remote manifest cannot be nil")
-	ErrRemoteManifestVersionEmpty    = errors.New("remote manifest version cannot be empty")
-	ErrLockConflict                  = errors.New("lock conflict")
-	ErrValidatorInitializationFailed = errors.New("validator initialization failed")
+	ErrOutdatedManifest           = errors.New("outdated manifest")
+	ErrLocalManifestNil           = errors.New("local manifest cannot be nil")
+	ErrRemoteManifestNil          = errors.New("remote manifest cannot be nil")
+	ErrRemoteManifestVersionEmpty = errors.New("remote manifest version cannot be empty")
+	ErrLockConflict               = errors.New("lock conflict")
 )
 
 // ValidatorService implements validation logic for manifest integrity
@@ -22,14 +21,7 @@ type ValidatorService struct{}
 
 // NewValidatorService creates a new ValidatorService instance
 func NewValidatorService() (*ValidatorService, error) {
-	validator := &ValidatorService{}
-
-	// Postcondition assertion (NASA JPL Rule 2)
-	if validator == nil {
-		return nil, ErrValidatorInitializationFailed
-	}
-
-	return validator, nil
+	return &ValidatorService{}, nil
 }
 
 // CheckManifestVersion validates manifest version using semantic comparison

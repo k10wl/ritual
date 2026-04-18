@@ -4,21 +4,20 @@ package conditions
 
 import (
 	"fmt"
-
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/services"
 )
 
-// Build returns the ordered condition slice for the Checking stage.
-// Provider interfaces are injected so tests can pass fakes and the
-// package compiles on any OS.
+// HardwareInfoProvider aggregates the hardware providers needed by conditions.
+// Injected so tests can pass fakes and the package compiles on any OS.
 type HardwareInfoProvider interface {
 	services.SystemInfoProvider
 	services.DiskInfoProvider
 }
 
+// Build returns the ordered condition slice for the Checking stage.
 func Build(
 	remoteManifest *domain.Manifest,
 	remoteManifests ports.ManifestStore,

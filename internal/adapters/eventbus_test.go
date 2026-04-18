@@ -2,21 +2,21 @@ package adapters_test
 
 import (
 	"io"
-	"testing"
-	"time"
-
 	"ritual/internal/adapters"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/ritual"
+	"testing"
+	"time"
 )
 
 func TestEventBus_Subscribe_Receives(t *testing.T) {
 	bus := adapters.NewEventBus(8)
 	ch, cancel := bus.Subscribe()
 	defer cancel()
-	bus.Publish(ports.StartInfo{Operation: "x"})
+	bus.Publish(ritual.StartInfo{Operation: "x"})
 	select {
 	case evt := <-ch:
-		if evt.(ports.StartInfo).Operation != "x" {
+		if evt.(ritual.StartInfo).Operation != "x" {
 			t.Fatalf("got %+v", evt)
 		}
 	case <-time.After(100 * time.Millisecond):
@@ -46,8 +46,8 @@ func TestEventBus_SlowSub_NoBlock(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 100; i++ {
-			bus.Publish(ports.StartInfo{Operation: "x"})
+		for range 100 {
+			bus.Publish(ritual.StartInfo{Operation: "x"})
 		}
 		close(done)
 	}()
@@ -65,8 +65,8 @@ func TestEventBus_DeliversAllEventsToAllSubscribers(t *testing.T) {
 	ch2, cancel2 := bus.Subscribe()
 	defer cancel2()
 
-	bus.Publish(ports.StartInfo{Operation: "x"})
-	bus.Publish(ports.ErrorInfo{Operation: "y", Err: io.EOF})
+	bus.Publish(ritual.StartInfo{Operation: "x"})
+	bus.Publish(ritual.ErrorInfo{Operation: "y", Err: io.EOF})
 
 	drain := func(ch <-chan ports.Event) (got int) {
 		deadline := time.After(100 * time.Millisecond)

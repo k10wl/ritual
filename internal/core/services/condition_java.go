@@ -9,10 +9,10 @@ import (
 
 // Java condition error constants
 var (
-	ErrJavaConditionNil    = errors.New("Java condition cannot be nil")
+	ErrJavaConditionNil    = errors.New("java condition cannot be nil")
 	ErrJavaConditionCtxNil = errors.New("context cannot be nil")
-	ErrJavaNotFound        = errors.New("Java not found")
-	ErrJavaVersionTooOld   = errors.New("Java version too old")
+	ErrJavaNotFound        = errors.New("java not found")
+	ErrJavaVersionTooOld   = errors.New("java version too old")
 )
 
 // JavaVersionProvider abstracts Java version detection for testability
@@ -33,7 +33,7 @@ var _ ports.ConditionService = (*JavaVersionCondition)(nil)
 // Validates all dependencies are non-nil per NASA JPL defensive programming standards
 func NewJavaVersionCondition(minVersion int, javaInfo JavaVersionProvider) (*JavaVersionCondition, error) {
 	if javaInfo == nil {
-		return nil, errors.New("Java info provider cannot be nil")
+		return nil, errors.New("java info provider cannot be nil")
 	}
 	if minVersion <= 0 {
 		return nil, errors.New("min Java version must be positive")
@@ -58,7 +58,7 @@ func (c *JavaVersionCondition) Check(ctx context.Context) error {
 
 	version, err := c.javaInfo.GetJavaVersion()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrJavaNotFound, err)
+		return fmt.Errorf("%w: %w", ErrJavaNotFound, err)
 	}
 
 	if version < c.minVersion {

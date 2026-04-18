@@ -1,5 +1,7 @@
 //go:build !windows
 
+// Package running implements the server-process stage. The job-object guard is
+// Windows-only; this file stubs it out on dev hosts so the package still builds.
 package running
 
 import (

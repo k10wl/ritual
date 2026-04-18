@@ -1,3 +1,4 @@
+// Package domain holds the pure business entities shared across core services.
 package domain
 
 import "sort"

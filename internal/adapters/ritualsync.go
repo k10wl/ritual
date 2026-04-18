@@ -7,10 +7,9 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
-	"strings"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"strings"
 )
 
 const ritualSyncFile = ".ritualsync"
@@ -22,7 +21,7 @@ func ParseRitualSync(fsys fs.FS) (func(string) bool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", ritualSyncFile, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var rules []string
 	scanner := bufio.NewScanner(f)

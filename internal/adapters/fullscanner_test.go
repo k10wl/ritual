@@ -2,13 +2,12 @@ package adapters_test
 
 import (
 	"context"
+	"ritual/internal/adapters"
 	"testing"
 	"testing/fstest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/adapters"
 )
 
 func TestFullScanner_Scan(t *testing.T) {

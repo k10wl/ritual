@@ -8,9 +8,8 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
-
 	"ritual/internal/core/ports"
+	"strings"
 )
 
 type stdinPrompter struct {
@@ -26,18 +25,18 @@ func NewStdin(in io.Reader, out io.Writer) ports.Prompter {
 
 func (p *stdinPrompter) Prompt(_ context.Context, _, prompt, def string) (string, error) {
 	if def != "" {
-		fmt.Fprintf(p.out, "%s [%s]: ", prompt, def)
+		_, _ = fmt.Fprintf(p.out, "%s [%s]: ", prompt, def)
 	} else {
-		fmt.Fprintf(p.out, "%s: ", prompt)
+		_, _ = fmt.Fprintf(p.out, "%s: ", prompt)
 	}
 	line, err := p.in.ReadString('\n')
 	if err != nil {
-		return def, nil
+		return def, nil //nolint:nilerr // read errors fall back to the default by design
 	}
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return def, nil
 	}
-	fmt.Fprintln(p.out, line)
+	_, _ = fmt.Fprintln(p.out, line)
 	return line, nil
 }

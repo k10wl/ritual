@@ -3,11 +3,10 @@ package retry_test
 import (
 	"context"
 	"errors"
+	"ritual/internal/adapters/retry"
 	"testing"
 
 	rg "github.com/avast/retry-go/v4"
-
-	"ritual/internal/adapters/retry"
 )
 
 func TestDo_SucceedsFirstTry(t *testing.T) {

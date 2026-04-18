@@ -4,9 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"testing"
-
 	"ritual/internal/config"
+	"testing"
 )
 
 func TestDefaultSettings(t *testing.T) {

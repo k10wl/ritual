@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// Interface describes a host network interface exposed to the GUI.
 type Interface struct {
 	Name  string
 	Label string
@@ -14,6 +15,7 @@ type Interface struct {
 	IPs   []net.IP
 }
 
+// InterfaceLister returns available network interfaces.
 type InterfaceLister interface {
 	List() ([]Interface, error)
 }
@@ -44,24 +46,29 @@ func isVirtual(name string) bool {
 	return false
 }
 
+// NetInfoService is a Wails service returning GUI-friendly network info.
 type NetInfoService struct {
 	port   int
 	lister InterfaceLister
 }
 
+// NewNetInfoService binds the port and interface lister.
 func NewNetInfoService(port int, lister InterfaceLister) *NetInfoService {
 	return &NetInfoService{port: port, lister: lister}
 }
 
+// JoinAddress pairs a human label with a dial address.
 type JoinAddress struct {
 	Label   string `json:"label"`
 	Address string `json:"address"`
 }
 
+// JoinAddresses is a JSON-ready slice of JoinAddress.
 type JoinAddresses struct {
 	Addresses []JoinAddress `json:"addresses"`
 }
 
+// JoinAddresses returns joinable addresses filtered against virtual interfaces.
 func (s *NetInfoService) JoinAddresses() (JoinAddresses, error) {
 	ifaces, err := s.lister.List()
 	if err != nil {

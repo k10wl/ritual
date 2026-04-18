@@ -244,7 +244,8 @@ func TestFSRepository_Copy(t *testing.T) {
 	})
 
 	t.Run("copy with nil context", func(t *testing.T) {
-		err := repo.Copy(nil, "source.txt", "dest.txt")
+		err := repo.Copy(nil, "source.txt", "dest.txt") //nolint:staticcheck // intentional nil-ctx test
+
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "context cannot be nil")
 	})
@@ -346,9 +347,9 @@ func TestFSRepository_ErrorConditions(t *testing.T) {
 		}
 
 		readOnlyDir := filepath.Join(tempDir, "readonly")
-		err := os.Mkdir(readOnlyDir, 0400)
+		err := os.Mkdir(readOnlyDir, 0o400)
 		assert.NoError(t, err)
-		defer os.Chmod(readOnlyDir, 0755)
+		defer os.Chmod(readOnlyDir, 0o755)
 
 		readOnlyRoot, err := os.OpenRoot(readOnlyDir)
 		assert.NoError(t, err)
@@ -486,7 +487,7 @@ func TestFSRepository_Concurrency(t *testing.T) {
 	t.Run("read write race", func(t *testing.T) {
 		key := "race"
 		initialData := []byte("initial")
-		err := repo.Put(context.Background(), key, initialData)
+		err := repo.Put(ctx, key, initialData)
 		assert.NoError(t, err)
 
 		var wg sync.WaitGroup

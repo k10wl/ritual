@@ -7,10 +7,10 @@ package services
 import (
 	"context"
 	"fmt"
-	"time"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"time"
+
 	syncpkg "ritual/internal/core/sync"
 )
 

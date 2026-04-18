@@ -3,10 +3,10 @@ package mocks
 import (
 	"context"
 	"errors"
+	"ritual/internal/core/domain"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"ritual/internal/core/domain"
 )
 
 func TestMockDirectoryScanner_Scan_Success(t *testing.T) {
@@ -53,7 +53,7 @@ func TestMockDirectoryScanner_Scan_WithFunction(t *testing.T) {
 func TestMockDirectoryScanner_Scan_NilContext(t *testing.T) {
 	mock := NewMockDirectoryScanner()
 
-	_, err := mock.Scan(nil)
+	_, err := mock.Scan(nil) //nolint:staticcheck // intentional nil-ctx test
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "context cannot be nil")
@@ -74,7 +74,7 @@ func TestMockDirectoryScanner_Reset(t *testing.T) {
 	ctx := context.Background()
 
 	mock.ScanFunc = func(ctx context.Context) (map[string]domain.FileEntry, error) {
-		return nil, nil
+		return nil, nil //nolint:nilnil // mock default
 	}
 	_, _ = mock.Scan(ctx)
 

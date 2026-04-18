@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 )
@@ -55,10 +54,10 @@ func migrateV2(root *os.Root) error {
 
 	ritualSync := filepath.Join(config.WorldsDir, ".ritualsync")
 	if _, err := root.Stat(ritualSync); errors.Is(err, fs.ErrNotExist) {
-		if mkErr := root.MkdirAll(config.WorldsDir, 0755); mkErr != nil {
+		if mkErr := root.MkdirAll(config.WorldsDir, 0o755); mkErr != nil {
 			return fmt.Errorf("mkdir worlds: %w", mkErr)
 		}
-		if wErr := root.WriteFile(ritualSync, []byte("*\n"), 0644); wErr != nil {
+		if wErr := root.WriteFile(ritualSync, []byte("*\n"), 0o644); wErr != nil {
 			return fmt.Errorf("write ritualsync: %w", wErr)
 		}
 	}
@@ -79,7 +78,7 @@ func migrateLegacyBackups(root *os.Root) error {
 		return fmt.Errorf("read legacy backups: %w", err)
 	}
 
-	if err := root.MkdirAll(config.BackupsDir, 0755); err != nil {
+	if err := root.MkdirAll(config.BackupsDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir backups: %w", err)
 	}
 

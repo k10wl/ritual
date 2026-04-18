@@ -1,3 +1,4 @@
+// Package app is the app-level orchestrator that wires bus commands to the Ritual state machine.
 package app
 
 import "fmt"

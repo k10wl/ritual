@@ -6,10 +6,9 @@ package sync
 
 import (
 	"fmt"
-	"time"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"time"
 )
 
 // Direction is the cleanup mode of a sync run.

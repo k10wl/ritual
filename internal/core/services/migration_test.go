@@ -3,13 +3,12 @@ package services
 import (
 	"os"
 	"path/filepath"
+	"ritual/internal/config"
+	"ritual/internal/core/domain"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/config"
-	"ritual/internal/core/domain"
 )
 
 // openRoot opens a testing root and schedules cleanup.
@@ -60,8 +59,8 @@ func TestRunMigrations_NilRoot_Errors(t *testing.T) {
 
 func TestMigrateV2(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "instance"), 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "instance", "server.jar"), []byte("jar"), 0644))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "instance"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "instance", "server.jar"), []byte("jar"), 0o644))
 
 	root := openRoot(t, dir)
 	require.NoError(t, migrateV2(root))
@@ -89,9 +88,9 @@ func TestMigrateV2_MovesLegacyTars(t *testing.T) {
 	dir := t.TempDir()
 
 	legacy := filepath.Join(dir, "world_backups")
-	require.NoError(t, os.MkdirAll(legacy, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(legacy, "20260414160000.tar"), []byte("t1"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(legacy, "20260413160000.tar"), []byte("t2"), 0644))
+	require.NoError(t, os.MkdirAll(legacy, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(legacy, "20260414160000.tar"), []byte("t1"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(legacy, "20260413160000.tar"), []byte("t2"), 0o644))
 
 	root := openRoot(t, dir)
 	require.NoError(t, migrateV2(root))

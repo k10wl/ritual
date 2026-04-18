@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
-	"testing"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports/mocks"
 	"ritual/internal/core/services"
+	"strings"
+	"testing"
 )
 
 func TestCreateBackup_CopiesAllKeys(t *testing.T) {

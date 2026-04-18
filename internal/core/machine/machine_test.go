@@ -3,9 +3,8 @@ package machine_test
 import (
 	"context"
 	"errors"
-	"testing"
-
 	"ritual/internal/core/machine"
+	"testing"
 )
 
 type counter struct{ n int }

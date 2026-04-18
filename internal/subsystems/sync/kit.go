@@ -9,22 +9,21 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"time"
-
 	"ritual/internal/adapters"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/services"
+	"time"
 )
 
 // Kit is the result of Build — holds everything the stage chain needs
 // from the sync subsystem.
 type Kit struct {
-	Updaters      []ports.UpdaterService  // check → fetch uses these
-	ExitUpdaters  []ports.UpdaterService  // serve → publish uses these
-	WorldScanner  ports.DirectoryScanner  // archiving uses this to detect server mutations
-	WorldSync     ports.SyncService       // heartbeat uses this for live sync during server running
+	Updaters     []ports.UpdaterService // check → fetch uses these
+	ExitUpdaters []ports.UpdaterService // serve → publish uses these
+	WorldScanner ports.DirectoryScanner // archiving uses this to detect server mutations
+	WorldSync    ports.SyncService      // heartbeat uses this for live sync during server running
 }
 
 // Build wires scanners, filters, sync services, and updaters. It reads
@@ -32,6 +31,7 @@ type Kit struct {
 // filter parsing or ritual-updater creation are returned; partial
 // constructions never leak.
 func Build(
+	ctx context.Context,
 	workRoot *os.Root,
 	localStorage, remoteStorage ports.StorageRepository,
 	localManifests, remoteManifests ports.ManifestStore,
@@ -64,7 +64,7 @@ func Build(
 		return Kit{}, fmt.Errorf("server .ritualsync: %w", err)
 	}
 
-	worldScanner := adapters.NewFilteredScanner(worldInnerScanner(worldsPath, localManifests, worldsFS), worldsFilter)
+	worldScanner := adapters.NewFilteredScanner(worldInnerScanner(ctx, worldsPath, localManifests, worldsFS), worldsFilter)
 	serverScanner := adapters.NewFilteredScanner(adapters.NewFullScanner(serverFS), serverFilter)
 
 	worldSync := services.NewSyncService(
@@ -98,8 +98,8 @@ func Build(
 	}, nil
 }
 
-func worldInnerScanner(worldsPath string, localManifests ports.ManifestStore, worldsFS fs.FS) ports.DirectoryScanner {
-	m, err := localManifests.Get(context.Background())
+func worldInnerScanner(ctx context.Context, worldsPath string, localManifests ports.ManifestStore, worldsFS fs.FS) ports.DirectoryScanner {
+	m, err := localManifests.Get(ctx)
 	if err != nil || m == nil || len(m.Worlds.XXHashMap) == 0 {
 		return adapters.NewFullScanner(worldsFS)
 	}

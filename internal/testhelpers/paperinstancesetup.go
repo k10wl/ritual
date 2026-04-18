@@ -28,7 +28,7 @@ func PaperInstanceSetup(root *os.Root, version string) (string, []string, func(s
 
 	// Create logs directory
 	logsDir := "logs"
-	err = root.Mkdir(logsDir, 0755)
+	err = root.Mkdir(logsDir, 0o755)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -54,12 +54,12 @@ func PaperInstanceSetup(root *os.Root, version string) (string, []string, func(s
 			// Compare file contents using MD5 hash
 			originalHash, err := getFileHash(originalPath)
 			if err != nil {
-				return fmt.Errorf("failed to hash original file %s: %v", file, err)
+				return fmt.Errorf("failed to hash original file %s: %w", file, err)
 			}
 
 			newHash, err := getFileHash(newFilePath)
 			if err != nil {
-				return fmt.Errorf("failed to hash new file %s: %v", file, err)
+				return fmt.Errorf("failed to hash new file %s: %w", file, err)
 			}
 
 			if originalHash != newHash {
@@ -199,7 +199,7 @@ func createPluginFilesWithRoot(root *os.Root) ([]string, error) {
 
 	// Create plugins directory
 	pluginsDir := "plugins"
-	err := root.Mkdir(pluginsDir, 0755)
+	err := root.Mkdir(pluginsDir, 0o755)
 	if err != nil {
 		return nil, err
 	}

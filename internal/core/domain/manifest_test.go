@@ -2,10 +2,9 @@ package domain
 
 import (
 	"encoding/json"
+	"ritual/internal/config"
 	"testing"
 	"time"
-
-	"ritual/internal/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

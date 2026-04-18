@@ -40,7 +40,7 @@ func TestDurationJSONRoundTrip(t *testing.T) {
 }
 
 func TestDurationUnmarshalEmpty(t *testing.T) {
-	var d Duration = Duration(time.Hour)
+	d := Duration(time.Hour)
 	if err := json.Unmarshal([]byte(`""`), &d); err != nil {
 		t.Fatalf("unmarshal empty: %v", err)
 	}

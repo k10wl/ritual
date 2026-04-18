@@ -4,7 +4,6 @@ package retention
 
 import (
 	"fmt"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/services"

@@ -5,13 +5,13 @@ package unlocking
 
 import (
 	"context"
-
 	"ritual/internal/config"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 )
 
+// Strategy implements the Unlocking stage.
 type Strategy struct {
 	local  ports.ManifestStore
 	remote ports.ManifestStore
@@ -24,10 +24,12 @@ func New(local, remote ports.ManifestStore, onNext machine.Strategy[ritual.RunSt
 	return &Strategy{local: local, remote: remote, onNext: onNext}
 }
 
+// Name returns the stage name.
 func (*Strategy) Name() string { return ritual.StageUnlocking }
 
+// Run clears the lock slots on local + remote manifests if still held by rs.LockID.
 func (s *Strategy) Run(parentCtx context.Context, rs *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
-	publish(rs.Bus, ports.StartInfo{Operation: "unlock"})
+	publish(rs.Bus, ritual.StartInfo{Operation: "unlock"})
 	// Unlocking ignores lost-lock: if we already lost the lease, the
 	// manifest's LockedBy check below will skip the Save, so the call
 	// is idempotent and safe even under a hostile takeover.
@@ -44,9 +46,9 @@ func (s *Strategy) Run(parentCtx context.Context, rs *ritual.RunState) (machine.
 		_ = s.remote.Save(ctx, remote)
 	}
 	if rs.LockID != "" {
-		publish(rs.Bus, ports.LockReleasedInfo{RunID: rs.RunID})
+		publish(rs.Bus, ritual.LockReleasedInfo{RunID: rs.RunID})
 	}
-	publish(rs.Bus, ports.FinishInfo{Operation: "unlock"})
+	publish(rs.Bus, ritual.FinishInfo{Operation: "unlock"})
 	return s.onNext, nil
 }
 

@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )
 
+// Retention service sentinel errors.
 var (
 	ErrRetentionStorageNil = errors.New("retention storage cannot be nil")
 	ErrRetentionParseNil   = errors.New("retention parse strategy cannot be nil")

@@ -180,7 +180,7 @@ func TestComputeDiff_LargeMap(t *testing.T) {
 	local := make(map[string]FileEntry, 1000)
 	remote := make(map[string]FileEntry, 1000)
 
-	for i := 0; i < 900; i++ {
+	for i := range 900 {
 		key := fmt.Sprintf("world/region/r.%d.%d.mca", i/30, i%30)
 		entry := FileEntry{Hash: fmt.Sprintf("hash_%d", i), Size: int64(i + 1)}
 		local[key] = entry

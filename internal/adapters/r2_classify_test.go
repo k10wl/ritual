@@ -4,13 +4,12 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"ritual/internal/adapters/retry"
 	"testing"
 	"time"
 
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
-
-	"ritual/internal/adapters/retry"
 )
 
 type fakeNetErr struct{ timeout bool }

@@ -1,9 +1,9 @@
+//nolint:dupl // structurally parallel to mocks/condition.go by design (mock boilerplate per port)
 package mocks
 
 import (
 	"context"
 	"errors"
-
 	"ritual/internal/core/ports"
 )
 

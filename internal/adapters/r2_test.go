@@ -5,9 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
-	"testing"
-
 	"ritual/internal/core/ports"
+	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -418,7 +417,7 @@ func TestR2Repository_RetriesTransient(t *testing.T) {
 			for {
 				select {
 				case evt := <-ch:
-					if _, ok := evt.(ports.RetryAttemptInfo); ok {
+					if _, ok := evt.(RetryAttemptInfo); ok {
 						retries++
 					}
 				default:

@@ -2,9 +2,8 @@ package domain_test
 
 import (
 	"encoding/json"
-	"testing"
-
 	"ritual/internal/core/domain"
+	"testing"
 )
 
 func TestDefaultRetentionRules_KeepLast2(t *testing.T) {

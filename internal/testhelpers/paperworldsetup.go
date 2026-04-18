@@ -2,12 +2,15 @@ package testhelpers
 
 import (
 	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 )
 
 // createPaperWorldFilesWithRoot creates all Paper-specific files using os.Root
+//
+//nolint:gocyclo // fixture builder — each file section is one branch
 func createPaperWorldFilesWithRoot(root *os.Root, worldName string) ([]string, error) {
 	var files []string
 
@@ -32,10 +35,10 @@ func createPaperWorldFilesWithRoot(root *os.Root, worldName string) ([]string, e
 
 	// Player data
 	playerdataDir := filepath.Join(worldName, "playerdata")
-	if err := root.Mkdir(playerdataDir, 0755); err != nil {
+	if err := root.Mkdir(playerdataDir, 0o755); err != nil {
 		return nil, err
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		playerFiles, err := createFileWithRoot(root, playerdataDir, fmt.Sprintf("player_%d.dat", i), fmt.Sprintf("mock player data %d", i))
 		if err != nil {
 			return nil, err
@@ -45,7 +48,7 @@ func createPaperWorldFilesWithRoot(root *os.Root, worldName string) ([]string, e
 
 	// Server config
 	serverconfigDir := filepath.Join(worldName, "serverconfig")
-	if err := root.Mkdir(serverconfigDir, 0755); err != nil {
+	if err := root.Mkdir(serverconfigDir, 0o755); err != nil {
 		return nil, err
 	}
 	configFiles, err := createFileWithRoot(root, serverconfigDir, "forge-server.toml", "# Forge server configuration\n[server]\n")
@@ -56,11 +59,11 @@ func createPaperWorldFilesWithRoot(root *os.Root, worldName string) ([]string, e
 
 	// Datapacks
 	datapacksDir := filepath.Join(worldName, "datapacks")
-	if err := root.Mkdir(datapacksDir, 0755); err != nil {
+	if err := root.Mkdir(datapacksDir, 0o755); err != nil {
 		return nil, err
 	}
 	bukkitDir := filepath.Join(datapacksDir, "bukkit")
-	if err := root.Mkdir(bukkitDir, 0755); err != nil {
+	if err := root.Mkdir(bukkitDir, 0o755); err != nil {
 		return nil, err
 	}
 	packFiles, err := createFileWithRoot(root, bukkitDir, "pack.mcmeta", `{"pack":{"description":"Mock datapack","pack_format":10}}`)
@@ -71,10 +74,10 @@ func createPaperWorldFilesWithRoot(root *os.Root, worldName string) ([]string, e
 
 	// Stats
 	statsDir := filepath.Join(worldName, "stats")
-	if err := root.Mkdir(statsDir, 0755); err != nil {
+	if err := root.Mkdir(statsDir, 0o755); err != nil {
 		return nil, err
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		statsFiles, err := createFileWithRoot(root, statsDir, fmt.Sprintf("stats_%d.json", i), fmt.Sprintf(`{"stats": {"mock": %d}}`, i))
 		if err != nil {
 			return nil, err
@@ -84,10 +87,10 @@ func createPaperWorldFilesWithRoot(root *os.Root, worldName string) ([]string, e
 
 	// Advancements
 	advancementsDir := filepath.Join(worldName, "advancements")
-	if err := root.Mkdir(advancementsDir, 0755); err != nil {
+	if err := root.Mkdir(advancementsDir, 0o755); err != nil {
 		return nil, err
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		advancementFiles, err := createFileWithRoot(root, advancementsDir, fmt.Sprintf("advancement_%d.json", i), fmt.Sprintf(`{"advancement": {"mock": %d}}`, i))
 		if err != nil {
 			return nil, err
@@ -97,10 +100,10 @@ func createPaperWorldFilesWithRoot(root *os.Root, worldName string) ([]string, e
 
 	// Data
 	dataDir := filepath.Join(worldName, "data")
-	if err := root.Mkdir(dataDir, 0755); err != nil {
+	if err := root.Mkdir(dataDir, 0o755); err != nil {
 		return nil, err
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		dataFiles, err := createFileWithRoot(root, dataDir, fmt.Sprintf("data_%d.dat", i), fmt.Sprintf("mock data %d", i))
 		if err != nil {
 			return nil, err
@@ -110,7 +113,7 @@ func createPaperWorldFilesWithRoot(root *os.Root, worldName string) ([]string, e
 
 	// Entities
 	entitiesDir := filepath.Join(worldName, "entities")
-	if err := root.Mkdir(entitiesDir, 0755); err != nil {
+	if err := root.Mkdir(entitiesDir, 0o755); err != nil {
 		return nil, err
 	}
 	for i := range 3 {
@@ -127,7 +130,7 @@ func createPaperWorldFilesWithRoot(root *os.Root, worldName string) ([]string, e
 
 	// POI
 	poiDir := filepath.Join(worldName, "poi")
-	if err := root.Mkdir(poiDir, 0755); err != nil {
+	if err := root.Mkdir(poiDir, 0o755); err != nil {
 		return nil, err
 	}
 	for i := range 3 {
@@ -153,7 +156,7 @@ func createPaperWorldFilesWithRoot(root *os.Root, worldName string) ([]string, e
 // createFileWithRoot creates a single file using os.Root and returns the relative path
 func createFileWithRoot(root *os.Root, dir, filename, content string) ([]string, error) {
 	filePath := filepath.Join(dir, filename)
-	err := root.WriteFile(filePath, []byte(content), 0644)
+	err := root.WriteFile(filePath, []byte(content), 0o644)
 	if err != nil {
 		return nil, err
 	}
@@ -167,16 +170,16 @@ func createDimensionDirsWithRoot(root *os.Root, worldName string) error {
 	dimensions := []string{"DIM-1", "DIM1"}
 	for _, dim := range dimensions {
 		dimDir := filepath.Join(worldName, dim)
-		if err := root.Mkdir(dimDir, 0755); err != nil {
+		if err := root.Mkdir(dimDir, 0o755); err != nil {
 			return err
 		}
-		if err := root.Mkdir(filepath.Join(dimDir, "data"), 0755); err != nil {
+		if err := root.Mkdir(filepath.Join(dimDir, "data"), 0o755); err != nil {
 			return err
 		}
-		if err := root.Mkdir(filepath.Join(dimDir, "region"), 0755); err != nil {
+		if err := root.Mkdir(filepath.Join(dimDir, "region"), 0o755); err != nil {
 			return err
 		}
-		if err := root.Mkdir(filepath.Join(dimDir, "poi"), 0755); err != nil {
+		if err := root.Mkdir(filepath.Join(dimDir, "poi"), 0o755); err != nil {
 			return err
 		}
 	}
@@ -194,21 +197,21 @@ func PaperMinecraftWorldSetup(root *os.Root) (string, []string, func(string) err
 	worlds := []string{"world", "world_nether", "world_the_end"}
 
 	for _, worldName := range worlds {
-		err = root.Mkdir(worldName, 0755)
+		err = root.Mkdir(worldName, 0o755)
 		if err != nil {
 			return "", nil, nil, err
 		}
 
 		// Create level.dat for each world
 		levelDatContent := []byte("mock level data for " + worldName)
-		err = root.WriteFile(filepath.Join(worldName, "level.dat"), levelDatContent, 0644)
+		err = root.WriteFile(filepath.Join(worldName, "level.dat"), levelDatContent, 0o644)
 		if err != nil {
 			return "", nil, nil, err
 		}
 		createdFiles = append(createdFiles, worldName+"/level.dat")
 
 		// Create region directory
-		err = root.Mkdir(filepath.Join(worldName, "region"), 0755)
+		err = root.Mkdir(filepath.Join(worldName, "region"), 0o755)
 		if err != nil {
 			return "", nil, nil, err
 		}
@@ -218,7 +221,7 @@ func PaperMinecraftWorldSetup(root *os.Root) (string, []string, func(string) err
 		for i := range regionContent {
 			regionContent[i] = byte(len(worldName) + i)
 		}
-		err = root.WriteFile(filepath.Join(worldName, "region", "r.0.0.mca"), regionContent, 0644)
+		err = root.WriteFile(filepath.Join(worldName, "region", "r.0.0.mca"), regionContent, 0o644)
 		if err != nil {
 			return "", nil, nil, err
 		}
@@ -248,12 +251,12 @@ func PaperMinecraftWorldSetup(root *os.Root) (string, []string, func(string) err
 			// Compare file contents using MD5 hash
 			originalHash, err := getFileHash(originalPath)
 			if err != nil {
-				return fmt.Errorf("failed to hash original file %s: %v", file, err)
+				return fmt.Errorf("failed to hash original file %s: %w", file, err)
 			}
 
 			newHash, err := getFileHash(newFilePath)
 			if err != nil {
-				return fmt.Errorf("failed to hash new file %s: %v", file, err)
+				return fmt.Errorf("failed to hash new file %s: %w", file, err)
 			}
 
 			if originalHash != newHash {
@@ -273,5 +276,5 @@ func getFileHash(filePath string) (string, error) {
 		return "", err
 	}
 	hash := md5.Sum(content)
-	return fmt.Sprintf("%x", hash), nil
+	return hex.EncodeToString(hash[:]), nil
 }

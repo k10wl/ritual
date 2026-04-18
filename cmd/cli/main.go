@@ -1,13 +1,13 @@
+// Package main is the CLI entry point.
 package main
 
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
-	"syscall"
-
 	"ritual/internal/adapters"
 	"ritual/internal/adapters/observed"
 	"ritual/internal/app"
@@ -18,6 +18,8 @@ import (
 	"ritual/internal/subsystems/logging"
 	"ritual/internal/subsystems/prompt"
 	"ritual/internal/subsystems/retention"
+	"syscall"
+
 	synckit "ritual/internal/subsystems/sync"
 )
 
@@ -40,7 +42,7 @@ func main() {
 	defer func() {
 		if !success {
 			fmt.Println("\nPress Enter to exit...")
-			bufio.NewReader(os.Stdin).ReadBytes('\n')
+			_, _ = bufio.NewReader(os.Stdin).ReadBytes('\n')
 		}
 	}()
 	if err := run(ctx); err != nil {
@@ -50,10 +52,11 @@ func main() {
 	success = true
 }
 
+//nolint:gocyclo // composition root — sequential wiring, intentionally linear.
 func run(ctx context.Context) error {
 	// --- Environment validation ---
 	if envAccountID == "" || envAccessKeyID == "" || envSecretAccessKey == "" || envBucket == "" {
-		return fmt.Errorf("build error: R2 credentials not injected")
+		return errors.New("build error: R2 credentials not injected")
 	}
 
 	// --- Infrastructure setup (filesystem, logging, event bus) ---
@@ -64,7 +67,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("open root: %w", err)
 	}
-	defer workRoot.Close()
+	defer func() { _ = workRoot.Close() }()
 
 	logFile, logCleanup, err := logging.CreateLogFile(workRoot)
 	if err != nil {
@@ -87,7 +90,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("local storage: %w", err)
 	}
-	rawRemote, err := adapters.NewR2Repository(envBucket, envAccountID, envAccessKeyID, envSecretAccessKey, bus)
+	rawRemote, err := adapters.NewR2Repository(ctx, envBucket, envAccountID, envAccessKeyID, envSecretAccessKey, bus)
 	if err != nil {
 		return fmt.Errorf("remote storage: %w", err)
 	}
@@ -97,19 +100,20 @@ func run(ctx context.Context) error {
 	localManifests := adapters.NewManifestStore(localStorage)
 	remoteManifests := adapters.NewManifestStore(remoteStorage)
 
-	remoteManifest, err := remoteManifests.Get(context.Background())
+	remoteManifest, err := remoteManifests.Get(ctx)
 	if err != nil {
 		return fmt.Errorf("get remote manifest: %w", err)
 	}
 
 	// --- Subsystem builders (CLI-specific wiring) ---
-	sk, err := synckit.Build(workRoot, localStorage, remoteStorage, localManifests, remoteManifests, bus)
+	sk, err := synckit.Build(ctx, workRoot, localStorage, remoteStorage, localManifests, remoteManifests, bus)
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)
 	}
 
 	// --- Heartbeat (needs WorldSync from kit) ---
-	_, stopHeartbeat := heartbeat.Attach(bus, localManifests, remoteManifests, sk.WorldSync)
+	_, stopHeartbeat := heartbeat.Attach(bus, localManifests, remoteManifests, sk.WorldSync) //nolint:contextcheck // supervisor owns its own lifecycle via bus events
+
 	defer stopHeartbeat()
 	sysInfo := adapters.NewSystemInfo()
 	javaInfo := adapters.NewJavaInfo()
@@ -121,7 +125,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("retention: %w", err)
 	}
-	settings, err := services.PromptSettings(bus, prompter, remoteManifest.GetMinRAMMB())
+	settings, err := services.PromptSettings(ctx, bus, prompter, remoteManifest.GetMinRAMMB())
 	if err != nil {
 		return fmt.Errorf("settings: %w", err)
 	}
@@ -156,6 +160,8 @@ func run(ctx context.Context) error {
 				case app.Failed:
 					done <- sc.Err
 					return
+				case app.Idle, app.Running:
+					// transient states — keep waiting
 				}
 			}
 		}

@@ -9,7 +9,6 @@ package archiving
 import (
 	"context"
 	"maps"
-
 	"ritual/internal/config"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
@@ -17,6 +16,7 @@ import (
 	"ritual/internal/core/services"
 )
 
+// Strategy implements the Archiving stage.
 type Strategy struct {
 	localStore     ports.StorageRepository
 	remoteStore    ports.StorageRepository
@@ -25,6 +25,7 @@ type Strategy struct {
 	onNext         machine.Strategy[ritual.RunState]
 }
 
+// New builds an Archiving Strategy.
 func New(
 	localStore, remoteStore ports.StorageRepository,
 	localManifests ports.ManifestStore,
@@ -40,13 +41,15 @@ func New(
 	}
 }
 
+// Name returns the stage name.
 func (*Strategy) Name() string { return ritual.StageArchiving }
 
+// Run archives the pre-run world snapshot when the server mutated it.
 func (s *Strategy) Run(parentCtx context.Context, rs *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
-	publish(rs.Bus, ports.StartInfo{Operation: "archive"})
+	publish(rs.Bus, ritual.StartInfo{Operation: "archive"})
 
 	if rs.LockID == "" || rs.LocalBefore == nil {
-		publish(rs.Bus, ports.FinishInfo{Operation: "archive"})
+		publish(rs.Bus, ritual.FinishInfo{Operation: "archive"})
 		return s.onNext, nil
 	}
 
@@ -54,7 +57,7 @@ func (s *Strategy) Run(parentCtx context.Context, rs *ritual.RunState) (machine.
 	defer done()
 
 	if !s.serverChangedFiles(ctx, rs) {
-		publish(rs.Bus, ports.FinishInfo{Operation: "archive"})
+		publish(rs.Bus, ritual.FinishInfo{Operation: "archive"})
 		return s.onNext, nil
 	}
 
@@ -62,7 +65,7 @@ func (s *Strategy) Run(parentCtx context.Context, rs *ritual.RunState) (machine.
 
 	_ = services.CreateBackupFrom(ctx, s.remoteStore, s.localStore, config.WorldsDir, config.BackupsDir, manifest)
 	_ = services.CreateBackup(ctx, s.remoteStore, config.WorldsDir, config.BackupsDir, manifest)
-	publish(rs.Bus, ports.FinishInfo{Operation: "archive"})
+	publish(rs.Bus, ritual.FinishInfo{Operation: "archive"})
 	return s.onNext, nil
 }
 

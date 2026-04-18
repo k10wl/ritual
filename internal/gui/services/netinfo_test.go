@@ -3,9 +3,8 @@ package services_test
 import (
 	"errors"
 	"net"
-	"testing"
-
 	"ritual/internal/gui/services"
+	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

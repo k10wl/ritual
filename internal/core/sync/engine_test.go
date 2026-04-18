@@ -6,15 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"ritual/internal/adapters"
+	"ritual/internal/adapters/observed"
+	"ritual/internal/core/domain"
+	"ritual/internal/core/ports"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"ritual/internal/adapters"
-	"ritual/internal/adapters/observed"
-	"ritual/internal/core/domain"
-	"ritual/internal/core/ports"
 	syncpkg "ritual/internal/core/sync"
 )
 

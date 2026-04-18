@@ -36,25 +36,26 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
-	"testing"
-	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"ritual/internal/adapters"
 	"ritual/internal/app"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/services"
+	"ritual/internal/core/stages/running"
 	"ritual/internal/subsystems/heartbeat"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------- TestMain: compile fakerun binary once ----------
@@ -269,7 +270,7 @@ func (r *testRitual) startRitualFull(t *testing.T, conditions []ports.ConditionS
 	t.Helper()
 
 	worldsPath := filepath.Join(r.localDir, config.WorldsDir)
-	require.NoError(t, os.MkdirAll(worldsPath, 0755), "create worlds dir")
+	require.NoError(t, os.MkdirAll(worldsPath, 0o755), "create worlds dir")
 
 	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
 	staging := t.TempDir()
@@ -387,14 +388,14 @@ func seedSyncedWorld(t *testing.T, r *testRitual, files ...testFile) {
 
 	localManifest, err := r.localManifests.Get(r.ctx)
 	require.NoError(t, err, "get local manifest for synced seed")
-	localManifest.Worlds.SyncState.XXHashMap = xxhashMap
-	localManifest.Worlds.SyncState.XXHashSyncAt = time.Now()
+	localManifest.Worlds.XXHashMap = xxhashMap
+	localManifest.Worlds.XXHashSyncAt = time.Now()
 	require.NoError(t, r.localManifests.Save(r.ctx, localManifest), "save local manifest for synced seed")
 
 	remoteManifest, err := r.remoteManifests.Get(r.ctx)
 	require.NoError(t, err, "get remote manifest for synced seed")
-	remoteManifest.Worlds.SyncState.XXHashMap = xxhashMap
-	remoteManifest.Worlds.SyncState.XXHashSyncAt = time.Now()
+	remoteManifest.Worlds.XXHashMap = xxhashMap
+	remoteManifest.Worlds.XXHashSyncAt = time.Now()
 	require.NoError(t, r.remoteManifests.Save(r.ctx, remoteManifest), "save remote manifest for synced seed")
 }
 
@@ -412,8 +413,8 @@ func seedFiles(t *testing.T, rootDir string, files []testFile) {
 	t.Helper()
 	for _, f := range files {
 		fullPath := filepath.Join(rootDir, config.WorldsDir, f.path)
-		require.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0755), "create parent dirs for %s", f.path)
-		require.NoError(t, os.WriteFile(fullPath, f.content, 0644), "write seed file %s", f.path)
+		require.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0o755), "create parent dirs for %s", f.path)
+		require.NoError(t, os.WriteFile(fullPath, f.content, 0o644), "write seed file %s", f.path)
 	}
 }
 
@@ -423,12 +424,12 @@ func seedBackups(t *testing.T, r *testRitual, count int) {
 		ts := time.Now().Add(time.Duration(-count+i) * time.Hour).UTC().Format(config.TimestampFormat)
 
 		localBackupDir := filepath.Join(r.localDir, config.BackupsDir, ts)
-		require.NoError(t, os.MkdirAll(localBackupDir, 0755), "create local backup dir %s", ts)
-		require.NoError(t, os.WriteFile(filepath.Join(localBackupDir, config.ManifestFilename), []byte("{}"), 0644), "write local backup manifest %s", ts)
+		require.NoError(t, os.MkdirAll(localBackupDir, 0o755), "create local backup dir %s", ts)
+		require.NoError(t, os.WriteFile(filepath.Join(localBackupDir, config.ManifestFilename), []byte("{}"), 0o644), "write local backup manifest %s", ts)
 
 		remoteBackupDir := filepath.Join(r.remoteDir, config.BackupsDir, ts)
-		require.NoError(t, os.MkdirAll(remoteBackupDir, 0755), "create remote backup dir %s", ts)
-		require.NoError(t, os.WriteFile(filepath.Join(remoteBackupDir, config.ManifestFilename), []byte("{}"), 0644), "write remote backup manifest %s", ts)
+		require.NoError(t, os.MkdirAll(remoteBackupDir, 0o755), "create remote backup dir %s", ts)
+		require.NoError(t, os.WriteFile(filepath.Join(remoteBackupDir, config.ManifestFilename), []byte("{}"), 0o644), "write remote backup manifest %s", ts)
 	}
 }
 
@@ -475,7 +476,7 @@ func (r *testRitual) startRitualWithRetention(t *testing.T) *fakeServer {
 	server := r.fakerun()
 
 	worldsPath := filepath.Join(r.localDir, config.WorldsDir)
-	_ = os.MkdirAll(worldsPath, 0755)
+	_ = os.MkdirAll(worldsPath, 0o755)
 
 	worldsFS := os.DirFS(worldsPath)
 	worldScanner := adapters.NewFullScanner(worldsFS)
@@ -703,7 +704,7 @@ type failOnceIntegrationUpdater struct {
 func (f *failOnceIntegrationUpdater) Run(_ context.Context) error {
 	f.calls++
 	if f.calls == 1 {
-		return fmt.Errorf("simulated transient failure")
+		return errors.New("simulated transient failure")
 	}
 	return nil
 }
@@ -1085,7 +1086,7 @@ func (r *testRitual) startRitualWithLiveSync(t *testing.T) {
 	t.Helper()
 
 	worldsPath := filepath.Join(r.localDir, config.WorldsDir)
-	require.NoError(t, os.MkdirAll(worldsPath, 0755), "create worlds dir")
+	require.NoError(t, os.MkdirAll(worldsPath, 0o755), "create worlds dir")
 
 	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
 	staging := t.TempDir()
@@ -1147,7 +1148,7 @@ func waitForSaveCompleted(t *testing.T, ch <-chan ports.Event, count int, timeou
 			if !ok {
 				t.Fatalf("event channel closed while waiting for SaveCompleted (got %d/%d)", seen, count)
 			}
-			if _, ok := e.(ports.SaveCompleted); ok {
+			if _, ok := e.(running.SaveCompleted); ok {
 				seen++
 				if seen >= count {
 					return
@@ -1174,7 +1175,7 @@ func waitForSaveCompletedThenStatus(t *testing.T, ch <-chan ports.Event, saveCou
 				t.Fatal("event channel closed unexpectedly")
 			}
 			if !stopped {
-				if _, ok := e.(ports.SaveCompleted); ok {
+				if _, ok := e.(running.SaveCompleted); ok {
 					seen++
 					if seen >= saveCount {
 						stop()
@@ -1204,8 +1205,8 @@ func seedRemoteWorldWithShortHeartbeat(t *testing.T, r *testRitual, files ...tes
 	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
 	xxhashMap, err := scanner.Scan(r.ctx)
 	require.NoError(t, err, "scan worlds for short heartbeat seed")
-	remoteManifest.Worlds.SyncState.XXHashMap = xxhashMap
-	remoteManifest.Worlds.SyncState.XXHashSyncAt = time.Now()
+	remoteManifest.Worlds.XXHashMap = xxhashMap
+	remoteManifest.Worlds.XXHashSyncAt = time.Now()
 
 	require.NoError(t, r.remoteManifests.Save(r.ctx, remoteManifest), "save remote manifest with short heartbeat")
 }
@@ -1270,8 +1271,8 @@ func TestIntegration_CrashRecovery_LocalNewerKept(t *testing.T) {
 	require.NoError(t, err, "get remote manifest for crash recovery test")
 	remoteManifest.Lease.HeartbeatInterval = domain.Duration(200 * time.Millisecond)
 	remoteManifest.Lease.TTL = domain.Duration(2 * time.Second)
-	remoteManifest.Worlds.SyncState.XXHashSyncAt = time.Now().Add(-time.Hour)
-	remoteManifest.Worlds.SyncState.XXHashMap = map[string]domain.FileEntry{
+	remoteManifest.Worlds.XXHashSyncAt = time.Now().Add(-time.Hour)
+	remoteManifest.Worlds.XXHashMap = map[string]domain.FileEntry{
 		"world/level.dat": {Hash: "remote-hash-old", Size: 16},
 	}
 	require.NoError(t, ritual.remoteManifests.Save(ritual.ctx, remoteManifest), "save remote manifest for crash recovery")
@@ -1287,8 +1288,8 @@ func TestIntegration_CrashRecovery_LocalNewerKept(t *testing.T) {
 
 	localManifest, err := ritual.localManifests.Get(ritual.ctx)
 	require.NoError(t, err, "get local manifest for crash recovery test")
-	localManifest.Worlds.SyncState.XXHashSyncAt = time.Now()
-	localManifest.Worlds.SyncState.XXHashMap = localXXHash
+	localManifest.Worlds.XXHashSyncAt = time.Now()
+	localManifest.Worlds.XXHashMap = localXXHash
 	require.NoError(t, ritual.localManifests.Save(ritual.ctx, localManifest), "save local manifest for crash recovery")
 
 	ch, unsub := ritual.bus.Subscribe()
@@ -1320,8 +1321,8 @@ func TestIntegration_LiveSyncUploadsNewFiles_RemoteReflectsChanges(t *testing.T)
 
 	worldsPath := filepath.Join(ritual.localDir, config.WorldsDir)
 	newFilePath := filepath.Join(worldsPath, "world", "playerdata", "player1.dat")
-	require.NoError(t, os.MkdirAll(filepath.Dir(newFilePath), 0755), "create playerdata dir")
-	require.NoError(t, os.WriteFile(newFilePath, []byte("player one"), 0644), "write new player file")
+	require.NoError(t, os.MkdirAll(filepath.Dir(newFilePath), 0o755), "create playerdata dir")
+	require.NoError(t, os.WriteFile(newFilePath, []byte("player one"), 0o644), "write new player file")
 
 	waitForSaveCompletedThenStatus(t, ch, 1, ritual.sendStop, app.Failed, 10*time.Second)
 
@@ -1392,7 +1393,7 @@ func TestIntegration_ServerBecomesReady_AutosavesDisabled(t *testing.T) {
 			if !ok {
 				t.Fatal("event channel closed while waiting for save-off")
 			}
-			if out, ok := e.(ports.ServerOutputInfo); ok && strings.Contains(out.Line, "Automatic saving is now disabled") {
+			if out, ok := e.(running.ServerOutputInfo); ok && strings.Contains(out.Line, "Automatic saving is now disabled") {
 				ritual.sendStop()
 				waitForIntegrationStatus(t, ch, app.Failed, 10*time.Second)
 				return

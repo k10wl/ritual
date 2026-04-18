@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
-
 	"ritual/internal/config"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
@@ -19,6 +17,7 @@ import (
 	"ritual/internal/core/stages/retaining"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/core/stages/unlocking"
+	"time"
 )
 
 // Ritual orchestrates the full backup pipeline via bus-driven dispatch.
@@ -44,6 +43,7 @@ type Ritual struct {
 	cancel context.CancelFunc
 }
 
+// New builds the Ritual orchestrator with the supplied ports and subsystems.
 func New(
 	bus ports.EventBus,
 	localStorage ports.StorageRepository,

@@ -1,3 +1,4 @@
+// Package ports defines hexagonal ports — interfaces implemented by adapters.
 package ports
 
 // EventBus is a pubsub fan-out. Multiple subscribers can attach; each
@@ -15,14 +16,14 @@ package ports
 //	defer cancel()
 //	for evt := range ch {
 //	    switch e := evt.(type) {
-//	    case ports.ErrorInfo:        handleErr(e)
-//	    case ports.StateChangedInfo: route(e.To)
+//	    case ritual.ErrorInfo:        handleErr(e)
+//	    case ritual.StateChangedInfo: route(e.To)
 //	    }
 //	}
 //
 // For type or predicate filtering, wrap the bus with a Decorator:
 //
-//	errs, _ := adapters.WithTypes(bus, ports.ErrorInfo{}).Subscribe()
+//	errs, _ := adapters.WithTypes(bus, ritual.ErrorInfo{}).Subscribe()
 //	ops,  _ := adapters.WithFilter(bus, func(e ports.Event) bool { ... }).Subscribe()
 //
 // Decorators are not provided today — added when the first real consumer needs them.

@@ -2,26 +2,24 @@ package adapters
 
 // All network methods on R2Repository route through retry.Do / retry.DoVoid.
 // Classification lives in r2_classify.go (r2Retryable). Transient retries
-// publish ports.RetryAttemptInfo on the events channel — same channel that
+// publish RetryAttemptInfo on the events channel — same channel that
 // carries UploadProgress / DownloadProgress. Retry delays are zero under
 // `go test` via testing.Testing() inside internal/adapters/retry.
 
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
+	"crypto/md5" // #nosec G501 -- AWS S3 Content-MD5 header requires md5; not used cryptographically.
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
-	"sync/atomic"
-	"time"
+	"ritual/internal/adapters/retry"
+	appconfig "ritual/internal/config"
+	"ritual/internal/core/ports"
 
 	rg "github.com/avast/retry-go/v4"
-
-	appconfig "ritual/internal/config"
-	"ritual/internal/adapters/retry"
-	"ritual/internal/core/ports"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -30,6 +28,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
+// S3Client is the subset of s3.Client used by R2Repository. Extracted to allow tests to fake.
 type S3Client interface {
 	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
@@ -39,6 +38,7 @@ type S3Client interface {
 	CopyObject(ctx context.Context, params *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error)
 }
 
+// R2Repository is a StorageRepository backed by Cloudflare R2 via the S3 API.
 type R2Repository struct {
 	client S3Client
 	bucket string
@@ -54,8 +54,8 @@ func (r *R2Repository) String() string {
 	return "r2::" + r.bucket + "/" + r.prefix
 }
 
-func setupS3Client(accountID string, accessKeyID string, secretAccessKey string) (S3Client, error) {
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
+func setupS3Client(ctx context.Context, accountID string, accessKeyID string, secretAccessKey string) (S3Client, error) {
+	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, "")),
 		config.WithRegion("auto"),
 	)
@@ -70,8 +70,9 @@ func setupS3Client(accountID string, accessKeyID string, secretAccessKey string)
 	return client, nil
 }
 
-func NewR2Repository(bucket string, accountID string, accessKeyID string, secretAccessKey string, bus ports.EventBus) (*R2Repository, error) {
-	client, err := setupS3Client(accountID, accessKeyID, secretAccessKey)
+// NewR2Repository constructs an R2Repository authenticated with the supplied credentials.
+func NewR2Repository(ctx context.Context, bucket string, accountID string, accessKeyID string, secretAccessKey string, bus ports.EventBus) (*R2Repository, error) {
+	client, err := setupS3Client(ctx, accountID, accessKeyID, secretAccessKey)
 	if err != nil {
 		return nil, err
 	}
@@ -83,6 +84,7 @@ func NewR2Repository(bucket string, accountID string, accessKeyID string, secret
 	}, nil
 }
 
+// NewR2RepositoryWithClient constructs an R2Repository around a pre-built S3 client (for tests).
 func NewR2RepositoryWithClient(client S3Client, bucket string, bus ports.EventBus) *R2Repository {
 	return &R2Repository{
 		client: client,
@@ -111,7 +113,7 @@ func (r *R2Repository) retryOpts(op, key string) []rg.Option {
 	return []rg.Option{
 		rg.RetryIf(r2Retryable),
 		rg.OnRetry(func(n uint, err error) {
-			r.publish(ports.RetryAttemptInfo{
+			r.publish(RetryAttemptInfo{
 				Operation: op,
 				Key:       key,
 				Attempt:   n + 1,
@@ -121,6 +123,7 @@ func (r *R2Repository) retryOpts(op, key string) []rg.Option {
 	}
 }
 
+// Get reads an object from R2 and returns its bytes.
 func (r *R2Repository) Get(ctx context.Context, key string) ([]byte, error) {
 	key = filepath.ToSlash(key)
 	return retry.Do(ctx, func(ctx context.Context) ([]byte, error) {
@@ -131,14 +134,15 @@ func (r *R2Repository) Get(ctx context.Context, key string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to get object %s: %w", key, err)
 		}
-		defer result.Body.Close()
+		defer func() { _ = result.Body.Close() }()
 		return io.ReadAll(result.Body)
 	}, r.retryOpts("r2.Get", key)...)
 }
 
+// Put uploads data under key to R2.
 func (r *R2Repository) Put(ctx context.Context, key string, data []byte) error {
 	key = filepath.ToSlash(key)
-	md5sum := md5.Sum(data)
+	md5sum := md5.Sum(data) // #nosec G401 -- AWS S3 Content-MD5 header, not cryptographic use.
 	contentMD5 := base64.StdEncoding.EncodeToString(md5sum[:])
 	return retry.DoVoid(ctx, func(ctx context.Context) error {
 		_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
@@ -191,6 +195,7 @@ func (r *R2Repository) Rename(ctx context.Context, sourceKey string, destKey str
 	}, r.retryOpts("r2.Rename.Delete", sourceKey)...)
 }
 
+// List returns keys under the given prefix.
 func (r *R2Repository) List(ctx context.Context, prefix string) ([]string, error) {
 	prefix = filepath.ToSlash(prefix)
 	return retry.Do(ctx, func(ctx context.Context) ([]string, error) {
@@ -214,22 +219,22 @@ func (r *R2Repository) List(ctx context.Context, prefix string) ([]string, error
 // Copy copies data from source key to destination key
 func (r *R2Repository) Copy(ctx context.Context, sourceKey string, destKey string) error {
 	if ctx == nil {
-		return fmt.Errorf("context cannot be nil")
+		return errors.New("context cannot be nil")
 	}
 	if r == nil {
-		return fmt.Errorf("R2 repository cannot be nil")
+		return errors.New("R2 repository cannot be nil")
 	}
 	if sourceKey == "" {
-		return fmt.Errorf("source key cannot be empty")
+		return errors.New("source key cannot be empty")
 	}
 	if destKey == "" {
-		return fmt.Errorf("destination key cannot be empty")
+		return errors.New("destination key cannot be empty")
 	}
 	if r.client == nil {
-		return fmt.Errorf("S3 client cannot be nil")
+		return errors.New("S3 client cannot be nil")
 	}
 	if r.bucket == "" {
-		return fmt.Errorf("bucket name cannot be empty")
+		return errors.New("bucket name cannot be empty")
 	}
 
 	sourceKey = filepath.ToSlash(sourceKey)
@@ -249,6 +254,7 @@ func (r *R2Repository) Copy(ctx context.Context, sourceKey string, destKey strin
 	}, r.retryOpts("r2.Copy", destKey)...)
 }
 
+// DeleteBatch removes keys from R2 in 1000-object batches (S3 API limit).
 func (r *R2Repository) DeleteBatch(ctx context.Context, keys []string) error {
 	const maxBatch = 1000
 	for i := 0; i < len(keys); i += maxBatch {
@@ -280,72 +286,3 @@ func (r *R2Repository) DeleteBatch(ctx context.Context, keys []string) error {
 }
 
 var _ ports.StorageRepository = (*R2Repository)(nil)
-
-// progressReadCloser wraps a ReadCloser and emits download progress events
-type progressReadCloser struct {
-	reader      io.ReadCloser
-	key         string
-	bytesRead   int64
-	totalSize   int64
-	lastLogTime time.Time
-	logInterval time.Duration
-	bus         ports.EventBus
-}
-
-func publishIfBus(bus ports.EventBus, evt ports.Event) {
-	if bus != nil {
-		bus.Publish(evt)
-	}
-}
-
-func newProgressReadCloser(r io.ReadCloser, key string, totalSize int64, bus ports.EventBus) *progressReadCloser {
-	publishIfBus(bus, ports.UpdateInfo{
-		Operation: "download",
-		Message:   "Starting download",
-		Data:      map[string]any{"key": key, "size_mb": fmt.Sprintf("%.2f", float64(totalSize)/(1024*1024))},
-	})
-	return &progressReadCloser{
-		reader:      r,
-		key:         key,
-		totalSize:   totalSize,
-		lastLogTime: time.Now(),
-		logInterval: 5 * time.Second,
-		bus:         bus,
-	}
-}
-
-func (pr *progressReadCloser) Read(p []byte) (int, error) {
-	n, err := pr.reader.Read(p)
-	if n > 0 {
-		atomic.AddInt64(&pr.bytesRead, int64(n))
-		now := time.Now()
-		if now.Sub(pr.lastLogTime) >= pr.logInterval {
-			pr.lastLogTime = now
-			bytesRead := atomic.LoadInt64(&pr.bytesRead)
-			mb := float64(bytesRead) / (1024 * 1024)
-			data := map[string]any{"key": pr.key, "downloaded_mb": fmt.Sprintf("%.2f", mb)}
-			if pr.totalSize > 0 {
-				pct := float64(bytesRead) / float64(pr.totalSize) * 100
-				data["percent"] = pct
-			}
-			publishIfBus(pr.bus, ports.UpdateInfo{
-				Operation: "download",
-				Message:   "Download progress",
-				Data:      data,
-			})
-		}
-	}
-	if err == io.EOF {
-		totalMB := float64(atomic.LoadInt64(&pr.bytesRead)) / (1024 * 1024)
-		publishIfBus(pr.bus, ports.UpdateInfo{
-			Operation: "download",
-			Message:   "Download completed",
-			Data:      map[string]any{"key": pr.key, "total_mb": fmt.Sprintf("%.2f", totalMB)},
-		})
-	}
-	return n, err
-}
-
-func (pr *progressReadCloser) Close() error {
-	return pr.reader.Close()
-}

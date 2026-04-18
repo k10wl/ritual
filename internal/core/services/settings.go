@@ -2,11 +2,12 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strconv"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/ritual"
+	"strconv"
 )
 
 // publishEvt is the nil-safe bus helper local to this file.
@@ -22,9 +23,9 @@ func publishEvt(bus ports.EventBus, evt ports.Event) {
 //
 // minRAMMB is the minimum RAM requirement from the remote manifest (MB).
 // Returns validated and saved settings.
-func PromptSettings(bus ports.EventBus, prompter ports.Prompter, minRAMMB int) (*domain.Settings, error) {
+func PromptSettings(ctx context.Context, bus ports.EventBus, prompter ports.Prompter, minRAMMB int) (*domain.Settings, error) {
 	if prompter == nil {
-		return nil, fmt.Errorf("prompter cannot be nil")
+		return nil, errors.New("prompter cannot be nil")
 	}
 	settings, err := domain.LoadSettings()
 	if err != nil {
@@ -36,13 +37,11 @@ func PromptSettings(bus ports.EventBus, prompter ports.Prompter, minRAMMB int) (
 		minRAMGB = 1
 	}
 
-	publishEvt(bus, ports.StartInfo{Operation: "Settings"})
-	publishEvt(bus, ports.UpdateInfo{
+	publishEvt(bus, ritual.StartInfo{Operation: "Settings"})
+	publishEvt(bus, ritual.UpdateInfo{
 		Operation: "Settings",
 		Message:   "Press Enter to accept default values shown in brackets",
 	})
-
-	ctx := context.Background()
 
 	portStr, err := promptWithValidation(ctx, bus, prompter, "Port", strconv.Itoa(settings.Port), validatePort)
 	if err != nil {
@@ -70,11 +69,11 @@ func PromptSettings(bus ports.EventBus, prompter ports.Prompter, minRAMMB int) (
 		return nil, fmt.Errorf("failed to save settings: %w", err)
 	}
 
-	publishEvt(bus, ports.UpdateInfo{
+	publishEvt(bus, ritual.UpdateInfo{
 		Operation: "Settings",
 		Message:   fmt.Sprintf("Saved: Port=%d, RAM=%dGB", settings.Port, settings.Memory/1024),
 	})
-	publishEvt(bus, ports.FinishInfo{Operation: "Settings"})
+	publishEvt(bus, ritual.FinishInfo{Operation: "Settings"})
 
 	return settings, nil
 }
@@ -87,7 +86,7 @@ func promptWithValidation(ctx context.Context, bus ports.EventBus, prompter port
 			return "", err
 		}
 		if err := validate(response); err != nil {
-			publishEvt(bus, ports.UpdateInfo{
+			publishEvt(bus, ritual.UpdateInfo{
 				Operation: "Settings",
 				Message:   fmt.Sprintf("Invalid input: %v", err),
 			})
@@ -100,10 +99,10 @@ func promptWithValidation(ctx context.Context, bus ports.EventBus, prompter port
 func validatePort(input string) error {
 	port, err := strconv.Atoi(input)
 	if err != nil {
-		return fmt.Errorf("port must be a number")
+		return errors.New("port must be a number")
 	}
 	if port <= 0 || port > 65535 {
-		return fmt.Errorf("port must be between 1 and 65535")
+		return errors.New("port must be between 1 and 65535")
 	}
 	return nil
 }
@@ -113,13 +112,13 @@ func makeMemoryValidator(minGB int) func(string) error {
 	return func(input string) error {
 		memoryGB, err := strconv.Atoi(input)
 		if err != nil {
-			return fmt.Errorf("memory must be a number")
+			return errors.New("memory must be a number")
 		}
 		if memoryGB < minGB {
 			return fmt.Errorf("memory must be at least %dGB (required minimum)", minGB)
 		}
 		if memoryGB > 64 {
-			return fmt.Errorf("memory cannot exceed 64GB")
+			return errors.New("memory cannot exceed 64GB")
 		}
 		return nil
 	}

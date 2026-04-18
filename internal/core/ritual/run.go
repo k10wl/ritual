@@ -2,8 +2,7 @@ package ritual
 
 import (
 	"context"
-	"fmt"
-
+	"errors"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 )
@@ -15,6 +14,7 @@ type Runner struct {
 	current  machine.Strategy[RunState]
 }
 
+// NewRunner returns a Runner bound to runState.
 func NewRunner(runState *RunState) *Runner {
 	return &Runner{runState: runState}
 }
@@ -31,7 +31,7 @@ func (r *Runner) Run(ctx context.Context, start machine.Strategy[RunState]) erro
 // RunCurrent re-enters the machine at the last stopped strategy.
 func (r *Runner) RunCurrent(ctx context.Context) error {
 	if r.current == nil {
-		return fmt.Errorf("no current strategy to resume")
+		return errors.New("no current strategy to resume")
 	}
 	return r.drive(ctx)
 }
@@ -48,7 +48,7 @@ func (r *Runner) drive(ctx context.Context) error {
 			return err
 		}
 		nextName := stageName(next)
-		publish(rs.Bus, ports.StateChangedInfo{From: curName, To: nextName, RunID: rs.RunID})
+		publish(rs.Bus, StateChangedInfo{From: curName, To: nextName, RunID: rs.RunID})
 		r.current = next
 	}
 	return nil

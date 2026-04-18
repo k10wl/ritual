@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -34,7 +35,8 @@ func run(t *testing.T, root string, lines ...string) (int, string) {
 	cmd.Stdin = strings.NewReader(strings.Join(lines, "\n") + "\n")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		exitErr := &exec.ExitError{}
+		if errors.As(err, &exitErr) {
 			return exitErr.ExitCode(), string(out)
 		}
 		t.Fatalf("exec fakerun: %s", err)
@@ -91,7 +93,7 @@ func TestFakerun_WriteOverwritesExisting(t *testing.T) {
 
 func TestFakerun_DeleteRemovesFile(t *testing.T) {
 	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "doomed.txt"), []byte("bye"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "doomed.txt"), []byte("bye"), 0o644))
 
 	code, _ := run(t, root, deleteOp("doomed.txt"), exitOp(0))
 

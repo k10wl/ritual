@@ -2,7 +2,6 @@ package services
 
 import (
 	"maps"
-
 	"ritual/internal/core/domain"
 )
 

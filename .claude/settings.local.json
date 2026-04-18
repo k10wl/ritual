@@ -16,7 +16,10 @@
       "Bash(gofmt -d internal/core/sync/runstate.go)",
       "Bash(gofmt -w internal/core/sync/runstate.go)",
       "Bash(gofmt -l ./...)",
-      "Bash(golangci-lint run *)"
+      "Bash(golangci-lint run *)",
+      "Bash(task lint *)",
+      "Bash(task lint:fix)",
+      "Bash(task test *)"
     ],
     "deny": [],
     "ask": []

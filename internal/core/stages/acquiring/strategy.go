@@ -10,15 +10,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
-
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
+	"time"
 )
 
+// Strategy implements the Acquiring stage.
 type Strategy struct {
 	local      ports.ManifestStore
 	remote     ports.ManifestStore
@@ -27,6 +27,7 @@ type Strategy struct {
 	onRollback machine.Strategy[ritual.RunState]
 }
 
+// New builds an Acquiring Strategy.
 func New(
 	local, remote ports.ManifestStore,
 	onOK, onFail, onRollback machine.Strategy[ritual.RunState],
@@ -34,13 +35,15 @@ func New(
 	return &Strategy{local: local, remote: remote, onOK: onOK, onFail: onFail, onRollback: onRollback}
 }
 
+// Name returns the stage name.
 func (*Strategy) Name() string { return ritual.StageAcquiring }
 
+// Run attempts to take the remote lock under lease semantics.
 func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
-	publish(rs.Bus, ports.StartInfo{Operation: "acquire"})
+	publish(rs.Bus, ritual.StartInfo{Operation: "acquire"})
 	if err := ctx.Err(); err != nil {
 		rs.Err = err
-		return s.onFail, nil
+		return s.onFail, nil //nolint:nilerr // error stored on RunState; onFail stage handles it
 	}
 
 	local, err := s.local.Get(ctx)
@@ -85,8 +88,8 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 	rs.LockID = lockID
 	rs.LocalBefore = local
 	rs.RemoteBefore = remote
-	publish(rs.Bus, ports.FinishInfo{Operation: "acquire"})
-	publish(rs.Bus, ports.LockAcquiredInfo{
+	publish(rs.Bus, ritual.FinishInfo{Operation: "acquire"})
+	publish(rs.Bus, ritual.LockAcquiredInfo{
 		RunID:    rs.RunID,
 		LockID:   lockID,
 		Interval: time.Duration(remote.Lease.HeartbeatInterval),

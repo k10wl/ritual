@@ -4,12 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"ritual/internal/core/domain"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"ritual/internal/core/domain"
 )
 
 func TestMtimeScanner_NewMtimeScanner_EmptyRoot(t *testing.T) {
@@ -20,7 +20,7 @@ func TestMtimeScanner_NewMtimeScanner_EmptyRoot(t *testing.T) {
 
 func TestMtimeScanner_NewMtimeScanner_NilPreviousTreatedAsEmpty(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.dat"), []byte("data"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.dat"), []byte("data"), 0o644))
 
 	scanner, err := NewMtimeScanner(dir, time.Now().Add(-time.Hour), nil)
 	require.NoError(t, err)
@@ -33,7 +33,7 @@ func TestMtimeScanner_NewMtimeScanner_NilPreviousTreatedAsEmpty(t *testing.T) {
 func TestMtimeScanner_Scan_ModifiedAfterThreshold(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "modified.dat")
-	require.NoError(t, os.WriteFile(filePath, []byte("new content"), 0644))
+	require.NoError(t, os.WriteFile(filePath, []byte("new content"), 0o644))
 
 	// Set threshold to past — file is "modified after"
 	threshold := time.Now().Add(-time.Hour)
@@ -53,7 +53,7 @@ func TestMtimeScanner_Scan_ModifiedAfterThreshold(t *testing.T) {
 func TestMtimeScanner_Scan_UnmodifiedCarriesForward(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "unchanged.dat")
-	require.NoError(t, os.WriteFile(filePath, []byte("content"), 0644))
+	require.NoError(t, os.WriteFile(filePath, []byte("content"), 0o644))
 
 	// Set mtime to past
 	pastTime := time.Now().Add(-2 * time.Hour)
@@ -76,7 +76,7 @@ func TestMtimeScanner_Scan_UnmodifiedCarriesForward(t *testing.T) {
 func TestMtimeScanner_Scan_NewFileNotInPrevious(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "newfile.dat")
-	require.NoError(t, os.WriteFile(filePath, []byte("brand new"), 0644))
+	require.NoError(t, os.WriteFile(filePath, []byte("brand new"), 0o644))
 
 	// Set mtime to past — file is "old" but not in previous map
 	pastTime := time.Now().Add(-2 * time.Hour)
@@ -128,7 +128,7 @@ func TestMtimeScanner_Scan_EmptyDirNonEmptyPrevious(t *testing.T) {
 
 func TestMtimeScanner_Scan_ContextCancelled(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.dat"), []byte("data"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.dat"), []byte("data"), 0o644))
 
 	scanner, err := NewMtimeScanner(dir, time.Now().Add(-time.Hour), map[string]domain.FileEntry{})
 	require.NoError(t, err)
@@ -143,8 +143,8 @@ func TestMtimeScanner_Scan_ContextCancelled(t *testing.T) {
 func TestMtimeScanner_Scan_NestedForwardSlashes(t *testing.T) {
 	dir := t.TempDir()
 	nested := filepath.Join(dir, "world", "region")
-	require.NoError(t, os.MkdirAll(nested, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(nested, "r.0.0.mca"), []byte("data"), 0644))
+	require.NoError(t, os.MkdirAll(nested, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(nested, "r.0.0.mca"), []byte("data"), 0o644))
 
 	scanner, err := NewMtimeScanner(dir, time.Now().Add(-time.Hour), map[string]domain.FileEntry{})
 	require.NoError(t, err)

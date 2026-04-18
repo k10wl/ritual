@@ -2,14 +2,13 @@ package mocks
 
 import (
 	"context"
-	"ritual/internal/core/ports"
 	"testing"
 )
 
 func TestMockStorageRepository(t *testing.T) {
 	mock := NewMockStorageRepository()
 
-	var storage ports.StorageRepository = mock
+	storage := mock
 	if storage == nil {
 		t.Error("MockStorageRepository does not implement StorageRepository interface")
 	}

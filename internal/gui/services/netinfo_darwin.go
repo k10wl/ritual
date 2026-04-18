@@ -7,11 +7,13 @@ import (
 	"sync"
 )
 
+// SysInterfaceLister is the darwin InterfaceLister backed by net.Interfaces.
 type SysInterfaceLister struct {
 	once sync.Once
 	name map[string]string
 }
 
+// NewSysInterfaceLister builds a fresh SysInterfaceLister.
 func NewSysInterfaceLister() *SysInterfaceLister {
 	return &SysInterfaceLister{}
 }
@@ -28,6 +30,7 @@ func (s *SysInterfaceLister) labelMap() map[string]string {
 	return s.name
 }
 
+// List enumerates host network interfaces with darwin labels applied.
 func (s *SysInterfaceLister) List() ([]Interface, error) {
 	raw, err := net.Interfaces()
 	if err != nil {

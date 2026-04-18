@@ -6,15 +6,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
-	"testing"
-	"time"
-
 	"ritual/internal/adapters"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/running"
+	"strings"
+	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -129,7 +128,7 @@ func (s *sentinel) Name() string { return s.name }
 
 func (s *sentinel) Run(_ context.Context, _ *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
 	s.visited = true
-	return nil, nil
+	return nil, nil //nolint:nilnil // terminal test stub
 }
 
 // collectEvents subscribes to bus, returns a slice that grows until cancelCh closes.
@@ -183,7 +182,7 @@ func TestRunning_InsideStop_PublishesStoppedAndRoutesOnNext(t *testing.T) {
 	assert.False(t, onCrash.visited, "onCrash must not be visited on clean exit")
 
 	stopCollect()
-	assert.False(t, hasEvent[ports.ServerCrashedInfo](*events), "ServerCrashedInfo must NOT be published on clean exit")
+	assert.False(t, hasEvent[running.ServerCrashedInfo](*events), "ServerCrashedInfo must NOT be published on clean exit")
 	assertLifecycleOrder(t, *events)
 }
 
@@ -195,13 +194,13 @@ func assertLifecycleOrder(t *testing.T, events []ports.Event) {
 	seen := []string{}
 	for _, e := range events {
 		switch e.(type) {
-		case ports.ServerStartingInfo:
+		case running.ServerStartingInfo:
 			seen = append(seen, "starting")
-		case ports.ServerReadyInfo:
+		case running.ServerReadyInfo:
 			seen = append(seen, "ready")
-		case ports.ServerStoppingInfo:
+		case running.ServerStoppingInfo:
 			seen = append(seen, "stopping")
-		case ports.ServerStoppedInfo:
+		case running.ServerStoppedInfo:
 			seen = append(seen, "stopped")
 		}
 	}
@@ -262,7 +261,7 @@ func TestRunning_OutsideStop_Graceful_PublishesStoppedAndRoutesOnNext(t *testing
 	assert.False(t, onCrash.visited, "onCrash must not be visited")
 
 	stopCollect()
-	assert.False(t, hasEvent[ports.ServerCrashedInfo](*events), "ServerCrashedInfo must NOT be published on graceful outside stop")
+	assert.False(t, hasEvent[running.ServerCrashedInfo](*events), "ServerCrashedInfo must NOT be published on graceful outside stop")
 	assertLifecycleOrder(t, *events)
 }
 
@@ -303,11 +302,11 @@ func TestRunning_StopDuringStarting_QueuedAndFlushedInOrder(t *testing.T) {
 	assert.False(t, onCrash.visited)
 
 	stopCollect()
-	assert.False(t, hasEvent[ports.ServerCrashedInfo](*events), "queued-stop is not a crash")
+	assert.False(t, hasEvent[running.ServerCrashedInfo](*events), "queued-stop is not a crash")
 
 	// Helper prints "[ORDER_FAIL]" to stdout if save-off did not precede stop.
 	for _, e := range *events {
-		if out, ok := e.(ports.ServerOutputInfo); ok {
+		if out, ok := e.(running.ServerOutputInfo); ok {
 			assert.NotContains(t, out.Line, "[ORDER_FAIL]", "stop was written before save-off — queue not working")
 		}
 	}
@@ -352,7 +351,7 @@ func TestRunning_CancelledBeforeRun_FastExitNoSpawn(t *testing.T) {
 	assert.Less(t, elapsed, 100*time.Millisecond, "pre-start cancel must exit fast without spawning subprocess")
 
 	stopCollect()
-	assert.False(t, hasEvent[ports.ServerCrashedInfo](*events), "pre-start cancel is not a crash")
+	assert.False(t, hasEvent[running.ServerCrashedInfo](*events), "pre-start cancel is not a crash")
 }
 
 // Concurrent-Run guard — Strategy must reject a second Run while the first
@@ -365,7 +364,7 @@ func TestRunning_ConcurrentRun_RejectsDuplicate(t *testing.T) {
 		sub, unsub := bus.Subscribe()
 		defer unsub()
 		for e := range sub {
-			if _, ok := e.(ports.ServerStartingInfo); ok {
+			if _, ok := e.(running.ServerStartingInfo); ok {
 				select {
 				case startingCh <- struct{}{}:
 				default:
@@ -451,11 +450,11 @@ func TestRunning_OutsideStop_ForceKillFallback_StillStopped(t *testing.T) {
 	assert.False(t, onCrash.visited, "onCrash must not be visited when ctx was cancelled")
 
 	stopCollect()
-	assert.True(t, hasEvent[ports.ServerStoppingInfo](*events), "ServerStoppingInfo must be published even when force-killed")
-	assert.True(t, hasEvent[ports.ServerStoppedInfo](*events), "ServerStoppedInfo must be published after force-kill")
-	assert.False(t, hasEvent[ports.ServerCrashedInfo](*events), "force-kill after ctx-cancel is not a crash")
+	assert.True(t, hasEvent[running.ServerStoppingInfo](*events), "ServerStoppingInfo must be published even when force-killed")
+	assert.True(t, hasEvent[running.ServerStoppedInfo](*events), "ServerStoppedInfo must be published after force-kill")
+	assert.False(t, hasEvent[running.ServerCrashedInfo](*events), "force-kill after ctx-cancel is not a crash")
 
-	stopped := findEvent[ports.ServerStoppedInfo](*events)
+	stopped := findEvent[running.ServerStoppedInfo](*events)
 	require.NotNil(t, stopped, "ServerStoppedInfo must be present")
 	assert.True(t, stopped.Forced, "force-killed stop must set Forced=true so UI can distinguish from graceful")
 }
@@ -488,9 +487,9 @@ func TestRunning_UserCancel_PublishesStopRequested(t *testing.T) {
 	require.NoError(t, err)
 
 	stopCollect()
-	assert.True(t, hasEvent[ports.ServerStopRequestedInfo](*events), "cmd.Cancel must publish ServerStopRequestedInfo")
+	assert.True(t, hasEvent[running.ServerStopRequestedInfo](*events), "cmd.Cancel must publish ServerStopRequestedInfo")
 
-	stopped := findEvent[ports.ServerStoppedInfo](*events)
+	stopped := findEvent[running.ServerStoppedInfo](*events)
 	require.NotNil(t, stopped, "ServerStoppedInfo must be present")
 	assert.False(t, stopped.Forced, "graceful stop must leave Forced=false")
 }

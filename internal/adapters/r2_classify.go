@@ -3,11 +3,10 @@ package adapters
 import (
 	"errors"
 	"net"
+	"ritual/internal/adapters/retry"
 
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
-
-	"ritual/internal/adapters/retry"
 )
 
 // r2Retryable decides whether an error returned by S3Client (R2) is worth retrying.

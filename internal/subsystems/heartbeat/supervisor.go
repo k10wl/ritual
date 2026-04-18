@@ -11,13 +11,14 @@ package heartbeat
 
 import (
 	"context"
+	"ritual/internal/core/ports"
+	"ritual/internal/core/ritual"
+	"ritual/internal/core/stages/running"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"ritual/internal/core/ports"
 )
 
 var saveWaitTimeout = 30 * time.Second
@@ -28,6 +29,7 @@ func init() {
 	}
 }
 
+// Supervisor owns the per-run heartbeat and sync-tick goroutines.
 type Supervisor struct {
 	localStore  ports.ManifestStore
 	remoteStore ports.ManifestStore
@@ -79,21 +81,21 @@ func Attach(bus ports.EventBus, localStore, remoteStore ports.ManifestStore, syn
 
 func (s *Supervisor) handle(e ports.Event) {
 	switch ev := e.(type) {
-	case ports.LockAcquiredInfo:
+	case ritual.LockAcquiredInfo:
 		s.start(ev.RunID, ev.LockID, ev.Interval)
-	case ports.LockReleasedInfo:
+	case ritual.LockReleasedInfo:
 		s.stop(ev.RunID)
-	case ports.ServerReadyInfo:
+	case running.ServerReadyInfo:
 		s.mu.Lock()
 		s.syncCtx, s.syncCancel = context.WithCancel(context.Background())
 		s.mu.Unlock()
-	case ports.ServerStoppedInfo:
+	case running.ServerStoppedInfo:
 		s.cancelSync()
 		s.stopAll()
-	case ports.ServerCrashedInfo:
+	case running.ServerCrashedInfo:
 		s.cancelSync()
 		s.stopAll()
-	case ports.ServerOutputInfo:
+	case running.ServerOutputInfo:
 		if strings.Contains(ev.Line, "Stopping the server") {
 			s.cancelSync()
 			s.stopAll()
@@ -113,7 +115,7 @@ func (s *Supervisor) start(runID, lockID string, interval time.Duration) {
 	if interval <= 0 {
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel stored in s.active and invoked by stop/stopAll
 	s.mu.Lock()
 	if prev, ok := s.active[runID]; ok {
 		prev()
@@ -173,7 +175,7 @@ func (s *Supervisor) tick(ctx context.Context, runID string) {
 	lockID := s.lockIDs[runID]
 	s.mu.Unlock()
 	if m.LockedBy != lockID {
-		s.bus.Publish(ports.LockLostInfo{RunID: runID, Reason: "owner_mismatch"})
+		s.bus.Publish(ritual.LockLostInfo{RunID: runID, Reason: "owner_mismatch"})
 		s.stop(runID)
 		return
 	}
@@ -193,7 +195,7 @@ func (s *Supervisor) tick(ctx context.Context, runID string) {
 	if !s.syncReady.CompareAndSwap(true, false) {
 		return
 	}
-	go s.syncTick(syncCtx)
+	go s.syncTick(syncCtx) //nolint:contextcheck // syncCtx has independent lifetime tied to server lifecycle
 }
 
 func (s *Supervisor) syncTick(ctx context.Context) {
@@ -201,7 +203,7 @@ func (s *Supervisor) syncTick(ctx context.Context) {
 
 	ch, unsub := s.bus.Subscribe()
 	defer unsub()
-	s.bus.Publish(ports.SaveRequested{})
+	s.bus.Publish(running.SaveRequested{})
 
 	timer := time.NewTimer(saveWaitTimeout)
 	defer timer.Stop()
@@ -215,7 +217,7 @@ func (s *Supervisor) syncTick(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if _, ok := e.(ports.SaveCompleted); ok {
+			if _, ok := e.(running.SaveCompleted); ok {
 				goto saved
 			}
 		}

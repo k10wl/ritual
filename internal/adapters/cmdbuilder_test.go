@@ -2,12 +2,11 @@ package adapters
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
-	"testing"
-
 	"ritual/internal/core/domain"
+	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,11 +73,11 @@ func TestServerCmdBuilder_Build(t *testing.T) {
 	defer workRoot.Close()
 
 	instanceDir := filepath.Join(tempDir, "instance")
-	require.NoError(t, os.MkdirAll(instanceDir, 0755))
+	require.NoError(t, os.MkdirAll(instanceDir, 0o755))
 
 	startScript := filepath.Join("instance", "run.bat")
 	scriptPath := filepath.Join(tempDir, startScript)
-	require.NoError(t, os.WriteFile(scriptPath, []byte(ritualRun), 0644))
+	require.NoError(t, os.WriteFile(scriptPath, []byte(ritualRun), 0o644))
 
 	b, err := NewServerCmdBuilder(workRoot, startScript, stubRuntime(25565, 1024))
 	require.NoError(t, err)
@@ -123,7 +122,7 @@ func TestServerCmdBuilder_Build_RuntimeError(t *testing.T) {
 	defer workRoot.Close()
 
 	failing := func() (*domain.ServerRuntime, error) {
-		return nil, fmt.Errorf("settings unavailable")
+		return nil, errors.New("settings unavailable")
 	}
 
 	b, err := NewServerCmdBuilder(workRoot, "run.bat", failing)
@@ -142,7 +141,7 @@ func TestServerCmdBuilder_Build_EmptyScript(t *testing.T) {
 	require.NoError(t, err)
 	defer workRoot.Close()
 
-	require.NoError(t, os.WriteFile(filepath.Join(tempDir, ".ritual_run"), []byte("   \n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, ".ritual_run"), []byte("   \n"), 0o644))
 
 	b, err := NewServerCmdBuilder(workRoot, ".ritual_run", stubRuntime(25565, 1024))
 	require.NoError(t, err)
@@ -160,7 +159,7 @@ func TestServerCmdBuilder_Build_ContextWired(t *testing.T) {
 	require.NoError(t, err)
 	defer workRoot.Close()
 
-	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "run.bat"), []byte(ritualRun), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "run.bat"), []byte(ritualRun), 0o644))
 
 	b, err := NewServerCmdBuilder(workRoot, "run.bat", stubRuntime(25565, 1024))
 	require.NoError(t, err)

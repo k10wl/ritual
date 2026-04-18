@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
-	"testing"
-
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports/mocks"
+	"strings"
+	"testing"
 )
 
 // validManifestJSON returns marshaled bytes of a valid, non-empty manifest.

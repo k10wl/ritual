@@ -2,14 +2,15 @@ package services
 
 import (
 	"fmt"
+	"ritual/internal/core/domain"
 	"slices"
 	"time"
-
-	"ritual/internal/core/domain"
 )
 
 // Mark classifies keys into a delete list per retention rules.
 // Pure function. No IO. Unparseable keys are marked for deletion (sacred dir).
+//
+//nolint:gocyclo // retention classification — branching per rule type is the spec.
 func Mark(keys []string, rules domain.RetentionRules, parse ParseStrategy) []string {
 	type entry struct {
 		key string

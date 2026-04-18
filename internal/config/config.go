@@ -1,3 +1,4 @@
+// Package config defines build-time and runtime configuration for the app.
 package config
 
 import (
@@ -24,6 +25,7 @@ const (
 // AppName is injected at build time via ldflags (ritualdev or ritual)
 var AppName = "ritualdev"
 
+// AppVersion is the semver string derived from VersionMajor/Minor/Patch.
 var AppVersion string
 
 // Directory names
@@ -89,6 +91,7 @@ const (
 	SyncStagingGlob    = "sync_*"
 )
 
+// TempRitualPath returns the OS temp directory joined with TempRitualDir.
 func TempRitualPath() string {
 	return filepath.Join(os.TempDir(), TempRitualDir)
 }
@@ -105,10 +108,11 @@ const (
 
 // File permissions
 const (
-	DirPermission  = 0755
-	FilePermission = 0644
+	DirPermission  = 0o755
+	FilePermission = 0o644
 )
 
+// RootPath is the absolute on-disk working root, computed at init from UserHomeDir.
 var RootPath string
 
 func init() {

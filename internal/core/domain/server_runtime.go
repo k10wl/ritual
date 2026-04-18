@@ -1,6 +1,6 @@
 package domain
 
-import "fmt"
+import "errors"
 
 // ServerRuntime represents a Minecraft server configuration
 type ServerRuntime struct {
@@ -11,10 +11,10 @@ type ServerRuntime struct {
 // NewServerRuntime creates a new ServerRuntime instance
 func NewServerRuntime(port, memory int) (*ServerRuntime, error) {
 	if port <= 0 || port > 65535 {
-		return nil, fmt.Errorf("port must be between 1 and 65535")
+		return nil, errors.New("port must be between 1 and 65535")
 	}
 	if memory <= 0 {
-		return nil, fmt.Errorf("memory must be positive")
+		return nil, errors.New("memory must be positive")
 	}
 
 	return &ServerRuntime{

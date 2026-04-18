@@ -2,10 +2,9 @@ package services_test
 
 import (
 	"reflect"
-	"testing"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/services"
+	"testing"
 )
 
 func TestMark_EmptyList(t *testing.T) {

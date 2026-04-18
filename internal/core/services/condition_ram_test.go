@@ -118,7 +118,7 @@ func TestRAMCondition_Check_DefensiveValidation(t *testing.T) {
 		condition, err := NewRAMCondition(4096, provider)
 		require.NoError(t, err)
 
-		err = condition.Check(nil)
+		err = condition.Check(nil) //nolint:staticcheck // intentional nil-ctx test
 		assert.Error(t, err)
 		assert.Equal(t, ErrRAMConditionCtxNil, err)
 	})

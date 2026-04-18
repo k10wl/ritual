@@ -1,9 +1,8 @@
 package adapters
 
 import (
-	"sync"
-
 	"ritual/internal/core/ports"
+	"sync"
 )
 
 type eventBus struct {

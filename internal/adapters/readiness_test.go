@@ -3,11 +3,10 @@ package adapters_test
 import (
 	"context"
 	"net"
-	"testing"
-	"time"
-
 	"ritual/internal/adapters"
 	"ritual/internal/core/ports"
+	"testing"
+	"time"
 )
 
 // TestReadiness_SuccessEmitsOkEvent: listener already accepting → probe
@@ -113,13 +112,13 @@ func TestReadiness_CancelReturnsErr(t *testing.T) {
 	}
 }
 
-func expectReadinessEvent(t *testing.T, ch <-chan ports.Event, timeout time.Duration) ports.ReadinessDialInfo {
+func expectReadinessEvent(t *testing.T, ch <-chan ports.Event, timeout time.Duration) adapters.ReadinessDialInfo {
 	t.Helper()
 	deadline := time.After(timeout)
 	for {
 		select {
 		case evt := <-ch:
-			if r, ok := evt.(ports.ReadinessDialInfo); ok {
+			if r, ok := evt.(adapters.ReadinessDialInfo); ok {
 				return r
 			}
 		case <-deadline:
@@ -128,12 +127,12 @@ func expectReadinessEvent(t *testing.T, ch <-chan ports.Event, timeout time.Dura
 	}
 }
 
-func drainReadinessEvents(ch <-chan ports.Event, quiesce time.Duration) []ports.ReadinessDialInfo {
-	var out []ports.ReadinessDialInfo
+func drainReadinessEvents(ch <-chan ports.Event, quiesce time.Duration) []adapters.ReadinessDialInfo {
+	var out []adapters.ReadinessDialInfo
 	for {
 		select {
 		case evt := <-ch:
-			if r, ok := evt.(ports.ReadinessDialInfo); ok {
+			if r, ok := evt.(adapters.ReadinessDialInfo); ok {
 				out = append(out, r)
 			}
 		case <-time.After(quiesce):

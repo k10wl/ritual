@@ -5,17 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"testing"
-	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"ritual/internal/adapters"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/services"
 	"ritual/internal/testhelpers"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // syncTestEnv bundles local/remote FS repos, manifest stores, and temp dirs for integration tests.
@@ -97,7 +96,7 @@ func worldsPath(rootDir string) string {
 func setupMinecraftWorlds(t *testing.T, rootDir string) []string {
 	t.Helper()
 	wPath := worldsPath(rootDir)
-	require.NoError(t, os.MkdirAll(wPath, 0755))
+	require.NoError(t, os.MkdirAll(wPath, 0o755))
 	root, err := os.OpenRoot(wPath)
 	require.NoError(t, err)
 	defer root.Close()
@@ -111,8 +110,8 @@ func setupMinecraftWorlds(t *testing.T, rootDir string) []string {
 func writeFile(t *testing.T, rootDir, relPath string, content []byte) {
 	t.Helper()
 	full := filepath.Join(rootDir, relPath)
-	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0755))
-	require.NoError(t, os.WriteFile(full, content, 0644))
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+	require.NoError(t, os.WriteFile(full, content, 0o644))
 }
 
 // readFile reads a file relative to a root dir.
@@ -133,7 +132,7 @@ func fileExists(rootDir, relPath string) bool {
 func makeSyncService(t *testing.T, env *syncTestEnv) ports.SyncService {
 	t.Helper()
 	wPath := worldsPath(env.localDir)
-	_ = os.MkdirAll(wPath, 0755)
+	_ = os.MkdirAll(wPath, 0o755)
 
 	scanner := adapters.NewFullScanner(os.DirFS(wPath))
 	staging := t.TempDir()
@@ -529,7 +528,7 @@ func TestSyncIntegration_EmptyWorldDir_EmptyManifest(t *testing.T) {
 	env.saveRemoteManifest(t, &domain.Manifest{})
 
 	// Empty worlds dir — nothing to upload
-	require.NoError(t, os.MkdirAll(worldsPath(env.localDir), 0755))
+	require.NoError(t, os.MkdirAll(worldsPath(env.localDir), 0o755))
 
 	buildSyncUpload(t, env)
 
@@ -623,7 +622,7 @@ func serverPath(rootDir string) string {
 func buildServerSyncUpload(t *testing.T, env *syncTestEnv) {
 	t.Helper()
 	sPath := serverPath(env.localDir)
-	_ = os.MkdirAll(sPath, 0755)
+	_ = os.MkdirAll(sPath, 0o755)
 
 	fsys := os.DirFS(sPath)
 	inner := adapters.NewFullScanner(fsys)
@@ -656,7 +655,7 @@ func buildServerSyncUpload(t *testing.T, env *syncTestEnv) {
 func buildServerSyncDownload(t *testing.T, env *syncTestEnv) {
 	t.Helper()
 	sPath := serverPath(env.localDir)
-	_ = os.MkdirAll(sPath, 0755)
+	_ = os.MkdirAll(sPath, 0o755)
 
 	fsys := os.DirFS(sPath)
 	inner := adapters.NewFullScanner(fsys)
@@ -814,7 +813,7 @@ func TestSyncIntegration_EmptyRemotePrefix(t *testing.T) {
 	env.saveRemoteManifest(t, &domain.Manifest{})
 
 	// Empty server dir — nothing on remote, nothing local
-	require.NoError(t, os.MkdirAll(serverPath(env.localDir), 0755))
+	require.NoError(t, os.MkdirAll(serverPath(env.localDir), 0o755))
 
 	sPath := serverPath(env.localDir)
 	scanner := adapters.NewFullScanner(os.DirFS(sPath))
@@ -847,7 +846,7 @@ func TestSyncIntegration_DeleteBatchIntegration(t *testing.T) {
 
 	// Create 20 files + .ritualsync
 	writeFile(t, env.localDir, "server/.ritualsync", []byte("*\n"))
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		name := fmt.Sprintf("server/file_%02d.txt", i)
 		writeFile(t, env.localDir, name, []byte(fmt.Sprintf("content %d", i)))
 	}
@@ -873,7 +872,7 @@ func TestSyncIntegration_DeleteBatchIntegration(t *testing.T) {
 	assert.Len(t, rm2.Server.XXHashMap, 6, "5 kept files + .ritualsync should remain")
 
 	// Verify kept files exist
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		name := fmt.Sprintf("server/file_%02d.txt", i)
 		assert.True(t, fileExists(env.remoteDir, name), "kept file %s should exist", name)
 	}

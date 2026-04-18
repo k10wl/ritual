@@ -12,10 +12,12 @@ import (
 // omits when paired with omitempty.
 type Duration time.Duration
 
+// MarshalJSON emits the duration as a Go duration string.
 func (d Duration) MarshalJSON() ([]byte, error) {
 	return json.Marshal(time.Duration(d).String())
 }
 
+// UnmarshalJSON parses a Go duration string (or empty → zero) into d.
 func (d *Duration) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -41,6 +43,7 @@ type LeaseSettings struct {
 	TTL               Duration `json:"ttl,omitempty"`
 }
 
+// LeaseSettings validation errors.
 var (
 	ErrLeaseIntervalTooSmall = errors.New("heartbeat_interval must be >= 30s")
 	ErrLeaseTTLTooSmall      = errors.New("ttl must be >= 3 * heartbeat_interval")

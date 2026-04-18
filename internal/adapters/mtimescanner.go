@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
-	"time"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"time"
 )
 
 // MtimeScanner walks the directory and only computes xxhash for files
@@ -101,7 +100,6 @@ func (s *MtimeScanner) Scan(ctx context.Context) (map[string]domain.FileEntry, e
 		result[key] = domain.FileEntry{Hash: hash, Size: info.Size()}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}

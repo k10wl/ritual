@@ -9,10 +9,10 @@ import (
 
 // ManifestLockCondition error constants
 var (
-	ErrLockConditionNil     = errors.New("lock condition cannot be nil")
-	ErrLockConditionCtxNil  = errors.New("context cannot be nil")
+	ErrLockConditionNil      = errors.New("lock condition cannot be nil")
+	ErrLockConditionCtxNil   = errors.New("context cannot be nil")
 	ErrLockConditionStoreNil = errors.New("manifest store cannot be nil")
-	ErrManifestLocked       = errors.New("manifest is locked")
+	ErrManifestLocked        = errors.New("manifest is locked")
 )
 
 // ManifestLockCondition checks if the remote manifest is unlocked.

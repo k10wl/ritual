@@ -3,10 +3,9 @@ package mocks
 import (
 	"context"
 	"errors"
-	"testing"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"testing"
 )
 
 func TestMockManifestStore_ImplementsPort(t *testing.T) {

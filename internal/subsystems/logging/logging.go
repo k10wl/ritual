@@ -8,11 +8,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
-	"time"
-
+	"ritual/internal/adapters"
 	"ritual/internal/config"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/ritual"
+	"sync"
+	"time"
 )
 
 // Attach subscribes a formatter to bus. Returns a stop func that
@@ -44,7 +45,7 @@ func CreateLogFile(workRoot *os.Root) (*os.File, func(), error) {
 		return nil, nil, fmt.Errorf("create logs dir: %w", err)
 	}
 	path := filepath.Join(logsDir, time.Now().Format(config.TimestampFormat)+config.LogExtension)
-	f, err := os.Create(path)
+	f, err := os.Create(path) // #nosec G304 -- path derived from workRoot + timestamp
 	if err != nil {
 		return nil, nil, fmt.Errorf("create log file: %w", err)
 	}
@@ -55,41 +56,41 @@ func stamp() string { return time.Now().Format("15:04:05") }
 
 func write(w io.Writer, evt ports.Event) {
 	switch e := evt.(type) {
-	case ports.StartInfo:
-		fmt.Fprintf(w, "[%s] [%s] Starting...\n", stamp(), e.Operation)
-	case ports.UpdateInfo:
+	case ritual.StartInfo:
+		_, _ = fmt.Fprintf(w, "[%s] [%s] Starting...\n", stamp(), e.Operation)
+	case ritual.UpdateInfo:
 		writeUpdate(w, e)
-	case ports.FinishInfo:
-		fmt.Fprintf(w, "[%s] [%s] Completed\n", stamp(), e.Operation)
-	case ports.ErrorInfo:
-		fmt.Fprintf(w, "[%s] [%s] ERROR: %v\n", stamp(), e.Operation, e.Err)
-	case ports.StateChangedInfo:
-		fmt.Fprintf(w, "[%s] %s → %s\n", stamp(), e.From, e.To)
-	case ports.StateFailedInfo:
-		fmt.Fprintf(w, "[%s] FAILED in %s: %v\n", stamp(), e.State, e.Err)
-	case ports.RetryAttemptInfo:
+	case ritual.FinishInfo:
+		_, _ = fmt.Fprintf(w, "[%s] [%s] Completed\n", stamp(), e.Operation)
+	case ritual.ErrorInfo:
+		_, _ = fmt.Fprintf(w, "[%s] [%s] ERROR: %v\n", stamp(), e.Operation, e.Err)
+	case ritual.StateChangedInfo:
+		_, _ = fmt.Fprintf(w, "[%s] %s → %s\n", stamp(), e.From, e.To)
+	case ritual.StateFailedInfo:
+		_, _ = fmt.Fprintf(w, "[%s] FAILED in %s: %v\n", stamp(), e.State, e.Err)
+	case adapters.RetryAttemptInfo:
 		writeRetry(w, e)
 	default:
-		fmt.Fprintf(w, "[%s] %v\n", stamp(), evt)
+		_, _ = fmt.Fprintf(w, "[%s] %v\n", stamp(), evt)
 	}
 }
 
-func writeUpdate(w io.Writer, e ports.UpdateInfo) {
+func writeUpdate(w io.Writer, e ritual.UpdateInfo) {
 	if e.Data == nil {
-		fmt.Fprintf(w, "[%s] [%s] %s\n", stamp(), e.Operation, e.Message)
+		_, _ = fmt.Fprintf(w, "[%s] [%s] %s\n", stamp(), e.Operation, e.Message)
 		return
 	}
 	if pct, ok := e.Data["percent"]; ok {
-		fmt.Fprintf(w, "[%s] [%s] %s (%.1f%%)\n", stamp(), e.Operation, e.Message, pct)
+		_, _ = fmt.Fprintf(w, "[%s] [%s] %s (%.1f%%)\n", stamp(), e.Operation, e.Message, pct)
 		return
 	}
-	fmt.Fprintf(w, "[%s] [%s] %s %v\n", stamp(), e.Operation, e.Message, e.Data)
+	_, _ = fmt.Fprintf(w, "[%s] [%s] %s %v\n", stamp(), e.Operation, e.Message, e.Data)
 }
 
-func writeRetry(w io.Writer, e ports.RetryAttemptInfo) {
+func writeRetry(w io.Writer, e adapters.RetryAttemptInfo) {
 	if e.Key != "" {
-		fmt.Fprintf(w, "[%s] [retry] %s key=%s attempt=%d err=%v\n", stamp(), e.Operation, e.Key, e.Attempt, e.Err)
+		_, _ = fmt.Fprintf(w, "[%s] [retry] %s key=%s attempt=%d err=%v\n", stamp(), e.Operation, e.Key, e.Attempt, e.Err)
 		return
 	}
-	fmt.Fprintf(w, "[%s] [retry] %s attempt=%d err=%v\n", stamp(), e.Operation, e.Attempt, e.Err)
+	_, _ = fmt.Fprintf(w, "[%s] [retry] %s attempt=%d err=%v\n", stamp(), e.Operation, e.Attempt, e.Err)
 }

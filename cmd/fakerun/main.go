@@ -1,3 +1,6 @@
+// Package main runs fakerun — a scripted test harness that replays a sequence
+// of write/delete/exit instructions, used to emulate a Minecraft server for
+// integration tests.
 package main
 
 import (
@@ -81,14 +84,14 @@ func execute(root string, inst instruction) error {
 
 func writeFile(root string, inst instruction) error {
 	fullPath := filepath.Join(root, filepath.FromSlash(inst.Path))
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o750); err != nil {
 		return err
 	}
 	data, err := base64.StdEncoding.DecodeString(inst.Data)
 	if err != nil {
 		return fmt.Errorf("decode base64: %w", err)
 	}
-	return os.WriteFile(fullPath, data, 0644)
+	return os.WriteFile(fullPath, data, 0o600)
 }
 
 func deleteFile(root string, inst instruction) error {

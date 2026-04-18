@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
-	"strings"
-
 	"ritual/internal/config"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/ritual"
+	"sort"
+	"strings"
 )
 
 // LogRetention error constants
@@ -58,7 +58,7 @@ func (r *LogRetention) Apply(ctx context.Context) error {
 	keys, err := r.localStorage.List(ctx, config.LogsDir)
 	if err != nil {
 		// If logs dir doesn't exist yet, nothing to clean
-		return nil
+		return nil //nolint:nilerr // retention on missing dir is a no-op, not a failure
 	}
 
 	// Filter only .log files
@@ -82,14 +82,14 @@ func (r *LogRetention) Apply(ctx context.Context) error {
 	// Delete oldest logs exceeding limit
 	toDelete := logFiles[config.MaxLogFiles:]
 
-	r.publish(ports.UpdateInfo{Operation: "retention", Message: "Applying log retention policy", Data: map[string]any{
+	r.publish(ritual.UpdateInfo{Operation: "retention", Message: "Applying log retention policy", Data: map[string]any{
 		"total":       len(logFiles),
 		"max_allowed": config.MaxLogFiles,
 		"to_delete":   len(toDelete),
 	}})
 
 	for _, key := range toDelete {
-		r.publish(ports.UpdateInfo{Operation: "retention", Message: "Deleting old log", Data: map[string]any{"key": key}})
+		r.publish(ritual.UpdateInfo{Operation: "retention", Message: "Deleting old log", Data: map[string]any{"key": key}})
 		if err := r.localStorage.Delete(ctx, key); err != nil {
 			return fmt.Errorf("failed to delete log %s: %w", key, err)
 		}

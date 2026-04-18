@@ -23,7 +23,7 @@ func TestNewJavaVersionCondition(t *testing.T) {
 	t.Run("nil java info provider returns error", func(t *testing.T) {
 		_, err := NewJavaVersionCondition(21, nil)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "Java info provider cannot be nil")
+		assert.Contains(t, err.Error(), "java info provider cannot be nil")
 	})
 
 	t.Run("zero min version returns error", func(t *testing.T) {
@@ -74,14 +74,14 @@ func TestJavaVersionCondition_Check(t *testing.T) {
 			minVersion:  21,
 			version:     17,
 			wantErr:     true,
-			errContains: "Java version too old",
+			errContains: "java version too old",
 		},
 		{
 			name:        "Java not found",
 			minVersion:  21,
 			providerErr: errors.New("java not in PATH"),
 			wantErr:     true,
-			errContains: "Java not found",
+			errContains: "java not found",
 		},
 	}
 
@@ -118,7 +118,7 @@ func TestJavaVersionCondition_Check_DefensiveValidation(t *testing.T) {
 		condition, err := NewJavaVersionCondition(21, provider)
 		require.NoError(t, err)
 
-		err = condition.Check(nil)
+		err = condition.Check(nil) //nolint:staticcheck // intentional nil-ctx test
 		assert.Error(t, err)
 		assert.Equal(t, ErrJavaConditionCtxNil, err)
 	})

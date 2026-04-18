@@ -3,11 +3,10 @@ package services_test
 import (
 	"context"
 	"errors"
-	"testing"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports/mocks"
 	"ritual/internal/core/services"
+	"testing"
 )
 
 func TestRetention_Apply_ListsAndDeletes(t *testing.T) {

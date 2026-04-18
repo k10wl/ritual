@@ -1,3 +1,4 @@
+// Package retry wraps retry-go/v4 with project defaults and zero delay under `go test`.
 package retry
 
 import (

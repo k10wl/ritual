@@ -1,10 +1,6 @@
 package ritual
 
-import (
-	"context"
-
-	"ritual/internal/core/ports"
-)
+import "context"
 
 // WithLostLock derives a cancellable context that fires when the
 // heartbeat supervisor publishes LockLostInfo for rs.RunID. It wraps the
@@ -27,7 +23,7 @@ func WithLostLock(parent context.Context, rs *RunState) (context.Context, func()
 				if !ok {
 					return
 				}
-				if lost, ok := e.(ports.LockLostInfo); ok && lost.RunID == rs.RunID {
+				if lost, ok := e.(LockLostInfo); ok && lost.RunID == rs.RunID {
 					cancel()
 					return
 				}

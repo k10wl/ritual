@@ -49,7 +49,7 @@ func TestMockUpdaterService_Run_WithFunction(t *testing.T) {
 func TestMockUpdaterService_Run_NilContext(t *testing.T) {
 	mock := NewMockUpdaterService()
 
-	err := mock.Run(nil)
+	err := mock.Run(nil) //nolint:staticcheck // intentional nil-ctx test
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "context cannot be nil")
