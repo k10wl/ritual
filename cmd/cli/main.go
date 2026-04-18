@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"ritual/internal/adapters"
+	"ritual/internal/adapters/observed"
 	"ritual/internal/app"
 	"ritual/internal/config"
 	"ritual/internal/core/services"
@@ -80,14 +81,19 @@ func run(ctx context.Context) error {
 	prompter := prompt.NewStdin(os.Stdin, os.Stdout)
 
 	// --- Storage and manifest adapters ---
-	localStorage, err := adapters.NewFSRepository(workRoot)
+	// Adapters are wrapped with observed.NewStorage so every Get/Put/Copy/
+	// Rename/Delete/DeleteBatch/List publishes a Storage*Info event on the bus.
+	rawLocal, err := adapters.NewFSRepository(workRoot, "local")
 	if err != nil {
 		return fmt.Errorf("local storage: %w", err)
 	}
-	remoteStorage, err := adapters.NewR2Repository(envBucket, envAccountID, envAccessKeyID, envSecretAccessKey, bus)
+	rawRemote, err := adapters.NewR2Repository(envBucket, envAccountID, envAccessKeyID, envSecretAccessKey, bus)
 	if err != nil {
 		return fmt.Errorf("remote storage: %w", err)
 	}
+	rawRemote = rawRemote.WithPrefix(envBucket)
+	localStorage := observed.NewStorage(rawLocal, bus)
+	remoteStorage := observed.NewStorage(rawRemote, bus)
 	localManifests := adapters.NewManifestStore(localStorage)
 	remoteManifests := adapters.NewManifestStore(remoteStorage)
 
