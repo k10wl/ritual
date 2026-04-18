@@ -61,6 +61,11 @@ const (
 	DefaultMinJavaVersion = 21
 )
 
+// DefaultManifestVersion applied when a decoded manifest has no
+// ManifestVersion. Unversioned files are treated as current schema — pre-v2
+// layouts are not supported.
+const DefaultManifestVersion = "2.0.0"
+
 // Lease defaults — applied by Manifest.ApplyDefaults when absent on decode.
 const (
 	DefaultHeartbeatInterval = 5 * time.Minute

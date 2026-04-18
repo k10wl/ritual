@@ -114,6 +114,9 @@ func (m *Manifest) GetMinJavaVersion() int {
 
 // ApplyDefaults sets default values for fields that are zero
 func (m *Manifest) ApplyDefaults() {
+	if m.ManifestVersion == "" {
+		m.ManifestVersion = config.DefaultManifestVersion
+	}
 	if m.MinRAMMB <= 0 {
 		m.MinRAMMB = config.DefaultMinRAMMB
 	}
