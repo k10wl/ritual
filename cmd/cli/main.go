@@ -129,7 +129,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("cmd builder: %w", err)
 	}
-	readiness := adapters.NewTCPReadinessCheck(fmt.Sprintf("localhost:%d", settings.Port))
+	readiness := adapters.NewTCPReadinessCheck(fmt.Sprintf("127.0.0.1:%d", settings.Port), bus)
 
 	// --- Ritual: build once, listen for commands ---
 	r := app.New(

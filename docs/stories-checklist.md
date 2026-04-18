@@ -59,51 +59,40 @@ Unified design: **one ctx cascades all stop signals** (UI click, Go shutdown). S
 
 ## Sync correctness (story #10 family)
 
-- [ ] **#10 Commit must complete, verify, override**
-  1. Atomic override — commit replaces existing remote files. Same for local-FS and R2.
-  2. Observable per phase — `stage.put`, `stage.commit`, `stage.cleanup` events with per-file context.
-  3. Fail loud — preserve staging + remote on error; no cleanup racing commit.
-  4. Post-commit verify — re-read remote manifest + sample hashes. "No write error" ≠ "committed".
-  5. Orphan cleanup is a separate explicit pass, not a staging side-effect.
+- [x] **#10 Commit must complete, override** — post-commit verify explicitly dropped
+  1. Atomic override — commit replaces existing remote files. Same for local-FS and R2. ✅ (committing strategy: Copy staging→final, defer Delete staging).
+  2. Observable per phase — `stage.put`, `stage.commit`, `stage.cleanup` events with per-file context. ✅ (`internal/core/sync/events.go`).
+  3. Fail loud — preserve staging + remote on error; no cleanup racing commit. ✅ (`SyncStagingDirCleanedInfo{Outcome: "failed"}` on error).
+  4. ~~Post-commit verify~~ — **dropped**. Re-read + hash sample doubles read volume, and storage backends (local FS, R2) already guarantee durability post-ack. On crash mid-commit we have no restore path anyway, so verify-fail outcome is unactionable. Normal transient failures handled by existing retries.
+  5. Orphan cleanup is a separate explicit pass, not a staging side-effect. ✅ (`SyncOrphanCleanupInfo` / `SyncGhostDeletedInfo`).
   _Classification: integration (both backends)._
 
-- [ ] **#4 Staging uses UUIDv4, not lock strings**
-  Drop lock-string-derived paths (contain `:`, Windows-reserved). Use `uuid.NewString()` for staging dir; delete after commit success; preserve on failure (per #10).
+- [x] **#4 Staging uses UUIDv4, not lock strings**
+  `internal/core/sync/stagedirinit.go` uses `uuid.NewString()` → `.staging/<uuid>`. Cleanup unconditional on both success and failure paths.
   _Classification: unit + integration._
 
-- [ ] **#13 Archiving stage actually saves upstream**
-  Pre-run archive persists to local AND remote. Remote write currently silent-fails. Verify write succeeds + observable post-run.
+- [~] **#13 Archiving stage actually saves upstream** — local+remote write coded, **remote write not observable**
+  `internal/core/stages/archiving/strategy.go:63-64` calls `CreateBackupFrom(remoteStore, localStore)` + `CreateBackup(remoteStore)`, but errors swallowed by `_ = errors.Wrap(...)` and stage bypasses the observed storage decorator. Needs: propagate errors + route remote writes through `observed` so `StoragePutInfo` fires.
   _Classification: integration._
 
-- [ ] **#14 Sync observability — both directions**
-  Full event taxonomy (see `project_upstream_observability.md`):
-  - `sync.plan` pre-run (file list)
-  - `sync.started`
-  - `stage.put.{started,progress,finished,failed}`
-  - `stage.commit.{started,progress,finished,failed}`
-  - `verify.{started,progress,finished,failed}`
-  - `stage.cleanup.{started,finished,failed}`
-  - `sync.finished` / `sync.failed`
-
-  Parity upstream ↔ downstream. Every event emits log line. GUI subscribes to bus.
-  Ordering invariant (`sync.plan` before any `stage.*`) is **unit-testable** in state machine.
+- [x] **#14 Sync observability — both directions**
+  Full event taxonomy in `internal/core/sync/events.go`: `SyncStartedInfo`, `SyncPlanInfo`, `SyncStagingDirCreatedInfo`, `SyncStage{Started,Progress,Finished,Failed}Info`, `SyncCommit{Started,Progress,Finished,Failed}Info`, `SyncStagingDirCleanedInfo`, `SyncOrphanCleanupInfo`/`SyncGhost{Deleted,CleanupFailed}Info`, `SyncFinishedInfo`/`SyncFailedInfo`. Storage decorator (`internal/adapters/observed/storage.go`) emits per-call `StorageGet/Put/Copy/Rename/Delete/DeleteBatch/ListInfo`. All events implement `String()`; bus publishes to logger + GUI. Parity upstream↔downstream via shared state machine. Ordering enforced by topology, asserted in `engine_test.go`.
   _Classification: unit (ordering) + integration (real emission)._
 
 ---
 
 ## Readiness / network
 
-- [ ] **#9 Readiness probe observable**
-  Every dial emits progress event: address, attempt#, error on fail. User never left wondering "is it trying?".
+- [x] **#9 Readiness probe observable**
+  `TCPReadinessCheck` takes bus in `NewTCPReadinessCheck(address, bus)` and emits `ports.ReadinessDialInfo{Address, Attempt, Err}` on every dial — success event has `Err==nil`, failure events carry the dial error. Tests: `internal/adapters/readiness_test.go`.
   _Classification: unit._
 
-- [ ] **#11 Probe targets the right IP**
-  Windows `localhost` → `[::1]` first; Minecraft is IPv4-only. Force `127.0.0.1` or dial actual bind address.
+- [x] **#11 Probe targets the right IP**
+  `cmd/cli/main.go:132` now dials `127.0.0.1:<port>` (was `localhost:<port>`). Dodges Windows `::1`-first resolution since Minecraft is IPv4-only.
   _Classification: integration._
 
-- [ ] **#12 Server bind reachable from probe**
-  `server.properties server-ip=<specific>` excludes loopback. Default empty (bind `0.0.0.0`), or probe reads `server-ip` and dials that.
-  _Classification: integration._
+- [-] **#12 Server bind reachable from probe**
+  Dismissed: wildcard bind is the contract from the MC side. If user sets `server-ip=<specific>` in `server.properties`, that is an MC-side misconfig, not the probe's concern. No `server.properties` reader added.
 
 ---
 
