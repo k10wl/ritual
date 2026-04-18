@@ -1,8 +1,6 @@
 module ritual
 
-go 1.25.1
-
-toolchain go1.26.2
+go 1.26.2
 
 require (
 	github.com/avast/retry-go/v4 v4.7.0
