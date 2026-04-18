@@ -63,6 +63,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 
 	now := time.Now().UTC()
 	if remote.IsLeaseActive(now) {
+		publish(rs.Bus, LockHeldInfo{Holder: remote.LockedBy})
 		rs.Err = fmt.Errorf("already locked by %s", remote.LockedBy)
 		return s.onFail, nil
 	}

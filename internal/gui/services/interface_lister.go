@@ -1,15 +1,18 @@
-//go:build !darwin
-
 package services
 
 import "net"
 
+// SysInterfaceLister is the default InterfaceLister backed by net.Interfaces.
+// The composition root (cmd/gui) wires it into AddressProvider; tests stub
+// InterfaceLister directly instead of exercising real hardware.
 type SysInterfaceLister struct{}
 
+// NewSysInterfaceLister builds a stateless lister.
 func NewSysInterfaceLister() *SysInterfaceLister {
 	return &SysInterfaceLister{}
 }
 
+// List enumerates host network interfaces.
 func (SysInterfaceLister) List() ([]Interface, error) {
 	raw, err := net.Interfaces()
 	if err != nil {

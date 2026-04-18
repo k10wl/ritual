@@ -1,50 +1,58 @@
 // Package main launches the Wails GUI with the embedded frontend.
+//
+// This is a POC composition root. The pipeline is wired against the
+// fakerun test fixture (cmd/fakerun) and a local-filesystem "remote"
+// store so the GUI is driveable end-to-end without a real Minecraft
+// server or R2 credentials. Every POC-only line is tagged
+// // TODO(ritual-gui-poc): so it is trivial to grep-and-swap when the
+// real cmd builder / R2 storage wiring lands.
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
 	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"ritual"
+	"ritual/internal/adapters"
+	"ritual/internal/adapters/observed"
+	"ritual/internal/app"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
-	"ritual/internal/gui/services"
+	"ritual/internal/core/ports"
+	"ritual/internal/core/services"
+	guisvc "ritual/internal/gui/services"
+	"ritual/internal/gui/logsink"
+	"ritual/internal/gui/projection"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
-// Wails uses Go's `embed` package to embed the frontend files into the binary.
-// Any files in the frontend/dist folder will be embedded into the binary and
-// made available to the frontend.
-// See https://pkg.go.dev/embed for more information.
-
 func init() {
-	// Register a custom event whose associated data type is string.
-	// This is not required, but the binding generator will pick up registered events
-	// and provide a strongly typed JS/TS API for them.
-	application.RegisterEvent[string]("time")
+	application.RegisterEvent[projection.ViewModel]("ritual:view")
+	application.RegisterEvent[logsink.LogLine]("log:line")
 }
 
-// main function serves as the application's entry point. It initializes the application, creates a window,
-// and starts a goroutine that emits a time-based event every second. It subsequently runs the application and
-// logs any error that might occur.
 func main() {
-	settings, err := domain.LoadSettings()
+	runtime, err := buildRuntime()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("build runtime: %v", err)
 	}
 
-	// Create a new Wails application by providing the necessary options.
-	// Variables 'Name' and 'Description' are for application metadata.
-	// 'Assets' configures the asset server with the 'FS' variable pointing to the frontend files.
-	// 'Bind' is a list of Go struct instances. The frontend has access to the methods of these instances.
-	// 'Mac' options tailor the application when running an macOS.
-	app := application.New(application.Options{
+	control := guisvc.NewControlService(runtime.bus, runtime.projection, nil)
+
+	wailsApp := application.New(application.Options{
 		Name:        config.ProductName,
-		Description: config.Description,
+		Description: "Ritual — Minecraft server manager (POC)",
 		Services: []application.Service{
-			application.NewService(&services.GreetService{}),
-			application.NewService(&services.SysInfoService{}),
-			application.NewService(services.NewNetInfoService(settings.Port, services.NewSysInterfaceLister())),
+			application.NewService(control),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(ritual.GUIAssets),
@@ -54,36 +62,343 @@ func main() {
 		},
 	})
 
-	// Create a new window with the necessary options.
-	// 'Title' is the title of the window.
-	// 'Mac' options tailor the window when running on macOS.
-	// 'BackgroundColour' is the background colour of the window.
-	// 'URL' is the URL that will be loaded into the webview.
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	var shuttingDown atomic.Bool
+
+	logsWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:             "logs",
+		Title:            config.ProductName + " — Logs",
+		Width:            960,
+		Height:           640,
+		Hidden:           true,
+		BackgroundColour: application.NewRGB(16, 20, 28),
+		URL:              "/logs.html",
+	})
+	logsWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		if shuttingDown.Load() {
+			return
+		}
+		e.Cancel()
+		logsWindow.Hide()
+	})
+
+	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:  "main",
 		Title: config.ProductName,
+		Width: 560, Height: 720,
+		MinWidth: 420, MinHeight: 560,
+		BackgroundColour: application.NewRGB(27, 38, 54),
 		Mac: application.MacWindow{
 			InvisibleTitleBarHeight: 50,
 			Backdrop:                application.MacBackdropTranslucent,
 			TitleBar:                application.MacTitleBarHiddenInset,
 		},
-		BackgroundColour: application.NewRGB(27, 38, 54),
-		URL:              "/",
+		URL: "/",
 	})
 
-	// Create a goroutine that emits an event containing the current time every second.
-	// The frontend can listen to this event and update the UI accordingly.
-	go func() {
-		for {
-			now := time.Now().Format(time.RFC1123)
-			app.Event.Emit("time", now)
-			time.Sleep(time.Second)
-		}
-	}()
+	runtime.viewEmitter.bind(wailsApp)
+	runtime.logEmitter.bind(logsWindow)
+	control.SetLogsWindow(&wailsWindowControl{win: logsWindow})
 
-	// Run the application. This blocks until the application has been exited.
-	err = app.Run()
-	// If an error occurred while running the application, log it and exit.
-	if err != nil {
+	mainWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		if shuttingDown.Load() {
+			return
+		}
+		shuttingDown.Store(true)
+		e.Cancel()
+		go func() {
+			runtime.bus.Publish(app.StopRequested{})
+			waitTerminal(runtime.bus, 20*time.Second)
+			wailsApp.Quit()
+		}()
+	})
+
+	ctx := wailsApp.Context()
+	go runtime.ritual.Listen(ctx)
+	go runtime.projection.Run(ctx)
+	go runtime.logsink.Run(ctx)
+	runtime.bus.Publish(app.StatusChanged{Status: app.Idle})
+
+	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// guiRuntime bundles everything the Wails app needs after composition.
+// Kept internal to cmd/gui — not a public API.
+type guiRuntime struct {
+	bus         ports.EventBus
+	ritual      *app.Ritual
+	projection  *projection.Projection
+	logsink     *logsink.Sink
+	viewEmitter *wailsViewEmitter
+	logEmitter  *wailsLogEmitter
+}
+
+func buildRuntime() (*guiRuntime, error) {
+	if err := os.MkdirAll(config.RootPath, config.DirPermission); err != nil {
+		return nil, fmt.Errorf("create root: %w", err)
+	}
+	workRoot, err := os.OpenRoot(config.RootPath)
+	if err != nil {
+		return nil, fmt.Errorf("open root: %w", err)
+	}
+
+	// TODO(ritual-gui-poc): remote storage is a local sibling directory so
+	// the whole pipeline is driveable without R2 credentials. Swap for a
+	// real remote adapter (adapters.NewR2Repository) when productionizing.
+	mockRemoteDir := filepath.Join(config.RootPath, "remote-mock")
+	if err := os.MkdirAll(mockRemoteDir, config.DirPermission); err != nil {
+		return nil, fmt.Errorf("create mock remote: %w", err)
+	}
+	remoteRoot, err := os.OpenRoot(mockRemoteDir)
+	if err != nil {
+		return nil, fmt.Errorf("open mock remote: %w", err)
+	}
+
+	bus := adapters.NewEventBus(4096)
+
+	rawLocal, err := adapters.NewFSRepository(workRoot, "local")
+	if err != nil {
+		return nil, fmt.Errorf("local storage: %w", err)
+	}
+	rawRemote, err := adapters.NewFSRepository(remoteRoot, "remote")
+	if err != nil {
+		return nil, fmt.Errorf("mock remote storage: %w", err)
+	}
+	localStorage := observed.NewStorage(rawLocal, bus)
+	remoteStorage := observed.NewStorage(rawRemote, bus)
+
+	localManifests := adapters.NewManifestStore(localStorage)
+	remoteManifests := adapters.NewManifestStore(remoteStorage)
+
+	if err := ensureManifest(context.Background(), localManifests); err != nil {
+		return nil, fmt.Errorf("seed local manifest: %w", err)
+	}
+	if err := ensureManifest(context.Background(), remoteManifests); err != nil {
+		return nil, fmt.Errorf("seed remote manifest: %w", err)
+	}
+
+	settings, err := domain.LoadSettings()
+	if err != nil {
+		return nil, fmt.Errorf("load settings: %w", err)
+	}
+
+	worldsPath := filepath.Join(config.RootPath, config.WorldsDir)
+	if err := os.MkdirAll(worldsPath, config.DirPermission); err != nil {
+		return nil, fmt.Errorf("create worlds dir: %w", err)
+	}
+	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
+	stagingDir := filepath.Join(config.RootPath, "staging")
+	syncSvc := services.NewSyncService(
+		scanner, localStorage, remoteStorage, bus,
+		services.SyncConfig{Prefix: config.WorldsDir, LocalDir: worldsPath},
+		filepath.Join(stagingDir, "local"),
+		"sync/gui/worlds",
+	)
+	getWorldsState := func(m *domain.Manifest) *domain.SyncState { return &m.Worlds.SyncState }
+	downloader := services.NewSyncDownloadUpdater(syncSvc, localManifests, remoteManifests, getWorldsState)
+	uploader := services.NewSyncUploader(syncSvc, localManifests, remoteManifests, getWorldsState)
+
+	// TODO(ritual-gui-poc): fakerun stands in for the Minecraft server so
+	// the GUI loop can be exercised without a JRE. Replace with
+	// adapters.NewServerCmdBuilder once wiring is proven.
+	fakerunBin, err := locateFakerun()
+	if err != nil {
+		return nil, fmt.Errorf("locate fakerun: %w", err)
+	}
+	cmdBuilder := &fakerunCmdBuilder{bin: fakerunBin, root: config.RootPath}
+
+	// TODO(ritual-gui-poc): fakerun has no TCP listener, so readiness is
+	// declared immediately. Swap for adapters.NewTCPReadinessCheck bound
+	// to 127.0.0.1:<settings.Port> when the real server wires in.
+	readiness := immediateReady{}
+
+	r := app.New(
+		bus,
+		localStorage, remoteStorage,
+		localManifests, remoteManifests,
+		nil, // no conditions for POC
+		[]ports.UpdaterService{downloader},
+		[]ports.UpdaterService{uploader},
+		nil, // no retention for POC
+		cmdBuilder,
+		readiness,
+	)
+
+	viewEmitter := newWailsViewEmitter()
+	logEmitter := &wailsLogEmitter{}
+
+	addresses := guisvc.NewAddressProvider(settings.Port, guisvc.NewSysInterfaceLister())
+	proj := projection.New(bus, viewEmitter, addresses)
+	sink := logsink.New(bus, logEmitter)
+
+	return &guiRuntime{
+		bus:         bus,
+		ritual:      r,
+		projection:  proj,
+		logsink:     sink,
+		viewEmitter: viewEmitter,
+		logEmitter:  logEmitter,
+	}, nil
+}
+
+func ensureManifest(ctx context.Context, store ports.ManifestStore) error {
+	existing, err := store.Get(ctx)
+	if err == nil && existing != nil {
+		return nil
+	}
+	return store.Save(ctx, &domain.Manifest{})
+}
+
+func waitTerminal(bus ports.EventBus, budget time.Duration) {
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+	deadline := time.NewTimer(budget)
+	defer deadline.Stop()
+	for {
+		select {
+		case evt, ok := <-ch:
+			if !ok {
+				return
+			}
+			sc, ok := evt.(app.StatusChanged)
+			if !ok {
+				continue
+			}
+			if sc.Status == app.Done || sc.Status == app.Failed || sc.Status == app.Idle {
+				return
+			}
+		case <-deadline.C:
+			return
+		}
+	}
+}
+
+// wailsViewEmitter forwards ViewModel snapshots to the Wails event bridge.
+// Latest-wins: Emit never blocks the projection fold loop. A dedicated
+// goroutine batches emissions — at most one Wails IPC round-trip in flight
+// at a time, stale snapshots are dropped. This keeps the projection's
+// subscription buffer empty even when Wails IPC is slow, so critical
+// events like StatusChanged{Done} never drop under burst load.
+type wailsViewEmitter struct {
+	app     atomic.Pointer[application.App]
+	pending atomic.Pointer[projection.ViewModel]
+	wake    chan struct{}
+}
+
+func newWailsViewEmitter() *wailsViewEmitter {
+	e := &wailsViewEmitter{wake: make(chan struct{}, 1)}
+	go e.loop()
+	return e
+}
+
+func (e *wailsViewEmitter) bind(a *application.App) { e.app.Store(a) }
+
+func (e *wailsViewEmitter) Emit(vm projection.ViewModel) {
+	e.pending.Store(&vm)
+	select {
+	case e.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (e *wailsViewEmitter) loop() {
+	for range e.wake {
+		vm := e.pending.Swap(nil)
+		a := e.app.Load()
+		if vm == nil || a == nil {
+			continue
+		}
+		a.Event.Emit("ritual:view", *vm)
+	}
+}
+
+// wailsLogEmitter window-scopes every LogLine to the logs console window.
+// logsWindow.EmitEvent does not broadcast — main window never receives
+// log traffic.
+type wailsLogEmitter struct {
+	win atomic.Pointer[application.WebviewWindow]
+}
+
+func (e *wailsLogEmitter) bind(w *application.WebviewWindow) { e.win.Store(w) }
+
+func (e *wailsLogEmitter) Emit(line logsink.LogLine) {
+	w := e.win.Load()
+	if w == nil {
+		return
+	}
+	w.EmitEvent("log:line", line)
+}
+
+// wailsWindowControl adapts a Wails WebviewWindow to services.WindowControl.
+type wailsWindowControl struct{ win *application.WebviewWindow }
+
+func (c *wailsWindowControl) Show()  { c.win.Show() }
+func (c *wailsWindowControl) Focus() { c.win.Focus() }
+
+// fakerunCmdBuilder is the POC CmdBuilder. fakerun reads JSON instructions
+// from stdin and writes/deletes files under --root. The running stage
+// streams output but the body of the game loop is a real subprocess — so
+// lifecycle events (STARTING/STOPPING/STOPPED) fire exactly as they would
+// for a real server.
+type fakerunCmdBuilder struct {
+	bin  string
+	root string
+}
+
+func (b *fakerunCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io.Writer) (*exec.Cmd, error) {
+	cmd := exec.CommandContext(ctx, b.bin, "--root", b.root)
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stdout
+	return cmd, nil
+}
+
+// immediateReady short-circuits the readiness probe. Fakerun has no TCP
+// socket; a real integration will dial the configured Minecraft port.
+type immediateReady struct{}
+
+func (immediateReady) Wait(context.Context) error { return nil }
+
+// locateFakerun looks for a prebuilt fakerun binary next to the GUI binary
+// and falls back to the Go build cache. On first launch the developer runs
+// `go build -o ./bin/fakerun ritual/cmd/fakerun` once; lookups are stable
+// thereafter.
+func locateFakerun() (string, error) {
+	exe, err := os.Executable()
+	if err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), fakerunName())
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	if p, err := exec.LookPath("fakerun"); err == nil {
+		return p, nil
+	}
+	// TODO(ritual-gui-poc): last-ditch fallback — go run compiles on demand.
+	// Remove when the production cmd builder replaces fakerun.
+	if _, err := exec.LookPath("go"); err == nil {
+		cwd, _ := os.Getwd()
+		built := filepath.Join(cwd, "bin", fakerunName())
+		if err := buildFakerun(built); err == nil {
+			return built, nil
+		}
+	}
+	return "", errors.New("fakerun binary not found: run `go build -o bin/fakerun ritual/cmd/fakerun`")
+}
+
+func fakerunName() string {
+	if os.Getenv("GOOS") == "windows" || filepath.Ext(os.Args[0]) == ".exe" {
+		return "fakerun.exe"
+	}
+	return "fakerun"
+}
+
+func buildFakerun(out string) error {
+	if err := os.MkdirAll(filepath.Dir(out), config.DirPermission); err != nil {
+		return err
+	}
+	cmd := exec.Command("go", "build", "-o", out, "ritual/cmd/fakerun") //nolint:gosec // POC-only on-demand build
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }

@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"net"
+	"ritual/internal/gui/projection"
 	"strings"
 )
 
@@ -46,36 +47,29 @@ func isVirtual(name string) bool {
 	return false
 }
 
-// NetInfoService is a Wails service returning GUI-friendly network info.
-type NetInfoService struct {
+// AddressProvider implements projection.AddressProvider by listing host
+// network interfaces and formatting reachable IPv4 addresses with the
+// configured port. Always prepends a "localhost" entry so the user has
+// at least one guaranteed-valid option to share.
+type AddressProvider struct {
 	port   int
 	lister InterfaceLister
 }
 
-// NewNetInfoService binds the port and interface lister.
-func NewNetInfoService(port int, lister InterfaceLister) *NetInfoService {
-	return &NetInfoService{port: port, lister: lister}
+// NewAddressProvider binds the port and interface lister.
+func NewAddressProvider(port int, lister InterfaceLister) *AddressProvider {
+	return &AddressProvider{port: port, lister: lister}
 }
 
-// JoinAddress pairs a human label with a dial address.
-type JoinAddress struct {
-	Label   string `json:"label"`
-	Address string `json:"address"`
-}
-
-// JoinAddresses is a JSON-ready slice of JoinAddress.
-type JoinAddresses struct {
-	Addresses []JoinAddress `json:"addresses"`
-}
-
-// JoinAddresses returns joinable addresses filtered against virtual interfaces.
-func (s *NetInfoService) JoinAddresses() (JoinAddresses, error) {
-	ifaces, err := s.lister.List()
-	if err != nil {
-		return JoinAddresses{}, err
+// Addresses satisfies projection.AddressProvider. Returned in stable order:
+// localhost first, then host interfaces as the lister enumerates them.
+func (a *AddressProvider) Addresses() []projection.JoinAddress {
+	list := []projection.JoinAddress{
+		{Label: "localhost", Address: fmt.Sprintf("127.0.0.1:%d", a.port)},
 	}
-	out := []JoinAddress{
-		{Label: "localhost", Address: fmt.Sprintf("127.0.0.1:%d", s.port)},
+	ifaces, err := a.lister.List()
+	if err != nil {
+		return list
 	}
 	for _, iface := range ifaces {
 		if !iface.Up || iface.Loop {
@@ -96,11 +90,11 @@ func (s *NetInfoService) JoinAddresses() (JoinAddresses, error) {
 			if ip4.IsLinkLocalUnicast() {
 				continue
 			}
-			out = append(out, JoinAddress{
+			list = append(list, projection.JoinAddress{
 				Label:   label,
-				Address: fmt.Sprintf("%s:%d", ip4.String(), s.port),
+				Address: fmt.Sprintf("%s:%d", ip4.String(), a.port),
 			})
 		}
 	}
-	return JoinAddresses{Addresses: out}, nil
+	return list
 }

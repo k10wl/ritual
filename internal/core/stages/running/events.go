@@ -52,3 +52,10 @@ func (SaveRequested) String() string { return "save requested" }
 type SaveCompleted struct{}
 
 func (SaveCompleted) String() string { return "save completed" }
+
+// ConsoleInput carries a line typed by the user in the GUI log console.
+// Forwarded verbatim to the server subprocess stdin (newline appended).
+// Empty or whitespace-only payloads are dropped by the coordinator.
+type ConsoleInput struct{ Text string }
+
+func (c ConsoleInput) String() string { return "console input: " + c.Text }

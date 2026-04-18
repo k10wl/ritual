@@ -201,6 +201,12 @@ func coordinate(
 					}
 				}
 			}
+			if ci, ok := e.(ConsoleInput); ok {
+				line := strings.TrimRight(ci.Text, "\r\n")
+				if strings.TrimSpace(line) != "" {
+					_ = writeStdin(line + "\n")
+				}
+			}
 		}
 	}
 }
