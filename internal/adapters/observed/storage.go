@@ -3,6 +3,7 @@ package observed
 import (
 	"context"
 	"fmt"
+	"io"
 	"ritual/internal/core/ports"
 	"time"
 )
@@ -78,6 +79,74 @@ func (o *observedStorage) DeleteBatch(ctx context.Context, keys []string) error 
 	start := time.Now()
 	err := o.inner.DeleteBatch(ctx, keys)
 	o.publish(StorageDeleteBatchInfo{Store: o.label, Keys: keys, DurationMs: sinceMs(start), Err: err})
+	return err
+}
+
+// GetStream opens the inner stream and wraps it in a counting reader that
+// publishes StorageGetStreamInfo on Close. When the inner call errors before a
+// body is returned, the event is published immediately with 0 bytes + err.
+func (o *observedStorage) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
+	start := time.Now()
+	body, err := o.inner.GetStream(ctx, key)
+	if err != nil {
+		o.publish(StorageGetStreamInfo{Store: o.label, Key: key, DurationMs: sinceMs(start), Err: err})
+		return nil, err
+	}
+	return &countingReadCloser{
+		inner: body,
+		onClose: func(n int64, closeErr error) {
+			o.publish(StorageGetStreamInfo{Store: o.label, Key: key, Bytes: n, DurationMs: sinceMs(start), Err: closeErr})
+		},
+	}, nil
+}
+
+// PutStream discovers body size via Seek before handing off to the inner call,
+// then publishes StoragePutStreamInfo with that size on completion.
+func (o *observedStorage) PutStream(ctx context.Context, key string, body io.ReadSeeker) error {
+	start := time.Now()
+	size, seekErr := body.Seek(0, io.SeekEnd)
+	if seekErr == nil {
+		_, seekErr = body.Seek(0, io.SeekStart)
+	}
+	if seekErr != nil {
+		o.publish(StoragePutStreamInfo{Store: o.label, Key: key, DurationMs: sinceMs(start), Err: seekErr})
+		return seekErr
+	}
+	err := o.inner.PutStream(ctx, key, body)
+	o.publish(StoragePutStreamInfo{Store: o.label, Key: key, Bytes: size, DurationMs: sinceMs(start), Err: err})
+	return err
+}
+
+// Exists wraps the inner call and publishes StorageExistsInfo with hit/miss.
+func (o *observedStorage) Exists(ctx context.Context, key string) (bool, error) {
+	start := time.Now()
+	hit, err := o.inner.Exists(ctx, key)
+	o.publish(StorageExistsInfo{Store: o.label, Key: key, Hit: hit, DurationMs: sinceMs(start), Err: err})
+	return hit, err
+}
+
+// countingReadCloser tallies bytes streamed through a ReadCloser and invokes
+// onClose exactly once, when the caller closes the body.
+type countingReadCloser struct {
+	inner   io.ReadCloser
+	n       int64
+	closed  bool
+	onClose func(n int64, err error)
+}
+
+func (c *countingReadCloser) Read(p []byte) (int, error) {
+	read, err := c.inner.Read(p)
+	c.n += int64(read)
+	return read, err
+}
+
+func (c *countingReadCloser) Close() error {
+	if c.closed {
+		return c.inner.Close()
+	}
+	c.closed = true
+	err := c.inner.Close()
+	c.onClose(c.n, err)
 	return err
 }
 

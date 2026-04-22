@@ -1,8 +1,10 @@
 package observed_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"reflect"
 	"ritual/internal/adapters"
 	"ritual/internal/adapters/observed"
@@ -183,4 +185,147 @@ func TestObservedStorage_AllEventTypes(t *testing.T) {
 		evt := recvOne(t, ch)
 		require.Equalf(t, w, reflect.TypeOf(evt), "event %d (got %T)", i, evt)
 	}
+}
+
+func TestObservedStorage_GetStream_PublishesOnClose(t *testing.T) {
+	inner, bus, ch, cancel := setup(t)
+	defer cancel()
+	payload := []byte("streamed-bytes")
+	inner.GetStreamFunc = func(_ context.Context, _ string) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(payload)), nil
+	}
+	s := observed.NewStorage(inner, bus)
+
+	rc, err := s.GetStream(t.Context(), "k")
+	require.NoError(t, err)
+
+	select {
+	case evt := <-ch:
+		t.Fatalf("event published before Close: %T", evt)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	read, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	require.Equal(t, payload, read)
+	require.NoError(t, rc.Close())
+
+	evt := recvOne(t, ch).(observed.StorageGetStreamInfo)
+	assert.Equal(t, "k", evt.Key)
+	assert.Equal(t, int64(len(payload)), evt.Bytes, "counting reader tallies full body")
+	assert.NoError(t, evt.Err)
+}
+
+func TestObservedStorage_GetStream_FailureBeforeBody(t *testing.T) {
+	inner, bus, ch, cancel := setup(t)
+	defer cancel()
+	sentinel := errors.New("open failed")
+	inner.GetStreamFunc = func(_ context.Context, _ string) (io.ReadCloser, error) {
+		return nil, sentinel
+	}
+	s := observed.NewStorage(inner, bus)
+
+	_, err := s.GetStream(t.Context(), "k")
+	require.ErrorIs(t, err, sentinel)
+
+	evt := recvOne(t, ch).(observed.StorageGetStreamInfo)
+	assert.ErrorIs(t, evt.Err, sentinel)
+	assert.Equal(t, int64(0), evt.Bytes, "no bytes on open-error")
+}
+
+func TestObservedStorage_PutStream_Success(t *testing.T) {
+	inner, bus, ch, cancel := setup(t)
+	defer cancel()
+	inner.PutStreamFunc = func(_ context.Context, _ string, body io.ReadSeeker) error {
+		_, _ = io.Copy(io.Discard, body)
+		return nil
+	}
+	s := observed.NewStorage(inner, bus)
+
+	payload := []byte("hello body")
+	require.NoError(t, s.PutStream(t.Context(), "k", bytes.NewReader(payload)))
+
+	evt := recvOne(t, ch).(observed.StoragePutStreamInfo)
+	assert.Equal(t, "k", evt.Key)
+	assert.Equal(t, int64(len(payload)), evt.Bytes, "Bytes reflects body size discovered via Seek")
+	assert.NoError(t, evt.Err)
+}
+
+func TestObservedStorage_PutStream_InnerError(t *testing.T) {
+	inner, bus, ch, cancel := setup(t)
+	defer cancel()
+	sentinel := errors.New("upload failed")
+	inner.PutStreamFunc = func(_ context.Context, _ string, _ io.ReadSeeker) error { return sentinel }
+	s := observed.NewStorage(inner, bus)
+
+	err := s.PutStream(t.Context(), "k", bytes.NewReader([]byte("x")))
+	require.ErrorIs(t, err, sentinel)
+
+	evt := recvOne(t, ch).(observed.StoragePutStreamInfo)
+	assert.ErrorIs(t, evt.Err, sentinel)
+	assert.Equal(t, int64(1), evt.Bytes, "intended size recorded even on failure")
+}
+
+func TestObservedStorage_V2EventStrings(t *testing.T) {
+	gs := observed.StorageGetStreamInfo{Store: "s", Key: "k", Bytes: 42, DurationMs: 3}.String()
+	assert.Contains(t, gs, "storage.getstream")
+	assert.Contains(t, gs, "k")
+	assert.Contains(t, gs, "42")
+
+	gsErr := observed.StorageGetStreamInfo{Store: "s", Key: "k", Err: errors.New("nope")}.String()
+	assert.Contains(t, gsErr, "err=")
+	assert.NotContains(t, gsErr, "bytes=", "error format must not emit bytes= alongside err=")
+
+	ps := observed.StoragePutStreamInfo{Store: "s", Key: "k", Bytes: 99}.String()
+	assert.Contains(t, ps, "storage.putstream")
+	assert.Contains(t, ps, "99")
+
+	ex := observed.StorageExistsInfo{Store: "s", Key: "k", Hit: true}.String()
+	assert.Contains(t, ex, "storage.exists")
+	assert.Contains(t, ex, "hit=true")
+}
+
+func TestObservedStorage_Exists(t *testing.T) {
+	t.Run("hit", func(t *testing.T) {
+		inner, bus, ch, cancel := setup(t)
+		defer cancel()
+		inner.ExistsFunc = func(_ context.Context, _ string) (bool, error) { return true, nil }
+		s := observed.NewStorage(inner, bus)
+
+		got, err := s.Exists(t.Context(), "k")
+		require.NoError(t, err)
+		assert.True(t, got)
+
+		evt := recvOne(t, ch).(observed.StorageExistsInfo)
+		assert.True(t, evt.Hit)
+		assert.NoError(t, evt.Err)
+	})
+
+	t.Run("miss", func(t *testing.T) {
+		inner, bus, ch, cancel := setup(t)
+		defer cancel()
+		inner.ExistsFunc = func(_ context.Context, _ string) (bool, error) { return false, nil }
+		s := observed.NewStorage(inner, bus)
+
+		got, err := s.Exists(t.Context(), "k")
+		require.NoError(t, err)
+		assert.False(t, got)
+
+		evt := recvOne(t, ch).(observed.StorageExistsInfo)
+		assert.False(t, evt.Hit)
+	})
+
+	t.Run("err", func(t *testing.T) {
+		inner, bus, ch, cancel := setup(t)
+		defer cancel()
+		sentinel := errors.New("exists blew up")
+		inner.ExistsFunc = func(_ context.Context, _ string) (bool, error) { return false, sentinel }
+		s := observed.NewStorage(inner, bus)
+
+		_, err := s.Exists(t.Context(), "k")
+		require.ErrorIs(t, err, sentinel)
+
+		evt := recvOne(t, ch).(observed.StorageExistsInfo)
+		assert.ErrorIs(t, evt.Err, sentinel)
+	})
 }
