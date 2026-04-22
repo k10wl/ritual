@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"ritual/internal/core/ports"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -13,6 +14,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type MockS3Client struct {
@@ -47,6 +49,12 @@ func (m *MockS3Client) CopyObject(ctx context.Context, params *s3.CopyObjectInpu
 func (m *MockS3Client) DeleteObjects(ctx context.Context, params *s3.DeleteObjectsInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error) {
 	args := m.Called(ctx, params, optFns)
 	return args.Get(0).(*s3.DeleteObjectsOutput), args.Error(1)
+}
+
+func (m *MockS3Client) HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	out, _ := args.Get(0).(*s3.HeadObjectOutput)
+	return out, args.Error(1)
 }
 
 func TestR2Repository_SuccessCases(t *testing.T) {
@@ -445,4 +453,156 @@ func TestR2Repository_NoRetryOnPermanent(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 	mockClient.AssertExpectations(t)
+}
+
+type notFoundErr struct{ code string }
+
+func (e notFoundErr) Error() string     { return e.code }
+func (e notFoundErr) ErrorCode() string { return e.code }
+func (e notFoundErr) ErrorMessage() string {
+	return e.code
+}
+func (e notFoundErr) ErrorFault() smithy.ErrorFault { return smithy.FaultClient }
+
+func TestR2Repository_GetStream_Success(t *testing.T) {
+	mockClient := new(MockS3Client)
+	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
+
+	payload := []byte("streamed payload")
+	mockClient.On("GetObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
+		Body: io.NopCloser(bytes.NewReader(payload)),
+	}, nil).Once()
+
+	rc, err := repo.GetStream(context.Background(), "k")
+	require.NoError(t, err, "GetStream returns streaming body on success")
+	defer rc.Close()
+
+	got, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Equal(t, payload, got, "streamed bytes match object body")
+	mockClient.AssertExpectations(t)
+}
+
+func TestR2Repository_GetStream_PropagatesError(t *testing.T) {
+	mockClient := new(MockS3Client)
+	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
+
+	mockClient.On("GetObject", mock.Anything, mock.Anything, mock.Anything).Return(
+		(*s3.GetObjectOutput)(nil),
+		notFoundErr{code: "NoSuchKey"},
+	)
+
+	_, err := repo.GetStream(context.Background(), "missing")
+	require.Error(t, err, "GetStream surfaces NoSuchKey as error (non-retryable)")
+	assert.True(t, strings.Contains(err.Error(), "failed to get object"), "error wraps operation: %v", err)
+}
+
+func TestR2Repository_PutStream_SendsBodyWithContentLength(t *testing.T) {
+	mockClient := new(MockS3Client)
+	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
+
+	payload := []byte("put me via stream")
+	var capturedLen int64
+	var capturedBody []byte
+	mockClient.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil).
+		Run(func(args mock.Arguments) {
+			in := args.Get(1).(*s3.PutObjectInput)
+			require.NotNil(t, in.ContentLength, "ContentLength must be set explicitly")
+			capturedLen = *in.ContentLength
+			b, err := io.ReadAll(in.Body)
+			require.NoError(t, err)
+			capturedBody = b
+		}).Once()
+
+	err := repo.PutStream(context.Background(), "k", bytes.NewReader(payload))
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(payload)), capturedLen, "ContentLength equals payload size")
+	assert.Equal(t, payload, capturedBody, "sent body equals input")
+	mockClient.AssertExpectations(t)
+}
+
+func TestR2Repository_PutStream_RewindsOnRetry(t *testing.T) {
+	mockClient := new(MockS3Client)
+	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
+
+	payload := []byte("retry-me")
+	attempts := 0
+	seen := [][]byte{}
+	mockClient.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, errors.New("transient")).
+		Run(func(args mock.Arguments) {
+			attempts++
+			in := args.Get(1).(*s3.PutObjectInput)
+			b, _ := io.ReadAll(in.Body)
+			seen = append(seen, b)
+			if attempts >= 2 {
+				return
+			}
+		})
+
+	_ = repo.PutStream(context.Background(), "k", bytes.NewReader(payload))
+
+	require.GreaterOrEqual(t, len(seen), 2, "retry happened at least once")
+	assert.Equal(t, payload, seen[0], "first attempt reads full body")
+	assert.Equal(t, payload, seen[1], "second attempt reads full body after rewind")
+}
+
+func TestR2Repository_Exists_HitAndMiss(t *testing.T) {
+	t.Run("hit", func(t *testing.T) {
+		mockClient := new(MockS3Client)
+		repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
+
+		mockClient.On("HeadObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.HeadObjectOutput{}, nil).Once()
+
+		ok, err := repo.Exists(context.Background(), "k")
+		require.NoError(t, err)
+		assert.True(t, ok, "Exists returns true on HeadObject success")
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("miss via NotFound", func(t *testing.T) {
+		mockClient := new(MockS3Client)
+		repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
+
+		mockClient.On("HeadObject", mock.Anything, mock.Anything, mock.Anything).Return(
+			(*s3.HeadObjectOutput)(nil),
+			notFoundErr{code: "NotFound"},
+		).Once()
+
+		ok, err := repo.Exists(context.Background(), "k")
+		require.NoError(t, err, "NotFound must not surface as error")
+		assert.False(t, ok, "Exists returns false on NotFound")
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("miss via NoSuchKey", func(t *testing.T) {
+		mockClient := new(MockS3Client)
+		repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
+
+		mockClient.On("HeadObject", mock.Anything, mock.Anything, mock.Anything).Return(
+			(*s3.HeadObjectOutput)(nil),
+			notFoundErr{code: "NoSuchKey"},
+		).Once()
+
+		ok, err := repo.Exists(context.Background(), "k")
+		require.NoError(t, err)
+		assert.False(t, ok)
+	})
+
+	t.Run("other error", func(t *testing.T) {
+		mockClient := new(MockS3Client)
+		repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
+
+		mockClient.On("HeadObject", mock.Anything, mock.Anything, mock.Anything).Return(
+			(*s3.HeadObjectOutput)(nil),
+			notFoundErr{code: "AccessDenied"},
+		)
+
+		_, err := repo.Exists(context.Background(), "k")
+		require.Error(t, err, "non-404 error surfaces")
+	})
+}
+
+func TestR2Retryable_HeadObjectNotFoundNonRetryable(t *testing.T) {
+	assert.False(t, r2Retryable(notFoundErr{code: "NotFound"}), "HeadObject NotFound must not be retried")
+	assert.False(t, r2Retryable(notFoundErr{code: "NoSuchKey"}), "NoSuchKey must not be retried")
 }

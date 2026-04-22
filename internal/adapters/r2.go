@@ -32,6 +32,7 @@ import (
 type S3Client interface {
 	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
 	DeleteObject(ctx context.Context, params *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 	DeleteObjects(ctx context.Context, params *s3.DeleteObjectsInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error)
 	ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
@@ -137,6 +138,66 @@ func (r *R2Repository) Get(ctx context.Context, key string) ([]byte, error) {
 		defer func() { _ = result.Body.Close() }()
 		return io.ReadAll(result.Body)
 	}, r.retryOpts("r2.Get", key)...)
+}
+
+// GetStream retrieves object body by key as a streaming reader. Caller closes
+// the returned ReadCloser. Wraps GetObject in retry; body is the S3 response body.
+func (r *R2Repository) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
+	key = filepath.ToSlash(key)
+	return retry.Do(ctx, func(ctx context.Context) (io.ReadCloser, error) {
+		result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(r.bucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get object %s: %w", key, err)
+		}
+		return result.Body, nil
+	}, r.retryOpts("r2.GetStream", key)...)
+}
+
+// PutStream uploads body under key. Size is discovered via body.Seek, and body
+// is rewound before every attempt so retries send the full payload.
+func (r *R2Repository) PutStream(ctx context.Context, key string, body io.ReadSeeker) error {
+	key = filepath.ToSlash(key)
+	size, err := body.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("failed to size body for %s: %w", key, err)
+	}
+	return retry.DoVoid(ctx, func(ctx context.Context) error {
+		if _, err := body.Seek(0, io.SeekStart); err != nil {
+			return retry.Fatal(fmt.Errorf("failed to rewind body for %s: %w", key, err))
+		}
+		_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(r.bucket),
+			Key:           aws.String(key),
+			Body:          body,
+			ContentLength: aws.Int64(size),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to put object %s: %w", key, err)
+		}
+		return nil
+	}, r.retryOpts("r2.PutStream", key)...)
+}
+
+// Exists reports whether key is present. HeadObject surfaces a NotFound /
+// NoSuchKey APIError when the object is absent; both map to (false, nil).
+func (r *R2Repository) Exists(ctx context.Context, key string) (bool, error) {
+	key = filepath.ToSlash(key)
+	return retry.Do(ctx, func(ctx context.Context) (bool, error) {
+		_, err := r.client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(r.bucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			if isNotFound(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("failed to head object %s: %w", key, err)
+		}
+		return true, nil
+	}, r.retryOpts("r2.Exists", key)...)
 }
 
 // Put uploads data under key to R2.
