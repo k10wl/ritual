@@ -34,7 +34,7 @@ type Ritual struct {
 	conds           []ports.ConditionService
 	updaters        []ports.UpdaterService
 	exitUpdaters    []ports.UpdaterService
-	retentions      []ports.RetentionService
+	retentions      []retaining.Job
 	cmdBuilder      ports.CmdBuilder
 	readiness       ports.ReadinessCheck
 
@@ -55,7 +55,7 @@ func New(
 	conditions []ports.ConditionService,
 	updaters []ports.UpdaterService,
 	exitUpdaters []ports.UpdaterService,
-	retentions []ports.RetentionService,
+	retentions []retaining.Job,
 	cmdBuilder ports.CmdBuilder,
 	readiness ports.ReadinessCheck,
 ) *Ritual {
@@ -176,7 +176,7 @@ func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
 	failAcq := failed.New(ritual.StageAcquiring)
 	failRet := failed.New(ritual.StageRetaining)
 
-	retain := retaining.New(r.retentions, failRet)
+	retain := retaining.New(r.retentions, r.bus, failRet)
 	unlock := unlocking.New(r.localManifests, r.remoteManifests, retain)
 	backupStage := backup.New(r.localStorage, r.remoteStorage, r.localManifests, unlock)
 	publish := publishing.New(r.exitUpdaters, backupStage)

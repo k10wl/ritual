@@ -1,24 +1,27 @@
-// Package retention builds the retention service slice (local + remote
-// backups + log retention) from settings and manifest rules.
+// Package retention builds the retention Job slice used by the Retaining
+// stage. Composition root for refs-side retention+GC and logs-side
+// retention.
 package retention
 
 import (
 	"fmt"
+	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/refs"
 	"ritual/internal/core/services"
+	"ritual/internal/core/stages/retaining"
 )
 
-// Build returns the full retention slice used by the Retaining stage.
-// remoteManifest supplies the remote retention rules; local rules come
-// from the host settings file.
+// Build wires the retention Jobs: refs-local, refs-remote, logs-local.
+// remoteManifest supplies the remote retention rules; local rules come from
+// the host settings file. Each refs Job runs Select → DeleteBatch → Collect;
+// the logs Job runs Select → DeleteBatch.
 func Build(
 	localStorage, remoteStorage ports.StorageRepository,
 	bus ports.EventBus,
 	remoteManifest *domain.Manifest,
-) ([]ports.RetentionService, error) {
-	parse := services.ChainStrategies(services.ParseTimestampDir, services.ParseTimestampTar)
-
+) ([]retaining.Job, error) {
 	settings, err := domain.LoadSettings()
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
@@ -32,19 +35,22 @@ func Build(
 	if remoteRules == (domain.RetentionRules{}) {
 		remoteRules = domain.DefaultRetentionRules()
 	}
+	logRules := domain.RetentionRules{KeepLast: config.MaxLogFiles}
 
-	local, err := services.NewRetention(localStorage, localRules, "backups", parse)
-	if err != nil {
-		return nil, fmt.Errorf("local retention: %w", err)
-	}
-	remote, err := services.NewRetention(remoteStorage, remoteRules, "backups", parse)
-	if err != nil {
-		return nil, fmt.Errorf("remote retention: %w", err)
-	}
-	logRet, err := services.NewLogRetention(localStorage, bus)
-	if err != nil {
-		return nil, fmt.Errorf("log retention: %w", err)
-	}
-
-	return []ports.RetentionService{local, remote, logRet}, nil
+	return []retaining.Job{
+		retaining.NewRefsJob(
+			services.NewObservedRetention(services.NewRefsRetention(localStorage, localRules), bus, "refs-local"),
+			localStorage,
+			refs.NewCollector(localStorage),
+		),
+		retaining.NewRefsJob(
+			services.NewObservedRetention(services.NewRefsRetention(remoteStorage, remoteRules), bus, "refs-remote"),
+			remoteStorage,
+			refs.NewCollector(remoteStorage),
+		),
+		retaining.NewLogsJob(
+			services.NewObservedRetention(services.NewLogsRetention(localStorage, logRules), bus, "logs"),
+			localStorage,
+		),
+	}, nil
 }

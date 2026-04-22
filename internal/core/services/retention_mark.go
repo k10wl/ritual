@@ -7,29 +7,27 @@ import (
 	"time"
 )
 
-// Mark classifies keys into a delete list per retention rules.
-// Pure function. No IO. Unparseable keys are marked for deletion (sacred dir).
+// markKeys classifies keys into a delete list per retention rules.
+// Pure function. No IO. Keys whose parse returns zero-time are skipped —
+// unparseable is never destructive; the protocol keyspace may legitimately
+// contain non-timestamp entries that retention must leave alone.
 //
-//nolint:gocyclo // retention classification — branching per rule type is the spec.
-func Mark(keys []string, rules domain.RetentionRules, parse ParseStrategy) []string {
+//nolint:gocyclo // tier classification branches per rule type; that is the spec.
+func markKeys(keys []string, rules domain.RetentionRules, parse func(string) time.Time) []string {
 	type entry struct {
 		key string
 		t   time.Time
 	}
 
-	var parsed []entry
-	var unparseable []string
-
+	parsed := make([]entry, 0, len(keys))
 	for _, k := range keys {
 		t := parse(k)
 		if t.IsZero() {
-			unparseable = append(unparseable, k)
 			continue
 		}
 		parsed = append(parsed, entry{key: k, t: t.UTC()})
 	}
 
-	// Newest first; deterministic tiebreaker by key
 	slices.SortFunc(parsed, func(a, b entry) int {
 		if c := b.t.Compare(a.t); c != 0 {
 			return c
@@ -45,14 +43,12 @@ func Mark(keys []string, rules domain.RetentionRules, parse ParseStrategy) []str
 
 	protected := make(map[string]bool, len(parsed))
 
-	// keep_last
 	for i, e := range parsed {
 		if i < rules.KeepLast {
 			protected[e.key] = true
 		}
 	}
 
-	// keep_daily: first entry seen per UTC calendar day, up to limit
 	daySeen := map[string]bool{}
 	dayCount := 0
 	for _, e := range parsed {
@@ -64,7 +60,6 @@ func Mark(keys []string, rules domain.RetentionRules, parse ParseStrategy) []str
 		daySeen[bucket] = true
 	}
 
-	// keep_weekly: first per ISO week
 	weekSeen := map[string]bool{}
 	weekCount := 0
 	for _, e := range parsed {
@@ -77,7 +72,6 @@ func Mark(keys []string, rules domain.RetentionRules, parse ParseStrategy) []str
 		weekSeen[bucket] = true
 	}
 
-	// keep_monthly: first per UTC calendar month
 	monthSeen := map[string]bool{}
 	monthCount := 0
 	for _, e := range parsed {
@@ -90,12 +84,10 @@ func Mark(keys []string, rules domain.RetentionRules, parse ParseStrategy) []str
 	}
 
 	var toDelete []string
-	toDelete = append(toDelete, unparseable...)
 	for _, e := range parsed {
 		if !protected[e.key] {
 			toDelete = append(toDelete, e.key)
 		}
 	}
-
 	return toDelete
 }

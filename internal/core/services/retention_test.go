@@ -7,74 +7,119 @@ import (
 	"ritual/internal/core/ports/mocks"
 	"ritual/internal/core/services"
 	"testing"
+	"time"
 )
 
-func TestRetention_Apply_ListsAndDeletes(t *testing.T) {
+func TestRefsRetention_Select_ListsRefsAndReturnsMarkedDrops(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
 	storage := &mocks.MockStorageRepository{}
-	storage.ListFunc = func(ctx context.Context, prefix string) ([]string, error) {
-		if prefix != "backups" {
-			t.Errorf("prefix=%s, want backups", prefix)
+	storage.ListFunc = func(_ context.Context, prefix string) ([]string, error) {
+		if prefix != "refs/" {
+			t.Errorf("refs retention must list the refs/ keyspace, got prefix %q", prefix)
 		}
 		return []string{
-			"backups/20260414160000/",
-			"backups/20260413160000/",
-			"backups/20260412160000/",
+			"refs/20260414160000.json",
+			"refs/20260413160000.json",
+			"refs/20260412160000.json",
 		}, nil
 	}
 
-	deleted := []string{}
-	storage.DeleteBatchFunc = func(ctx context.Context, keys []string) error {
-		deleted = append(deleted, keys...)
-		return nil
-	}
+	r := services.NewRefsRetention(storage, domain.RetentionRules{KeepLast: 2})
+	got, err := r.Select(ctx)
 
-	r, err := services.NewRetention(storage, domain.RetentionRules{KeepLast: 2}, "backups", services.ParseTimestampDir)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("healthy list must not error: %v", err)
 	}
-
-	if err := r.Apply(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	if len(deleted) != 1 || deleted[0] != "backups/20260412160000/" {
-		t.Errorf("deleted=%v, want [backups/20260412160000/]", deleted)
+	if len(got) != 1 || got[0] != "refs/20260412160000.json" {
+		t.Errorf("KeepLast:2 must drop only the oldest; got %v", got)
 	}
 }
 
-func TestRetention_Apply_Empty_NoOp(t *testing.T) {
+func TestRefsRetention_Select_ListError_Propagates(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	boom := errors.New("list boom")
 	storage := &mocks.MockStorageRepository{}
-	storage.ListFunc = func(ctx context.Context, prefix string) ([]string, error) {
-		return nil, nil
-	}
-	storage.DeleteBatchFunc = func(ctx context.Context, keys []string) error {
-		t.Errorf("DeleteBatch called unexpectedly: %v", keys)
-		return nil
+	storage.ListFunc = func(_ context.Context, _ string) ([]string, error) {
+		return nil, boom
 	}
 
-	r, _ := services.NewRetention(storage, domain.RetentionRules{KeepLast: 2}, "backups", services.ParseTimestampDir)
-	if err := r.Apply(context.Background()); err != nil {
-		t.Fatal(err)
+	r := services.NewRefsRetention(storage, domain.RetentionRules{KeepLast: 2})
+	_, err := r.Select(ctx)
+
+	if !errors.Is(err, boom) {
+		t.Errorf("List error must rise to Select caller; got %v", err)
 	}
 }
 
-func TestRetention_Apply_ListError_Propagates(t *testing.T) {
+func TestRefsRetention_Select_EmptyList_NoDrops(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
 	storage := &mocks.MockStorageRepository{}
-	want := errors.New("list boom")
-	storage.ListFunc = func(ctx context.Context, prefix string) ([]string, error) {
-		return nil, want
-	}
+	storage.ListFunc = func(_ context.Context, _ string) ([]string, error) { return nil, nil }
 
-	r, _ := services.NewRetention(storage, domain.RetentionRules{KeepLast: 2}, "backups", services.ParseTimestampDir)
-	err := r.Apply(context.Background())
-	if !errors.Is(err, want) {
-		t.Errorf("got %v, want %v wrapped", err, want)
+	r := services.NewRefsRetention(storage, domain.RetentionRules{KeepLast: 2})
+	got, err := r.Select(ctx)
+
+	if err != nil {
+		t.Fatalf("empty list must not error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("empty input must yield no drops; got %v", got)
 	}
 }
 
-func TestRetention_NewRetention_NilStorage_Errors(t *testing.T) {
-	_, err := services.NewRetention(nil, domain.RetentionRules{}, "backups", services.ParseTimestampDir)
-	if err == nil {
-		t.Error("expected error for nil storage")
+func TestLogsRetention_Select_ListsLogsAndTrimsByKeepLast(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	storage := &mocks.MockStorageRepository{}
+	storage.ListFunc = func(_ context.Context, prefix string) ([]string, error) {
+		if prefix != "logs" {
+			t.Errorf("logs retention must list the logs keyspace, got prefix %q", prefix)
+		}
+		return []string{
+			"logs/20260414160000.log",
+			"logs/20260413160000.log",
+			"logs/20260412160000.log",
+			"logs/20260411160000.log",
+		}, nil
+	}
+
+	r := services.NewLogsRetention(storage, domain.RetentionRules{KeepLast: 2})
+	got, err := r.Select(ctx)
+
+	if err != nil {
+		t.Fatalf("healthy list must not error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("KeepLast:2 across 4 logs must drop 2; got %v", got)
+	}
+}
+
+func TestLogsRetention_Select_UnknownFile_IsPreserved(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	storage := &mocks.MockStorageRepository{}
+	storage.ListFunc = func(_ context.Context, _ string) ([]string, error) {
+		return []string{
+			"logs/20260414160000.log",
+			"logs/latest.log",
+		}, nil
+	}
+
+	r := services.NewLogsRetention(storage, domain.RetentionRules{KeepLast: 1})
+	got, err := r.Select(ctx)
+
+	if err != nil {
+		t.Fatalf("healthy list must not error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("non-timestamp filename must be left alone; got %v", got)
 	}
 }

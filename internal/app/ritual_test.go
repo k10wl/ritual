@@ -9,6 +9,7 @@ import (
 	"ritual/internal/app"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/stages/retaining"
 	"strings"
 	"testing"
 	"time"
@@ -49,9 +50,7 @@ type noopUpdater struct{}
 
 func (noopUpdater) Run(_ context.Context) error { return nil }
 
-type noopRetention struct{}
-
-func (noopRetention) Apply(_ context.Context) error { return nil }
+func noopJob(_ context.Context) error { return nil }
 
 type fakeCmdBuilder struct{}
 
@@ -89,7 +88,7 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 		[]ports.ConditionService{noopCondition{}},
 		[]ports.UpdaterService{noopUpdater{}},
 		[]ports.UpdaterService{noopUpdater{}},
-		[]ports.RetentionService{noopRetention{}},
+		[]retaining.Job{noopJob},
 		fakeCmdBuilder{},
 		immediateReady{},
 	)
@@ -133,7 +132,7 @@ func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 		[]ports.ConditionService{noopCondition{}},
 		[]ports.UpdaterService{flaky},
 		[]ports.UpdaterService{noopUpdater{}},
-		[]ports.RetentionService{noopRetention{}},
+		[]retaining.Job{noopJob},
 		fakeCmdBuilder{},
 		immediateReady{},
 	)
@@ -206,7 +205,7 @@ func TestRitual_Start_AfterDone_StartsAgain(t *testing.T) {
 		[]ports.ConditionService{noopCondition{}},
 		[]ports.UpdaterService{noopUpdater{}},
 		[]ports.UpdaterService{noopUpdater{}},
-		[]ports.RetentionService{noopRetention{}},
+		[]retaining.Job{noopJob},
 		fakeCmdBuilder{},
 		immediateReady{},
 	)

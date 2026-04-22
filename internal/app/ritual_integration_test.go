@@ -449,21 +449,6 @@ func seedFiles(t *testing.T, rootDir string, files []testFile) {
 	}
 }
 
-func seedBackups(t *testing.T, r *testRitual, count int) {
-	t.Helper()
-	for i := range count {
-		ts := time.Now().Add(time.Duration(-count+i) * time.Hour).UTC().Format(config.TimestampFormat)
-
-		localBackupDir := filepath.Join(r.localDir, config.BackupsDir, ts)
-		require.NoError(t, os.MkdirAll(localBackupDir, 0o755), "create local backup dir %s", ts)
-		require.NoError(t, os.WriteFile(filepath.Join(localBackupDir, config.ManifestFilename), []byte("{}"), 0o644), "write local backup manifest %s", ts)
-
-		remoteBackupDir := filepath.Join(r.remoteDir, config.BackupsDir, ts)
-		require.NoError(t, os.MkdirAll(remoteBackupDir, 0o755), "create remote backup dir %s", ts)
-		require.NoError(t, os.WriteFile(filepath.Join(remoteBackupDir, config.ManifestFilename), []byte("{}"), 0o644), "write remote backup manifest %s", ts)
-	}
-}
-
 func updateManifestXXHash(
 	t *testing.T,
 	ctx context.Context,
@@ -498,63 +483,6 @@ func (r *testRitual) latestBackupName(t *testing.T) string {
 	require.NoError(t, err)
 	require.NotEmpty(t, entries)
 	return entries[len(entries)-1].Name()
-}
-
-// ---------- startRitualWithRetention ----------
-
-func (r *testRitual) startRitualWithRetention(t *testing.T) *fakeServer {
-	t.Helper()
-	server := r.fakerun()
-
-	worldsPath := filepath.Join(r.localDir, config.WorldsDir)
-	_ = os.MkdirAll(worldsPath, 0o755)
-
-	worldsFS := os.DirFS(worldsPath)
-	worldScanner := adapters.NewFullScanner(worldsFS)
-
-	localStaging := filepath.Join(t.TempDir(), "staging")
-	remoteStaging := fmt.Sprintf("sync/test-%d", time.Now().UnixNano())
-
-	worldSync := services.NewSyncService(
-		worldScanner, r.local, r.remote, r.bus,
-		services.SyncConfig{Prefix: config.WorldsDir, LocalDir: worldsPath},
-		filepath.Join(localStaging, config.WorldsDir),
-		remoteStaging+"/"+config.WorldsDir,
-	)
-
-	worldDown := services.NewSyncDownloadUpdater(
-		worldSync, r.localManifests, r.remoteManifests,
-		func(m *domain.Manifest) *domain.SyncState { return &m.Worlds.SyncState },
-	)
-	worldUp := services.NewSyncUploader(
-		worldSync, r.localManifests, r.remoteManifests,
-		func(m *domain.Manifest) *domain.SyncState { return &m.Worlds.SyncState },
-	)
-
-	rules := domain.DefaultRetentionRules()
-	localRetention, err := services.NewRetention(r.local, rules, config.BackupsDir, services.ParseTimestampDir)
-	require.NoError(t, err)
-	remoteRetention, err := services.NewRetention(r.remote, rules, config.BackupsDir, services.ParseTimestampDir)
-	require.NoError(t, err)
-
-	cmdBuilder := &fakeServerCmdBuilder{server: server}
-
-	rit := app.New(
-		r.bus,
-		r.local, r.remote,
-		r.localManifests, r.remoteManifests,
-		nil,
-		[]ports.UpdaterService{worldDown},
-		[]ports.UpdaterService{worldUp},
-		[]ports.RetentionService{localRetention, remoteRetention},
-		cmdBuilder,
-		immediateReady{},
-	)
-
-	go rit.Listen(r.ctx)
-	time.Sleep(20 * time.Millisecond)
-	r.bus.Publish(app.StartRequested{})
-	return server
 }
 
 // ---------- assert helpers ----------
@@ -698,10 +626,6 @@ func (r *testRitual) assertNoStagingFiles(t *testing.T, msg string) {
 		return
 	}
 	assert.Empty(t, keys, msg)
-}
-
-func (r *testRitual) retentionLimit() int {
-	return domain.DefaultRetentionRules().KeepLast
 }
 
 // ---------- condition helpers ----------
@@ -1191,25 +1115,6 @@ func TestIntegration_NothingChanged_NoBackupCreated(t *testing.T) {
 		"server ran but changed nothing — no backup should be created")
 }
 
-func TestIntegration_RetentionPrunesOldBackups(t *testing.T) {
-	ritual := newRitual(t)
-
-	seedBackups(t, ritual, 5)
-	seedRemoteWorld(t, ritual,
-		file("world/level.dat", []byte("level")),
-	)
-
-	server := ritual.startRitualWithRetention(t)
-	server.waitReady(t)
-	server.write("worlds/world/level.dat", []byte("changed"))
-	server.exit(0)
-	server.stdin.Close()
-	ritual.waitDone(t)
-
-	ritual.assertBackupCount(t, ritual.retentionLimit(),
-		"retention should prune oldest backups, keeping only N most recent")
-}
-
 func TestIntegration_BackupUsesSameStorageOnly_NoRemoteReadDuringBackup(t *testing.T) {
 	ritual := newRitual(t)
 
@@ -1532,8 +1437,8 @@ func seedRemoteWorldWithShortHeartbeat(t *testing.T, r *testRitual, files ...tes
 
 	remoteManifest, err := r.remoteManifests.Get(r.ctx)
 	require.NoError(t, err, "get remote manifest for short heartbeat seed")
-	remoteManifest.Lease.HeartbeatInterval = domain.Duration(200 * time.Millisecond)
-	remoteManifest.Lease.TTL = domain.Duration(2 * time.Second)
+	remoteManifest.Lease.HeartbeatInterval = domain.Duration(20 * time.Millisecond)
+	remoteManifest.Lease.TTL = domain.Duration(500 * time.Millisecond)
 
 	worldsPath := filepath.Join(r.remoteDir, config.WorldsDir)
 	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
@@ -1603,8 +1508,8 @@ func TestIntegration_CrashRecovery_LocalNewerKept(t *testing.T) {
 
 	remoteManifest, err := ritual.remoteManifests.Get(ritual.ctx)
 	require.NoError(t, err, "get remote manifest for crash recovery test")
-	remoteManifest.Lease.HeartbeatInterval = domain.Duration(200 * time.Millisecond)
-	remoteManifest.Lease.TTL = domain.Duration(2 * time.Second)
+	remoteManifest.Lease.HeartbeatInterval = domain.Duration(20 * time.Millisecond)
+	remoteManifest.Lease.TTL = domain.Duration(500 * time.Millisecond)
 	remoteManifest.Worlds.XXHashSyncAt = time.Now().Add(-time.Hour)
 	remoteManifest.Worlds.XXHashMap = map[string]domain.FileEntry{
 		"world/level.dat": {Hash: "remote-hash-old", Size: 16},

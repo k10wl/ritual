@@ -116,14 +116,6 @@ type UpdaterService interface {
 	Run(ctx context.Context) error
 }
 
-// RetentionService defines the interface for backup retention operations
-// Retentions clean up old backups after manifest is updated
-type RetentionService interface {
-	// Apply removes old backups exceeding the retention limit
-	// Uses manifest's Backups to identify valid backups
-	Apply(ctx context.Context) error
-}
-
 // ConditionService defines the interface for pre-flight condition checks
 // Conditions validate system prerequisites before updaters can run
 type ConditionService interface {
