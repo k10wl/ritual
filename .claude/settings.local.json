@@ -23,7 +23,8 @@
       "Bash(go clean *)",
       "Bash(gofumpt)",
       "Bash(golangci-lint fmt *)",
-      "Bash(awk -F. '{print $NF}')"
+      "Bash(awk -F. '{print $NF}')",
+      "Bash(git --no-pager diff go.mod)"
     ],
     "deny": [],
     "ask": []
