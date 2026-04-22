@@ -213,10 +213,10 @@ func TestPlayerPlaying_WorldsSyncEveryTick(t *testing.T) {
 	_, stop := heartbeat.Attach(bus, localStore, remoteStore, syncer)
 	defer stop()
 
-	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", LockID: "run-1", Interval: 50 * time.Millisecond})
+	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", LockID: "run-1", Interval: 20 * time.Millisecond})
 	bus.Publish(running.ServerReadyInfo{})
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if uploadCount.Load() >= 2 {
 			// also verify heartbeat refreshed
@@ -227,7 +227,7 @@ func TestPlayerPlaying_WorldsSyncEveryTick(t *testing.T) {
 				return
 			}
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("expected >=2 uploads, got %d", uploadCount.Load())
 }
@@ -260,7 +260,7 @@ func TestPreviousSyncStillRunning_NextSyncWaits(t *testing.T) {
 					break
 				}
 			}
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(40 * time.Millisecond)
 			concurrent.Add(-1)
 			return local, nil
 		},
@@ -273,11 +273,11 @@ func TestPreviousSyncStillRunning_NextSyncWaits(t *testing.T) {
 	_, stop := heartbeat.Attach(bus, localStore, remoteStore, syncer)
 	defer stop()
 
-	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", LockID: "run-1", Interval: 50 * time.Millisecond})
+	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", LockID: "run-1", Interval: 20 * time.Millisecond})
 	bus.Publish(running.ServerReadyInfo{})
 
 	// let several ticks fire while upload is slow
-	time.Sleep(600 * time.Millisecond)
+	time.Sleep(120 * time.Millisecond)
 
 	if mc := maxConcurrent.Load(); mc > 1 {
 		t.Fatalf("concurrent uploads: %d, expected max 1", mc)
@@ -315,26 +315,26 @@ func TestPlayerStopsServer_SyncStops(t *testing.T) {
 	_, stop := heartbeat.Attach(bus, localStore, remoteStore, syncer)
 	defer stop()
 
-	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", LockID: "run-1", Interval: 50 * time.Millisecond})
+	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", LockID: "run-1", Interval: 20 * time.Millisecond})
 	bus.Publish(running.ServerReadyInfo{})
 
 	// wait for at least one sync
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if uploadCount.Load() >= 1 {
 			break
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 	if uploadCount.Load() < 1 {
 		t.Fatal("no uploads before stop")
 	}
 
 	bus.Publish(running.ServerStoppedInfo{})
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 
 	countAtStop := uploadCount.Load()
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
 	countAfter := uploadCount.Load()
 
 	if countAfter > countAtStop {

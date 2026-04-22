@@ -61,15 +61,15 @@ func TestReadiness_FailureThenSuccessEmitsAttempts(t *testing.T) {
 	t.Cleanup(unsub)
 
 	probe := adapters.NewTCPReadinessCheck(addr, bus)
-	probe.SetDialTimeout(200 * time.Millisecond)
-	probe.SetInterval(200 * time.Millisecond)
+	probe.SetDialTimeout(20 * time.Millisecond)
+	probe.SetInterval(20 * time.Millisecond)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- probe.Wait(ctx) }()
 
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(40 * time.Millisecond)
 	ln2, err := net.Listen("tcp", addr)
 	if err != nil {
 		t.Fatalf("relisten: %v", err)
@@ -102,10 +102,10 @@ func TestReadiness_CancelReturnsErr(t *testing.T) {
 
 	bus := adapters.NewEventBus(16)
 	probe := adapters.NewTCPReadinessCheck("127.0.0.1:1", bus)
-	probe.SetDialTimeout(50 * time.Millisecond)
-	probe.SetInterval(50 * time.Millisecond)
+	probe.SetDialTimeout(20 * time.Millisecond)
+	probe.SetInterval(20 * time.Millisecond)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 	if err := probe.Wait(ctx); err == nil {
 		t.Fatalf("want ctx error, got nil")
