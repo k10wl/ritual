@@ -2,8 +2,9 @@
 //
 // Integration-level scenarios from §Flows to Check in
 // docs/superpowers/specs/2026-04-19-fast-sync-v2.1-design.md, translated
-// into cross-verb tests. Each flow composes the four verbs against the
-// same shared-package memStorage fake.
+// into cross-verb tests. Each flow composes the four verbs against
+// distinct fsBundle instances so scanner walks cannot observe foreign
+// keyspaces.
 //
 // Host model (mirrors §On-disk / on-R2 Layout):
 //
@@ -13,10 +14,10 @@
 //
 // Wiring per verb:
 //
-//   Puller:     NewPuller(remote, local)    — download ref + blobs
-//   Applier:    NewApplier(local, workdir)  — materialise workdir from local blobs
-//   Committer:  NewCommitter(workdir, local) — snapshot workdir into local blobs
-//   Pusher:     NewPusher(local, remote)    — upload local ref + blobs
+//   Puller:     NewPuller(remote, local)                    — download ref + blobs
+//   Applier:    NewApplier(local, workdir, workdirScanner)  — materialise workdir
+//   Committer:  NewCommitter(workdirScanner, workdir, local) — snapshot workdir
+//   Pusher:     NewPusher(local, remote)                    — upload local ref + blobs
 //
 // Deferred flows (not translated — require subsystems not yet implemented):
 //
@@ -29,7 +30,6 @@
 package refs_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -48,12 +48,12 @@ func TestFlow_F1_ColdStartRemotePrePopulated(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	remote := newMemStorage()
-	local := newMemStorage()
-	workdir := newMemStorage()
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
+	workdir := newFSBundle(t)
 
 	originals := map[string][]byte{
-		"worlds/level.dat": []byte("LEVEL"),
+		"worlds/level.dat":         []byte("LEVEL"),
 		"server/server.properties": []byte("motd=spec"),
 	}
 	originalID := prepareRemoteRef(t, remote,
@@ -62,8 +62,8 @@ func TestFlow_F1_ColdStartRemotePrePopulated(t *testing.T) {
 		originals,
 	)
 
-	puller := refs.NewPuller(remote, local)
-	applier := refs.NewApplier(local, workdir)
+	puller := refs.NewPuller(remote.storage, local.storage)
+	applier := refs.NewApplier(local.storage, workdir.storage, workdir.scanner())
 	require.NoError(t, puller.Pull(ctx, originalID),
 		"F-1 step pull: remote pre-populated ref must arrive at local")
 	require.NoError(t, applier.Apply(ctx, originalID),
@@ -74,11 +74,11 @@ func TestFlow_F1_ColdStartRemotePrePopulated(t *testing.T) {
 			"F-1 post-apply: workdir file %q must match remote source byte-for-byte", path)
 	}
 
-	workdir.put("worlds/level.dat", []byte("LEVEL_v2"))
+	workdir.put(t, "worlds/level.dat", []byte("LEVEL_v2"))
 
-	committer := refs.NewCommitter(workdir, local).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, local.storage).
 		WithClock(fixedClock(t, "2026-04-22T11-00-00.000Z"))
-	pusher := refs.NewPusher(local, remote)
+	pusher := refs.NewPusher(local.storage, remote.storage)
 
 	newID, err := committer.Commit(ctx, ports.CommitOpts{
 		Parent:  originalID,
@@ -88,10 +88,10 @@ func TestFlow_F1_ColdStartRemotePrePopulated(t *testing.T) {
 	require.NoError(t, pusher.Push(ctx, newID),
 		"F-1 step push: the new draft must land on remote — establishing the new HEAD")
 
-	secondHostLocal := newMemStorage()
-	secondHostWorkdir := newMemStorage()
-	secondPuller := refs.NewPuller(remote, secondHostLocal)
-	secondApplier := refs.NewApplier(secondHostLocal, secondHostWorkdir)
+	secondHostLocal := newFSBundle(t)
+	secondHostWorkdir := newFSBundle(t)
+	secondPuller := refs.NewPuller(remote.storage, secondHostLocal.storage)
+	secondApplier := refs.NewApplier(secondHostLocal.storage, secondHostWorkdir.storage, secondHostWorkdir.scanner())
 	require.NoError(t, secondPuller.Pull(ctx, newID),
 		"F-1 verify: a second host pulling the new HEAD must succeed against the pushed remote state")
 	require.NoError(t, secondApplier.Apply(ctx, newID),
@@ -106,22 +106,22 @@ func TestFlow_F2_LiveTickerWithAmend(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	remote := newMemStorage()
-	local := newMemStorage()
-	workdir := newMemStorage()
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
+	workdir := newFSBundle(t)
 
-	workdir.put("worlds/level.dat", []byte("tick0"))
+	workdir.put(t, "worlds/level.dat", []byte("tick0"))
 
 	clock := advancingClock(t, "2026-04-22T10-00-00.000Z", time.Minute)
-	committer := refs.NewCommitter(workdir, local).WithClock(clock)
-	pusher := refs.NewPusher(local, remote)
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, local.storage).WithClock(clock)
+	pusher := refs.NewPusher(local.storage, remote.storage)
 
 	tick1, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
 	require.NoError(t, err, "F-2 tick 1: initial commit of live-ticker session")
 	require.NoError(t, pusher.Push(ctx, tick1),
 		"F-2 tick 1: first push completes the initial session linearization")
 
-	workdir.put("worlds/level.dat", []byte("tick2"))
+	workdir.put(t, "worlds/level.dat", []byte("tick2"))
 	tick2, err := committer.Commit(ctx, ports.CommitOpts{
 		Parent:  tick1,
 		Amend:   tick1,
@@ -132,7 +132,7 @@ func TestFlow_F2_LiveTickerWithAmend(t *testing.T) {
 	assertRefAbsent(t, local, tick1,
 		"F-2 §Commit Amend step 5: the superseded local draft must be deleted after the new draft is written — no chain lengthening on disk")
 
-	workdir.put("worlds/level.dat", []byte("tick3"))
+	workdir.put(t, "worlds/level.dat", []byte("tick3"))
 	tick3, err := committer.Commit(ctx, ports.CommitOpts{
 		Parent:  tick2,
 		Amend:   tick2,
@@ -144,7 +144,7 @@ func TestFlow_F2_LiveTickerWithAmend(t *testing.T) {
 
 	assertRefAbsent(t, local, tick2,
 		"F-2 amend-collapse: intermediate draft tick2 must be gone from local after the next amend replaces it")
-	assert.True(t, refExists(remote, tick3),
+	assert.True(t, refExists(t, remote, tick3),
 		"F-2 §Push step 5: the final amended ref must be the one that reaches remote")
 	assertRefAbsent(t, remote, tick2,
 		"F-2 §Commit Amend isolation: an amended draft must never reach remote — intermediate-tick blobs + ref stay local")
@@ -154,9 +154,9 @@ func TestFlow_F3_RestoreToPastTimestamp(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	remote := newMemStorage()
-	local := newMemStorage()
-	workdir := newMemStorage()
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
+	workdir := newFSBundle(t)
 
 	oldID := prepareRemoteRef(t, remote,
 		domain.RefID("2026-04-22T10-00-00.000Z"),
@@ -169,8 +169,8 @@ func TestFlow_F3_RestoreToPastTimestamp(t *testing.T) {
 		map[string][]byte{"worlds/level.dat": []byte("NEW")},
 	)
 
-	puller := refs.NewPuller(remote, local)
-	applier := refs.NewApplier(local, workdir)
+	puller := refs.NewPuller(remote.storage, local.storage)
+	applier := refs.NewApplier(local.storage, workdir.storage, workdir.scanner())
 	require.NoError(t, puller.Pull(ctx, newID),
 		"F-3 preparatory pull of current HEAD to seed local cache")
 	require.NoError(t, applier.Apply(ctx, newID),
@@ -190,8 +190,8 @@ func TestFlow_F4_PatchTargetEditWithoutDataChange(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	remote := newMemStorage()
-	local := newMemStorage()
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
 
 	headID := prepareRemoteRef(t, remote,
 		domain.RefID("2026-04-22T10-00-00.000Z"),
@@ -199,7 +199,7 @@ func TestFlow_F4_PatchTargetEditWithoutDataChange(t *testing.T) {
 		map[string][]byte{"worlds/level.dat": []byte("LEVEL")},
 	)
 
-	puller := refs.NewPuller(remote, local)
+	puller := refs.NewPuller(remote.storage, local.storage)
 	require.NoError(t, puller.Pull(ctx, headID),
 		"F-4 preparatory pull to hydrate the existing HEAD locally")
 
@@ -208,7 +208,7 @@ func TestFlow_F4_PatchTargetEditWithoutDataChange(t *testing.T) {
 		func(r *domain.Ref) { r.Targets = append(r.Targets, "server/forge/**") },
 	)
 
-	pusher := refs.NewPusher(local, remote)
+	pusher := refs.NewPusher(local.storage, remote.storage)
 	require.NoError(t, pusher.Push(ctx, patched),
 		"F-4 step push: patched ref must upload with no new blobs — only the manifest changed")
 
@@ -224,15 +224,15 @@ func TestFlow_F8_InitOnEmptyRemote(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	remote := newMemStorage()
-	local := newMemStorage()
-	workdir := newMemStorage()
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
+	workdir := newFSBundle(t)
 
-	workdir.put("worlds/level.dat", []byte("fresh"))
+	workdir.put(t, "worlds/level.dat", []byte("fresh"))
 
-	committer := refs.NewCommitter(workdir, local).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, local.storage).
 		WithClock(fixedClock(t, "2026-04-22T10-00-00.000Z"))
-	pusher := refs.NewPusher(local, remote)
+	pusher := refs.NewPusher(local.storage, remote.storage)
 
 	initID, err := committer.Commit(ctx, ports.CommitOpts{
 		Parent:  "",
@@ -252,13 +252,13 @@ func TestFlow_F8_InitOnEmptyRemote(t *testing.T) {
 
 // --- flow fixtures (prefix-named to avoid collision) ---
 
-func prepareRemoteRef(t *testing.T, remote *memStorage, id domain.RefID, targets []string, files map[string][]byte) domain.RefID {
+func prepareRemoteRef(t *testing.T, remote *fsBundle, id domain.RefID, targets []string, files map[string][]byte) domain.RefID {
 	t.Helper()
 	objects := map[string]domain.Object{}
 	for path, data := range files {
 		hash := hashHex(string(data))
 		objects[path] = domain.Object{Hash: hash, Size: int64(len(data))}
-		remote.put("objects/"+hash, data)
+		remote.put(t, "objects/"+hash, data)
 	}
 	ref := &domain.Ref{
 		Timestamp:     id,
@@ -268,13 +268,13 @@ func prepareRemoteRef(t *testing.T, remote *memStorage, id domain.RefID, targets
 	}
 	body, err := json.Marshal(ref)
 	require.NoError(t, err, "flow fixture: ref must marshal to JSON")
-	remote.put("refs/"+string(id)+".json", body)
+	remote.put(t, "refs/"+string(id)+".json", body)
 	return id
 }
 
-func cloneAndPatchRef(t *testing.T, local *memStorage, sourceID, targetID domain.RefID, patch func(*domain.Ref)) domain.RefID {
+func cloneAndPatchRef(t *testing.T, local *fsBundle, sourceID, targetID domain.RefID, patch func(*domain.Ref)) domain.RefID {
 	t.Helper()
-	rc, err := local.GetStream(context.Background(), "refs/"+string(sourceID)+".json")
+	rc, err := local.storage.GetStream(context.Background(), "refs/"+string(sourceID)+".json")
 	require.NoError(t, err, "flow fixture: source ref must exist locally before cloning")
 	defer rc.Close()
 	raw, err := io.ReadAll(rc)
@@ -286,7 +286,7 @@ func cloneAndPatchRef(t *testing.T, local *memStorage, sourceID, targetID domain
 	patch(ref)
 	body, err := json.Marshal(ref)
 	require.NoError(t, err, "flow fixture: patched ref must marshal")
-	local.put("refs/"+string(targetID)+".json", body)
+	local.put(t, "refs/"+string(targetID)+".json", body)
 	return targetID
 }
 
@@ -308,20 +308,16 @@ func advancingClock(t *testing.T, startISO string, step time.Duration) func() ti
 	}
 }
 
-func assertRefAbsent(t *testing.T, store *memStorage, id domain.RefID, msg string) {
+func assertRefAbsent(t *testing.T, store *fsBundle, id domain.RefID, msg string) {
 	t.Helper()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	_, exists := store.items["refs/"+string(id)+".json"]
-	assert.False(t, exists, msg)
+	present, err := store.storage.Exists(context.Background(), "refs/"+string(id)+".json")
+	require.NoError(t, err, "fixture: Exists probe must not fail")
+	assert.False(t, present, msg)
 }
 
-func refExists(store *memStorage, id domain.RefID) bool {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	_, ok := store.items["refs/"+string(id)+".json"]
-	return ok
+func refExists(t *testing.T, store *fsBundle, id domain.RefID) bool {
+	t.Helper()
+	present, err := store.storage.Exists(context.Background(), "refs/"+string(id)+".json")
+	require.NoError(t, err, "fixture: Exists probe must not fail")
+	return present
 }
-
-// avoid "bytes" unused if no other ref
-var _ = bytes.NewReader

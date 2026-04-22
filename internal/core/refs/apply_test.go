@@ -11,7 +11,8 @@
 //   - Blob decompression + xxhash verify — CompressingStorage decorator.
 //   - Stale `.ritualapply.tmp` sweep, Windows rename guards — post-MVP.
 //   - Parallel worker pool — post-MVP; Apply is serial.
-//   - Session lock / Minecraft quiesce — orchestrator concern.
+//   - Session lock / server-stopped precondition — orchestrator
+//     concern (apply runs post-stop).
 //
 // Rules for writing tests in this file (per ritual_integration_test.go):
 //
@@ -19,8 +20,8 @@
 //   - Verbose assertion messages — scenario + expectation + why.
 //   - Flat AAA visible in one scroll.
 //   - No table-driven tests. Each scenario is its own function.
-//   - Reuse memStorage + sampleRef + hashKeyFor + seedRemote from
-//     pull_test.go; do not redefine.
+//   - Reuse fsBundle + sampleRef + seedRemote from the shared fixtures;
+//     do not redefine.
 package refs_test
 
 import (
@@ -39,8 +40,8 @@ func TestApplier_MaterialisesEveryRefObjectIntoWorkdir(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	blobs := newMemStorage()
-	workdir := newMemStorage()
+	blobs := newFSBundle(t)
+	workdir := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat":  []byte("AAAA"),
@@ -51,7 +52,7 @@ func TestApplier_MaterialisesEveryRefObjectIntoWorkdir(t *testing.T) {
 		"worlds/region.mca": []byte("BBBBBBBB"),
 	})
 
-	applier := refs.NewApplier(blobs, workdir)
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
 	err := applier.Apply(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -66,8 +67,8 @@ func TestApplier_SkipsFilesAlreadyPresentInWorkdir(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	blobs := newMemStorage()
-	workdir := newMemStorage()
+	blobs := newFSBundle(t)
+	workdir := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat":  []byte("AAAA"),
@@ -77,9 +78,9 @@ func TestApplier_SkipsFilesAlreadyPresentInWorkdir(t *testing.T) {
 		"worlds/level.dat":  []byte("AAAA"),
 		"worlds/region.mca": []byte("BBBBBBBB"),
 	})
-	workdir.put("worlds/level.dat", []byte("AAAA"))
+	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
 
-	applier := refs.NewApplier(blobs, workdir)
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
 	err := applier.Apply(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -96,21 +97,21 @@ func TestApplier_PrunesWorkdirPathsNotInRef(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	blobs := newMemStorage()
-	workdir := newMemStorage()
+	blobs := newFSBundle(t)
+	workdir := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": []byte("AAAA"),
 	})
 	seedRemote(t, blobs, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
-	workdir.put("worlds/stale.dat", []byte("STALE"))
+	workdir.put(t, "worlds/stale.dat", []byte("STALE"))
 
-	applier := refs.NewApplier(blobs, workdir)
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
 	err := applier.Apply(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
 		"apply with an in-scope stale file must succeed and prune it — ACID consistency postcondition")
-	present, existsErr := workdir.Exists(ctx, "worlds/stale.dat")
+	present, existsErr := workdir.storage.Exists(ctx, "worlds/stale.dat")
 	require.NoError(t, existsErr, "workdir Exists must not error on a pruned path")
 	assert.False(t, present,
 		"apply step 4 prune: workdir paths matching ref.Targets but absent from ref.Objects must be deleted — scope invariant")
@@ -122,16 +123,16 @@ func TestApplier_LeavesOutOfScopePathsUntouched(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	blobs := newMemStorage()
-	workdir := newMemStorage()
+	blobs := newFSBundle(t)
+	workdir := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": []byte("AAAA"),
 	})
 	seedRemote(t, blobs, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
-	workdir.put("server/mods.cfg", []byte("OUTSIDE"))
+	workdir.put(t, "server/mods.cfg", []byte("OUTSIDE"))
 
-	applier := refs.NewApplier(blobs, workdir)
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
 	err := applier.Apply(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -144,10 +145,10 @@ func TestApplier_ReturnsErrorWhenRefMissing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	blobs := newMemStorage()
-	workdir := newMemStorage()
+	blobs := newFSBundle(t)
+	workdir := newFSBundle(t)
 
-	applier := refs.NewApplier(blobs, workdir)
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
 	err := applier.Apply(ctx, "2026-04-22T10-00-00.000Z")
 
 	require.Error(t, err,
@@ -160,8 +161,8 @@ func TestApplier_OnlyRewritesFilesThatChangedAcrossRefs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	blobs := newMemStorage()
-	workdir := newMemStorage()
+	blobs := newFSBundle(t)
+	workdir := newFSBundle(t)
 
 	version1 := map[string][]byte{
 		"worlds/level.dat":  []byte("LEVEL_V1"),
@@ -177,7 +178,7 @@ func TestApplier_OnlyRewritesFilesThatChangedAcrossRefs(t *testing.T) {
 	ref2 := sampleRef("2026-04-22T10-00-00.000Z", version2)
 	seedRemote(t, blobs, ref2, version2)
 
-	applier := refs.NewApplier(blobs, workdir)
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
 	require.NoError(t, applier.Apply(ctx, ref1.Timestamp),
 		"first apply must materialise both files from ref1 into the empty workdir")
 
@@ -207,15 +208,15 @@ func TestApplier_IsIdempotentAcrossReruns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	blobs := newMemStorage()
-	workdir := newMemStorage()
+	blobs := newFSBundle(t)
+	workdir := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": []byte("AAAA"),
 	})
 	seedRemote(t, blobs, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 
-	applier := refs.NewApplier(blobs, workdir)
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
 	require.NoError(t, applier.Apply(ctx, ref.Timestamp),
 		"first apply must succeed on a fully-hydrated blob store")
 
@@ -233,17 +234,17 @@ func TestApplier_ReturnsErrorWhenReferencedBlobMissing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	blobs := newMemStorage()
-	workdir := newMemStorage()
+	blobs := newFSBundle(t)
+	workdir := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": []byte("AAAA"),
 	})
 	refBody, err := json.Marshal(ref)
 	require.NoError(t, err, "test fixture: ref must marshal to JSON")
-	blobs.put("refs/"+string(ref.Timestamp)+".json", refBody)
+	blobs.put(t, "refs/"+string(ref.Timestamp)+".json", refBody)
 
-	applier := refs.NewApplier(blobs, workdir)
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
 	err = applier.Apply(ctx, ref.Timestamp)
 
 	require.Error(t, err,

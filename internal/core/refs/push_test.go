@@ -20,6 +20,7 @@ package refs_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,8 +35,8 @@ func TestPusher_UploadsRefAndEveryReferencedBlobToRemote(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	local := newMemStorage()
-	remote := newMemStorage()
+	local := newFSBundle(t)
+	remote := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat":  []byte("AAAA"),
@@ -46,7 +47,7 @@ func TestPusher_UploadsRefAndEveryReferencedBlobToRemote(t *testing.T) {
 		"worlds/region.mca": []byte("BBBBBBBB"),
 	})
 
-	pusher := refs.NewPusher(local, remote)
+	pusher := refs.NewPusher(local.storage, remote.storage)
 	err := pusher.Push(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -68,8 +69,8 @@ func TestPusher_SkipsBlobsAlreadyOnRemote(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	local := newMemStorage()
-	remote := newMemStorage()
+	local := newFSBundle(t)
+	remote := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat":  []byte("AAAA"),
@@ -79,9 +80,9 @@ func TestPusher_SkipsBlobsAlreadyOnRemote(t *testing.T) {
 		"worlds/level.dat":  []byte("AAAA"),
 		"worlds/region.mca": []byte("BBBBBBBB"),
 	})
-	remote.put("objects/"+hashHex("AAAA"), []byte("AAAA"))
+	remote.put(t, "objects/"+hashHex("AAAA"), []byte("AAAA"))
 
-	pusher := refs.NewPusher(local, remote)
+	pusher := refs.NewPusher(local.storage, remote.storage)
 	err := pusher.Push(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -96,10 +97,10 @@ func TestPusher_ReturnsErrorWhenLocalRefMissing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	local := newMemStorage()
-	remote := newMemStorage()
+	local := newFSBundle(t)
+	remote := newFSBundle(t)
 
-	pusher := refs.NewPusher(local, remote)
+	pusher := refs.NewPusher(local.storage, remote.storage)
 	err := pusher.Push(ctx, "2026-04-22T10-00-00.000Z")
 
 	require.Error(t, err,
@@ -112,13 +113,13 @@ func TestPusher_ReturnsErrorWhenLocalRefInvalidJSON(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	local := newMemStorage()
-	remote := newMemStorage()
+	local := newFSBundle(t)
+	remote := newFSBundle(t)
 
 	id := domain.RefID("2026-04-22T10-00-00.000Z")
-	local.put("refs/"+string(id)+".json", []byte("}{ not json"))
+	local.put(t, "refs/"+string(id)+".json", []byte("}{ not json"))
 
-	pusher := refs.NewPusher(local, remote)
+	pusher := refs.NewPusher(local.storage, remote.storage)
 	err := pusher.Push(ctx, id)
 
 	require.Error(t, err,
@@ -131,22 +132,22 @@ func TestPusher_DoesNotWriteRefWhenLocalBlobMissing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	local := newMemStorage()
-	remote := newMemStorage()
+	local := newFSBundle(t)
+	remote := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": []byte("AAAA"),
 	})
 	body, err := json.Marshal(ref)
 	require.NoError(t, err, "test fixture: ref must marshal to JSON")
-	local.put("refs/"+string(ref.Timestamp)+".json", body)
+	local.put(t, "refs/"+string(ref.Timestamp)+".json", body)
 
-	pusher := refs.NewPusher(local, remote)
+	pusher := refs.NewPusher(local.storage, remote.storage)
 	err = pusher.Push(ctx, ref.Timestamp)
 
 	require.Error(t, err,
 		"§Push step 2: a referenced blob absent locally must surface an error — Pusher cannot upload what it cannot read")
-	assert.Empty(t, remote.decodeRefKeys(),
+	assert.Empty(t, remoteRefKeys(remote),
 		"§Push step 3 barrier: ref must NOT reach remote if any referenced blob failed to upload — ordering invariant")
 	assertNoRefOnRemote(t, remote, ref.Timestamp)
 }
@@ -155,8 +156,8 @@ func TestPusher_OnlyUploadsBlobsForFilesThatChangedAcrossRefs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	local := newMemStorage()
-	remote := newMemStorage()
+	local := newFSBundle(t)
+	remote := newFSBundle(t)
 
 	version1 := map[string][]byte{
 		"worlds/level.dat":  []byte("LEVEL_V1"),
@@ -165,7 +166,7 @@ func TestPusher_OnlyUploadsBlobsForFilesThatChangedAcrossRefs(t *testing.T) {
 	ref1 := sampleRef("2026-04-22T09-00-00.000Z", version1)
 	seedLocalForPush(t, local, ref1, version1)
 
-	pusher := refs.NewPusher(local, remote)
+	pusher := refs.NewPusher(local.storage, remote.storage)
 	require.NoError(t, pusher.Push(ctx, ref1.Timestamp),
 		"first push must upload every referenced blob to the empty remote")
 
@@ -198,15 +199,15 @@ func TestPusher_IsIdempotentAcrossReruns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	local := newMemStorage()
-	remote := newMemStorage()
+	local := newFSBundle(t)
+	remote := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": []byte("AAAA"),
 	})
 	seedLocalForPush(t, local, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 
-	pusher := refs.NewPusher(local, remote)
+	pusher := refs.NewPusher(local.storage, remote.storage)
 	require.NoError(t, pusher.Push(ctx, ref.Timestamp),
 		"first push on empty remote must succeed")
 
@@ -222,16 +223,16 @@ func TestPusher_ResumesAfterBlobsUploadedButRefMissing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	local := newMemStorage()
-	remote := newMemStorage()
+	local := newFSBundle(t)
+	remote := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": []byte("AAAA"),
 	})
 	seedLocalForPush(t, local, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
-	remote.put("objects/"+hashHex("AAAA"), []byte("AAAA"))
+	remote.put(t, "objects/"+hashHex("AAAA"), []byte("AAAA"))
 
-	pusher := refs.NewPusher(local, remote)
+	pusher := refs.NewPusher(local.storage, remote.storage)
 	err := pusher.Push(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -247,28 +248,25 @@ func TestPusher_ResumesAfterBlobsUploadedButRefMissing(t *testing.T) {
 
 // --- push fixtures (prefix-named to avoid collision with Pull/Commit/Apply helpers) ---
 
-func seedLocalForPush(t *testing.T, local *memStorage, ref *domain.Ref, files map[string][]byte) {
+func seedLocalForPush(t *testing.T, local *fsBundle, ref *domain.Ref, files map[string][]byte) {
 	t.Helper()
 	seedRemote(t, local, ref, files)
 }
 
-func (m *memStorage) decodeRefKeys() []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func remoteRefKeys(remote *fsBundle) []string {
 	out := []string{}
-	for k := range m.items {
-		if len(k) >= len("refs/") && k[:len("refs/")] == "refs/" {
+	for _, k := range remote.keys() {
+		if strings.HasPrefix(k, "refs/") {
 			out = append(out, k)
 		}
 	}
 	return out
 }
 
-func assertNoRefOnRemote(t *testing.T, remote *memStorage, id domain.RefID) {
+func assertNoRefOnRemote(t *testing.T, remote *fsBundle, id domain.RefID) {
 	t.Helper()
-	remote.mu.Lock()
-	defer remote.mu.Unlock()
-	_, exists := remote.items["refs/"+string(id)+".json"]
-	assert.False(t, exists,
+	present, err := remote.storage.Exists(context.Background(), "refs/"+string(id)+".json")
+	require.NoError(t, err, "fixture: Exists probe must not fail")
+	assert.False(t, present,
 		"remote must not contain refs/%s.json after a failed push — §Push step 3 barrier: ref PUT is gated on blob barrier success", id)
 }

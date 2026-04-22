@@ -12,7 +12,6 @@ import (
 	"ritual/internal/core/ports"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/cespare/xxhash/v2"
 )
 
 // Committer snapshots a workdir into a content-addressed
@@ -23,42 +22,67 @@ import (
 // the build-time assertion at the bottom of this file.
 //
 // Amend semantics (MVP): deletes the old draft's ref JSON from the blob
-// store after writing the new ref. The remote-presence check (HeadObject
-// 404) belongs to Pusher and is out of scope here.
+// store after writing the new ref, then invokes the injected local GC
+// closure to sweep blobs the superseded draft was exclusively
+// referencing — per §Retention and GC trigger `amend → localGC` in
+// docs/superpowers/specs/2026-04-19-fast-sync-v2.1-design.md. The
+// remote-presence check (HeadObject 404) belongs to Pusher and is out
+// of scope here.
 //
 // "From workdir, to blobs" mirrors Puller's from/to semantics: workdir is
 // the read side (files on disk), blobs is the write side (objects/{hash}
-// + refs/{id}.json keyspace).
+// + refs/{id}.json keyspace). The scanner walks the workdir filesystem
+// recursively and supplies per-file Hash+Size so Committer never rehashes
+// inline.
 //
 // MVP scope (see per-simplification notes below):
 //   - Serial walk (spec calls for 10 workers).
 //   - Full walk only; mtime-based incremental walk deferred.
-//   - Quiescer port not wired; live-ticker save-off/save-on handled
-//     elsewhere for now.
+//   - Live-ticker `save-all flush` lives in the ticker loop (caller
+//     side); Committer does not own Minecraft console interaction.
+//     Boot-time `save-off` already fires once at readiness inside
+//     the running-stage strategy and stays off for the session.
 //   - tick-mutex not wired; single-commit tests only.
 //   - Amend only deletes the old local draft — no remote HeadObject check
 //     (Pusher's concern).
+//   - Local GC after amend is delegated to an injected closure
+//     (`WithLocalGC`); when the composition root leaves it unwired the
+//     sweep is a no-op and orphan blobs wait for the next GC cycle.
 //
 // Empty-match policy: a commit whose Targets match zero workdir files
 // returns an error. A zero-object ref is almost certainly a glob bug and
 // masking it as a valid snapshot hides data loss.
 type Committer struct {
+	scanner ports.DirectoryScanner
 	workdir ports.StorageRepository
 	blobs   ports.StorageRepository
 	now     func() time.Time
+	localGC func(ctx context.Context) error
 }
 
-// NewCommitter wires a Committer. Commit reads from workdir and writes to
-// blobs. The composition root decides whether blobs is wrapped with
-// CompressingStorage (normal production path).
-func NewCommitter(workdir, blobs ports.StorageRepository) *Committer {
-	return &Committer{workdir: workdir, blobs: blobs, now: time.Now}
+// NewCommitter wires a Committer. Commit walks the workdir via scanner (which
+// owns the recursive walk + xxhash), reads bytes to upload through workdir,
+// and writes objects/{hash} + refs/{id}.json to blobs. The composition root
+// decides whether blobs is wrapped with CompressingStorage (normal production
+// path).
+func NewCommitter(scanner ports.DirectoryScanner, workdir, blobs ports.StorageRepository) *Committer {
+	return &Committer{scanner: scanner, workdir: workdir, blobs: blobs, now: time.Now}
 }
 
 // WithClock overrides the internal clock used for RefID minting. Tests use
 // this for deterministic timestamps; production code leaves the default.
 func (c *Committer) WithClock(now func() time.Time) *Committer {
 	c.now = now
+	return c
+}
+
+// WithLocalGC wires the orphan-blob sweeper invoked immediately after an
+// amend deletes the superseded draft. Composition root passes
+// `refs.NewCollector(localStorage).Collect`; leaving it unset keeps the
+// amend path a no-op for GC and defers cleanup to the next push-chain
+// cycle.
+func (c *Committer) WithLocalGC(fn func(ctx context.Context) error) *Committer {
+	c.localGC = fn
 	return c
 }
 
@@ -100,79 +124,104 @@ func (c *Committer) Commit(ctx context.Context, opts ports.CommitOpts) (domain.R
 		return "", err
 	}
 
-	if opts.Amend != "" && opts.Amend != id {
-		err = c.blobs.Delete(ctx, refKey(opts.Amend))
-		if err != nil {
-			return "", fmt.Errorf("refs.Committer.Commit: delete amended draft %s: %w", opts.Amend, err)
-		}
+	err = c.finalizeAmend(ctx, opts.Amend, id)
+	if err != nil {
+		return "", err
 	}
 	return id, nil
 }
 
-// walkMatches enumerates workdir keys and keeps those matching any target
-// glob via doublestar semantics.
-func (c *Committer) walkMatches(ctx context.Context, targets []string) ([]string, error) {
-	keys, err := c.workdir.List(ctx, "")
-	if err != nil {
-		return nil, fmt.Errorf("refs.Committer.Commit: list workdir: %w", err)
+// finalizeAmend deletes the superseded draft ref and sweeps its
+// now-orphan blobs via the injected local GC closure — per
+// §Retention and GC trigger `amend → localGC`. Fresh commits short-
+// circuit; amend with unset localGC still deletes the draft (GC-as-
+// no-op).
+func (c *Committer) finalizeAmend(ctx context.Context, amend, current domain.RefID) error {
+	if amend == "" || amend == current {
+		return nil
 	}
-	matched := make([]string, 0, len(keys))
-	for _, key := range keys {
-		hit, err := anyGlobMatches(targets, key)
+	err := c.blobs.Delete(ctx, refKey(amend))
+	if err != nil {
+		return fmt.Errorf("refs.Committer.Commit: delete amended draft %s: %w", amend, err)
+	}
+	if c.localGC == nil {
+		return nil
+	}
+	err = c.localGC(ctx)
+	if err != nil {
+		return fmt.Errorf("refs.Committer.Commit: local GC after amend %s: %w", amend, err)
+	}
+	return nil
+}
+
+// walkMatches delegates the workdir walk to the injected DirectoryScanner —
+// the scanner owns recursion and per-file xxhashing — then filters the
+// resulting map by any Targets glob via doublestar.Match.
+func (c *Committer) walkMatches(ctx context.Context, targets []string) (map[string]domain.FileEntry, error) {
+	scanned, err := c.scanner.Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("refs.Committer.Commit: scan workdir: %w", err)
+	}
+	matched := make(map[string]domain.FileEntry, len(scanned))
+	for path, entry := range scanned {
+		hit, err := anyGlobMatches(targets, path)
 		if err != nil {
 			return nil, err
 		}
 		if !hit {
 			continue
 		}
-		matched = append(matched, key)
+		matched[path] = entry
 	}
 	return matched, nil
 }
 
-// storeBlobs hashes each matched workdir file's raw bytes with xxhash64,
-// writes objects/{hash} to the blob store when absent, and returns the
-// (path → Object) map for the ref.
-func (c *Committer) storeBlobs(ctx context.Context, matched []string) (map[string]domain.Object, error) {
+// storeBlobs uploads each matched file's bytes into the content-addressed
+// blob store (skipping hashes already present) and builds the ref's
+// (path → Object) map from the scanner's Hash+Size.
+func (c *Committer) storeBlobs(ctx context.Context, matched map[string]domain.FileEntry) (map[string]domain.Object, error) {
 	objects := make(map[string]domain.Object, len(matched))
-	for _, path := range matched {
-		obj, err := c.storeOneBlob(ctx, path)
+	for path, entry := range matched {
+		err := c.storeOneBlob(ctx, path, entry)
 		if err != nil {
 			return nil, err
 		}
-		objects[path] = obj
+		objects[path] = domain.Object{Hash: entry.Hash, Size: entry.Size}
 	}
 	return objects, nil
 }
 
-func (c *Committer) storeOneBlob(ctx context.Context, path string) (domain.Object, error) {
+func (c *Committer) storeOneBlob(ctx context.Context, path string, entry domain.FileEntry) error {
+	key := blobKey(entry.Hash)
+	present, err := c.blobs.Exists(ctx, key)
+	if err != nil {
+		return fmt.Errorf("refs.Committer.Commit: exists check %s: %w", key, err)
+	}
+	if present {
+		return nil
+	}
+
 	rc, err := c.workdir.GetStream(ctx, path)
 	if err != nil {
-		return domain.Object{}, fmt.Errorf("refs.Committer.Commit: read %s: %w", path, err)
+		return fmt.Errorf("refs.Committer.Commit: read %s: %w", path, err)
 	}
 	defer rc.Close()
 
+	// PutStream requires an io.ReadSeeker because R2/S3 retries rewind the
+	// body on every attempt. GetStream returns a plain ReadCloser (file or
+	// HTTP response), so we drain into memory and wrap in a bytes.Reader.
+	// Pre-draining here is equivalent to the previous inline hash path's
+	// buffering — the scanner already read the file once to hash it, but
+	// adding a tee/seek-capable stream adapter is post-MVP work.
 	raw, err := io.ReadAll(rc)
 	if err != nil {
-		return domain.Object{}, fmt.Errorf("refs.Committer.Commit: drain %s: %w", path, err)
+		return fmt.Errorf("refs.Committer.Commit: drain %s: %w", path, err)
 	}
-
-	h := xxhash.New()
-	_, _ = h.Write(raw)
-	hash := fmt.Sprintf("%016x", h.Sum64())
-	key := blobKey(hash)
-
-	present, err := c.blobs.Exists(ctx, key)
+	err = c.blobs.PutStream(ctx, key, bytes.NewReader(raw))
 	if err != nil {
-		return domain.Object{}, fmt.Errorf("refs.Committer.Commit: exists check %s: %w", key, err)
+		return fmt.Errorf("refs.Committer.Commit: write blob %s: %w", key, err)
 	}
-	if !present {
-		err = c.blobs.PutStream(ctx, key, bytes.NewReader(raw))
-		if err != nil {
-			return domain.Object{}, fmt.Errorf("refs.Committer.Commit: write blob %s: %w", key, err)
-		}
-	}
-	return domain.Object{Hash: hash, Size: int64(len(raw))}, nil
+	return nil
 }
 
 // resolveParent honours the amend rule: the new ref inherits the old

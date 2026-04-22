@@ -35,10 +35,13 @@ import (
 //   - Stale `.ritualapply.tmp` sweep, Windows rename guards, same-volume
 //     tmp — deferred past MVP.
 //   - Parallel worker pool across files — deferred past MVP; Apply is serial.
-//   - Session lock + Minecraft-quiesce preconditions — orchestrator concern.
+//   - Session lock + server-stopped precondition — orchestrator
+//     concern (apply runs post-stop, so there is no live writer to
+//     race against).
 type Applier struct {
 	blobs   ports.StorageRepository
 	workdir ports.StorageRepository
+	scanner ports.DirectoryScanner
 }
 
 // NewApplier wires an Applier. Blobs are read from `blobs` (the local
@@ -46,11 +49,12 @@ type Applier struct {
 // CompressingStorage); files are written to and pruned from `workdir`.
 // Paths in the ref are root-relative — workdir IS the root, whatever it
 // points at. Targets globs are interpreted relative to that same root.
+// The scanner walks the workdir filesystem to enumerate prune candidates.
 //
 // The ref itself also lives in `blobs` under `refs/{id}.json` — same layout
 // as Pull's destination.
-func NewApplier(blobs, workdir ports.StorageRepository) *Applier {
-	return &Applier{blobs: blobs, workdir: workdir}
+func NewApplier(blobs, workdir ports.StorageRepository, scanner ports.DirectoryScanner) *Applier {
+	return &Applier{blobs: blobs, workdir: workdir, scanner: scanner}
 }
 
 // Apply materialises every (path, Object) in the ref identified by id into
@@ -147,11 +151,11 @@ func (a *Applier) existingMatchesHash(ctx context.Context, filePath, expectedHas
 }
 
 func (a *Applier) prune(ctx context.Context, ref *domain.Ref) error {
-	keys, err := a.workdir.List(ctx, "")
+	scanned, err := a.scanner.Scan(ctx)
 	if err != nil {
-		return fmt.Errorf("list workdir: %w", err)
+		return fmt.Errorf("scan workdir: %w", err)
 	}
-	for _, key := range keys {
+	for key := range scanned {
 		_, referenced := ref.Objects[key]
 		if referenced {
 			continue

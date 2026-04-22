@@ -24,13 +24,9 @@
 package refs_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"sync"
 	"testing"
 	"time"
 
@@ -46,8 +42,8 @@ func TestPuller_PullsRefAndEveryReferencedBlobFromRemoteIntoLocal(t *testing.T) 
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	remote := newMemStorage()
-	local := newMemStorage()
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat":  []byte("AAAA"),
@@ -58,7 +54,7 @@ func TestPuller_PullsRefAndEveryReferencedBlobFromRemoteIntoLocal(t *testing.T) 
 		"worlds/region.mca": []byte("BBBBBBBB"),
 	})
 
-	puller := refs.NewPuller(remote, local)
+	puller := refs.NewPuller(remote.storage, local.storage)
 	err := puller.Pull(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -80,8 +76,8 @@ func TestPuller_SkipsBlobsAlreadyPresentLocally(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	remote := newMemStorage()
-	local := newMemStorage()
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat":  []byte("AAAA"),
@@ -91,9 +87,9 @@ func TestPuller_SkipsBlobsAlreadyPresentLocally(t *testing.T) {
 		"worlds/level.dat":  []byte("AAAA"),
 		"worlds/region.mca": []byte("BBBBBBBB"),
 	})
-	local.put("objects/"+hashHex("AAAA"), []byte("AAAA"))
+	local.put(t, "objects/"+hashHex("AAAA"), []byte("AAAA"))
 
-	puller := refs.NewPuller(remote, local)
+	puller := refs.NewPuller(remote.storage, local.storage)
 	err := puller.Pull(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -110,10 +106,10 @@ func TestPuller_ReturnsErrorWhenRemoteRefMissing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	remote := newMemStorage()
-	local := newMemStorage()
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
 
-	puller := refs.NewPuller(remote, local)
+	puller := refs.NewPuller(remote.storage, local.storage)
 	err := puller.Pull(ctx, "2026-04-22T10-00-00.000Z")
 
 	require.Error(t, err,
@@ -126,13 +122,13 @@ func TestPuller_DeletesLocalRefWhenRemoteJSONInvalid(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	remote := newMemStorage()
-	local := newMemStorage()
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
 
 	refID := domain.RefID("2026-04-22T10-00-00.000Z")
-	remote.put("refs/"+string(refID)+".json", []byte("}{ not json"))
+	remote.put(t, "refs/"+string(refID)+".json", []byte("}{ not json"))
 
-	puller := refs.NewPuller(remote, local)
+	puller := refs.NewPuller(remote.storage, local.storage)
 	err := puller.Pull(ctx, refID)
 
 	require.Error(t, err,
@@ -145,17 +141,17 @@ func TestPuller_SurfacesBlobFetchError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	remote := newMemStorage()
-	local := newMemStorage()
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": []byte("AAAA"),
 	})
 	body, err := json.Marshal(ref)
 	require.NoError(t, err, "test fixture: ref must marshal to JSON")
-	remote.put("refs/"+string(ref.Timestamp)+".json", body)
+	remote.put(t, "refs/"+string(ref.Timestamp)+".json", body)
 
-	puller := refs.NewPuller(remote, local)
+	puller := refs.NewPuller(remote.storage, local.storage)
 	err = puller.Pull(ctx, ref.Timestamp)
 
 	require.Error(t, err,
@@ -166,8 +162,8 @@ func TestPuller_OnlyFetchesBlobsForFilesThatChangedAcrossRefs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	remote := newMemStorage()
-	local := newMemStorage()
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
 
 	version1 := map[string][]byte{
 		"worlds/level.dat":  []byte("LEVEL_V1"),
@@ -176,7 +172,7 @@ func TestPuller_OnlyFetchesBlobsForFilesThatChangedAcrossRefs(t *testing.T) {
 	ref1 := sampleRef("2026-04-22T09-00-00.000Z", version1)
 	seedRemote(t, remote, ref1, version1)
 
-	puller := refs.NewPuller(remote, local)
+	puller := refs.NewPuller(remote.storage, local.storage)
 	require.NoError(t, puller.Pull(ctx, ref1.Timestamp),
 		"first pull must hydrate local with every blob referenced by ref1")
 
@@ -210,15 +206,15 @@ func TestPuller_IsIdempotentAcrossReruns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	remote := newMemStorage()
-	local := newMemStorage()
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
 
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": []byte("AAAA"),
 	})
 	seedRemote(t, remote, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 
-	puller := refs.NewPuller(remote, local)
+	puller := refs.NewPuller(remote.storage, local.storage)
 	require.NoError(t, puller.Pull(ctx, ref.Timestamp),
 		"first pull must succeed on complete remote state")
 
@@ -248,19 +244,19 @@ func sampleRef(id domain.RefID, files map[string][]byte) *domain.Ref {
 	}
 }
 
-// seedRemote seeds a store with a ref JSON plus one blob per file. The
+// seedRemote seeds an fsBundle with a ref JSON plus one blob per file. The
 // `files` map mirrors sampleRef's: path → raw content. Blob keys derive
 // from the ref's Object.Hash so contents and keys stay consistent.
-func seedRemote(t *testing.T, remote *memStorage, ref *domain.Ref, files map[string][]byte) {
+func seedRemote(t *testing.T, remote *fsBundle, ref *domain.Ref, files map[string][]byte) {
 	t.Helper()
 	body, err := json.Marshal(ref)
 	require.NoError(t, err, "test fixture: ref must marshal to JSON")
-	remote.put("refs/"+string(ref.Timestamp)+".json", body)
+	remote.put(t, "refs/"+string(ref.Timestamp)+".json", body)
 	for path, data := range files {
 		obj, ok := ref.Objects[path]
 		require.True(t, ok,
 			"test fixture: seedRemote file %q not found in ref.Objects — sampleRef and seedRemote must be called with the same files map", path)
-		remote.put("objects/"+obj.Hash, data)
+		remote.put(t, "objects/"+obj.Hash, data)
 	}
 }
 
@@ -269,167 +265,3 @@ func hashHexBytes(data []byte) string {
 }
 
 func hashHex(s string) string { return hashHexBytes([]byte(s)) }
-
-// --- memStorage — in-memory ports.StorageRepository for story tests ---
-
-var errMemKeyNotFound = errors.New("memStorage: key not found")
-
-type memStorage struct {
-	mu    sync.Mutex
-	items map[string][]byte
-	hits  map[string]int
-	puts  map[string]int
-}
-
-func newMemStorage() *memStorage {
-	return &memStorage{items: map[string][]byte{}, hits: map[string]int{}, puts: map[string]int{}}
-}
-
-func (m *memStorage) String() string { return "mem::storage" }
-
-func (m *memStorage) put(key string, data []byte) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.items[key] = append([]byte(nil), data...)
-}
-
-func (m *memStorage) mustGet(t *testing.T, key string) []byte {
-	t.Helper()
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	data, ok := m.items[key]
-	require.True(t, ok, "memStorage must contain key %q — fixture or code under test failed to populate it", key)
-	return append([]byte(nil), data...)
-}
-
-func (m *memStorage) getHits(key string) int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.hits[key]
-}
-
-func (m *memStorage) putHits(key string) int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.puts[key]
-}
-
-func (m *memStorage) keys() []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]string, 0, len(m.items))
-	for k := range m.items {
-		out = append(out, k)
-	}
-	return out
-}
-
-func keysWithPrefix(m *memStorage, prefix string) []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := []string{}
-	for k := range m.items {
-		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
-			out = append(out, k)
-		}
-	}
-	return out
-}
-
-func (m *memStorage) decodeRef(t *testing.T, id domain.RefID) (*domain.Ref, bool) {
-	t.Helper()
-	m.mu.Lock()
-	data, ok := m.items["refs/"+string(id)+".json"]
-	m.mu.Unlock()
-	if !ok {
-		return nil, false
-	}
-	ref := &domain.Ref{}
-	require.NoError(t, json.Unmarshal(data, ref),
-		"memStorage refs/%s.json must decode as domain.Ref — invalid JSON indicates pull wrote garbage", id)
-	return ref, true
-}
-
-func (m *memStorage) GetStream(_ context.Context, key string) (io.ReadCloser, error) {
-	m.mu.Lock()
-	data, ok := m.items[key]
-	if !ok {
-		m.mu.Unlock()
-		return nil, fmt.Errorf("%w: %s", errMemKeyNotFound, key)
-	}
-	m.hits[key]++
-	buf := append([]byte(nil), data...)
-	m.mu.Unlock()
-	return io.NopCloser(bytes.NewReader(buf)), nil
-}
-
-func (m *memStorage) PutStream(_ context.Context, key string, body io.ReadSeeker) error {
-	data, err := io.ReadAll(body)
-	if err != nil {
-		return err
-	}
-	m.put(key, data)
-	m.mu.Lock()
-	m.puts[key]++
-	m.mu.Unlock()
-	return nil
-}
-
-func (m *memStorage) Exists(_ context.Context, key string) (bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	_, ok := m.items[key]
-	return ok, nil
-}
-
-func (m *memStorage) Delete(_ context.Context, key string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.items, key)
-	return nil
-}
-
-func (m *memStorage) DeleteBatch(ctx context.Context, keys []string) error {
-	for _, k := range keys {
-		_ = m.Delete(ctx, k)
-	}
-	return nil
-}
-
-func (m *memStorage) List(_ context.Context, prefix string) ([]string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := []string{}
-	for k := range m.items {
-		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
-			out = append(out, k)
-		}
-	}
-	return out, nil
-}
-
-func (m *memStorage) Copy(ctx context.Context, src, dst string) error {
-	rc, err := m.GetStream(ctx, src)
-	if err != nil {
-		return err
-	}
-	defer rc.Close()
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		return err
-	}
-	m.put(dst, data)
-	return nil
-}
-
-func (m *memStorage) Get(_ context.Context, _ string) ([]byte, error) {
-	panic("memStorage: V1 Get is not implemented — use GetStream")
-}
-
-func (m *memStorage) Put(_ context.Context, _ string, _ []byte) error {
-	panic("memStorage: V1 Put is not implemented — use PutStream")
-}
-
-func (m *memStorage) Rename(_ context.Context, _, _ string) error {
-	panic("memStorage: V1 Rename is not implemented")
-}

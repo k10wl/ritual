@@ -34,25 +34,25 @@ func TestCollector_DeletesBlobsNotReferencedByAnyRef(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	store := newMemStorage()
+	store := newFSBundle(t)
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": []byte("AAAA"),
 	})
 	seedRemote(t, store, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 	orphanKey := "objects/" + hashHex("ORPHAN")
-	store.put(orphanKey, []byte("ORPHAN"))
+	store.put(t, orphanKey, []byte("ORPHAN"))
 
-	collector := refs.NewCollector(store)
+	collector := refs.NewCollector(store.storage)
 	err := collector.Collect(ctx)
 
 	require.NoError(t, err,
 		"GC over a well-formed store must succeed — §Retention and GC defines this as the happy path")
-	orphanPresent, err := store.Exists(ctx, orphanKey)
-	require.NoError(t, err, "Exists probe against the in-memory store must not fail")
+	orphanPresent, err := store.storage.Exists(ctx, orphanKey)
+	require.NoError(t, err, "Exists probe against the on-disk store must not fail")
 	assert.False(t, orphanPresent,
 		"GC algorithm: objects/{hash} not referenced by any surviving ref must be deleted — unreferenced blobs are orphans, nothing else will ever reach them")
-	livePresent, err := store.Exists(ctx, "objects/"+hashHex("AAAA"))
-	require.NoError(t, err, "Exists probe against the in-memory store must not fail")
+	livePresent, err := store.storage.Exists(ctx, "objects/"+hashHex("AAAA"))
+	require.NoError(t, err, "Exists probe against the on-disk store must not fail")
 	assert.True(t, livePresent,
 		"GC algorithm: blobs referenced by a surviving ref must remain — the live set gates deletion")
 }
@@ -61,7 +61,7 @@ func TestCollector_KeepsBlobsReferencedByAnyRef(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	store := newMemStorage()
+	store := newFSBundle(t)
 	files := map[string][]byte{
 		"worlds/level.dat":  []byte("AAAA"),
 		"worlds/region.mca": []byte("BBBBBBBB"),
@@ -69,7 +69,7 @@ func TestCollector_KeepsBlobsReferencedByAnyRef(t *testing.T) {
 	ref := sampleRef("2026-04-22T10-00-00.000Z", files)
 	seedRemote(t, store, ref, files)
 
-	collector := refs.NewCollector(store)
+	collector := refs.NewCollector(store.storage)
 	require.NoError(t, collector.Collect(ctx),
 		"GC over a store where every blob is referenced must succeed")
 
@@ -83,7 +83,7 @@ func TestCollector_RetainsBlobStillReferencedAfterAnotherRefDeleted(t *testing.T
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	store := newMemStorage()
+	store := newFSBundle(t)
 	shared := []byte("SHARED")
 	filesA := map[string][]byte{
 		"worlds/level.dat": shared,
@@ -97,22 +97,22 @@ func TestCollector_RetainsBlobStillReferencedAfterAnotherRefDeleted(t *testing.T
 	refB := sampleRef("2026-04-22T11-00-00.000Z", filesB)
 	seedRemote(t, store, refA, filesA)
 	seedRemote(t, store, refB, filesB)
-	require.NoError(t, store.Delete(ctx, "refs/"+string(refA.Timestamp)+".json"),
+	require.NoError(t, store.storage.Delete(ctx, "refs/"+string(refA.Timestamp)+".json"),
 		"fixture: deleting refA before GC mimics the retention stage picking to drop refA")
 
-	collector := refs.NewCollector(store)
+	collector := refs.NewCollector(store.storage)
 	require.NoError(t, collector.Collect(ctx),
 		"GC after retention drop must succeed")
 
-	sharedPresent, err := store.Exists(ctx, "objects/"+hashHex("SHARED"))
+	sharedPresent, err := store.storage.Exists(ctx, "objects/"+hashHex("SHARED"))
 	require.NoError(t, err, "Exists probe must not fail")
 	assert.True(t, sharedPresent,
 		"GC live-set: a blob referenced by ANY surviving ref must survive — shared content stays while exclusive content of the dropped ref is swept")
-	uniqueAPresent, err := store.Exists(ctx, "objects/"+hashHex("UNIQUE_A"))
+	uniqueAPresent, err := store.storage.Exists(ctx, "objects/"+hashHex("UNIQUE_A"))
 	require.NoError(t, err, "Exists probe must not fail")
 	assert.False(t, uniqueAPresent,
 		"GC sweep: a blob exclusively referenced by the deleted ref must be swept — no ref reaches it, so it is an orphan")
-	uniqueBPresent, err := store.Exists(ctx, "objects/"+hashHex("UNIQUE_B"))
+	uniqueBPresent, err := store.storage.Exists(ctx, "objects/"+hashHex("UNIQUE_B"))
 	require.NoError(t, err, "Exists probe must not fail")
 	assert.True(t, uniqueBPresent,
 		"GC live-set: a blob exclusively referenced by a surviving ref must survive")
@@ -122,14 +122,14 @@ func TestCollector_IsIdempotentAcrossReruns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	store := newMemStorage()
+	store := newFSBundle(t)
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": []byte("AAAA"),
 	})
 	seedRemote(t, store, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
-	store.put("objects/"+hashHex("ORPHAN"), []byte("ORPHAN"))
+	store.put(t, "objects/"+hashHex("ORPHAN"), []byte("ORPHAN"))
 
-	collector := refs.NewCollector(store)
+	collector := refs.NewCollector(store.storage)
 	require.NoError(t, collector.Collect(ctx),
 		"first GC run must succeed and sweep the orphan")
 
@@ -144,9 +144,9 @@ func TestCollector_IsNoOpOnEmptyStore(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	store := newMemStorage()
+	store := newFSBundle(t)
 
-	collector := refs.NewCollector(store)
+	collector := refs.NewCollector(store.storage)
 	err := collector.Collect(ctx)
 
 	require.NoError(t, err,
@@ -159,7 +159,7 @@ func TestCollector_SweepsAllBlobsWhenOnlyRefReferencesNoObjects(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	store := newMemStorage()
+	store := newFSBundle(t)
 	ref := &domain.Ref{
 		Timestamp:     "2026-04-22T10-00-00.000Z",
 		RitualVersion: "2.1.0",
@@ -168,15 +168,15 @@ func TestCollector_SweepsAllBlobsWhenOnlyRefReferencesNoObjects(t *testing.T) {
 	}
 	body, err := json.Marshal(ref)
 	require.NoError(t, err, "test fixture: empty-objects ref must marshal")
-	store.put("refs/"+string(ref.Timestamp)+".json", body)
+	store.put(t, "refs/"+string(ref.Timestamp)+".json", body)
 	orphanKey := "objects/" + hashHex("ORPHAN")
-	store.put(orphanKey, []byte("ORPHAN"))
+	store.put(t, orphanKey, []byte("ORPHAN"))
 
-	collector := refs.NewCollector(store)
+	collector := refs.NewCollector(store.storage)
 	require.NoError(t, collector.Collect(ctx),
 		"GC with a ref that references no objects must succeed — empty Objects is a valid shape even if rare")
 
-	orphanPresent, err := store.Exists(ctx, orphanKey)
+	orphanPresent, err := store.storage.Exists(ctx, orphanKey)
 	require.NoError(t, err, "Exists probe must not fail")
 	assert.False(t, orphanPresent,
 		"GC live-set union over a ref with empty Objects is empty — every existing blob is therefore an orphan and must be swept")
@@ -186,25 +186,25 @@ func TestCollector_SkipsMalformedRefsAndSweepsFromSurvivingRefsLiveSet(t *testin
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	store := newMemStorage()
-	store.put("refs/2026-04-22T09-00-00.000Z.json", []byte("}{ not json"))
+	store := newFSBundle(t)
+	store.put(t, "refs/2026-04-22T09-00-00.000Z.json", []byte("}{ not json"))
 	survivor := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": []byte("AAAA"),
 	})
 	seedRemote(t, store, survivor, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 	orphanKey := "objects/" + hashHex("ORPHAN")
-	store.put(orphanKey, []byte("ORPHAN"))
+	store.put(t, orphanKey, []byte("ORPHAN"))
 
-	collector := refs.NewCollector(store)
+	collector := refs.NewCollector(store.storage)
 	require.NoError(t, collector.Collect(ctx),
 		"§Retention and GC fail-continue: a malformed ref must not abort the sweep — the surviving refs' live set still defines reachable blobs")
 
-	livePresent, err := store.Exists(ctx, "objects/"+hashHex("AAAA"))
+	livePresent, err := store.storage.Exists(ctx, "objects/"+hashHex("AAAA"))
 	require.NoError(t, err, "Exists probe must not fail")
 	assert.True(t, livePresent,
 		"fail-continue sweep: a blob referenced by any surviving (parseable) ref must be preserved even when another ref is malformed")
 
-	orphanPresent, err := store.Exists(ctx, orphanKey)
+	orphanPresent, err := store.storage.Exists(ctx, orphanKey)
 	require.NoError(t, err, "Exists probe must not fail")
 	assert.False(t, orphanPresent,
 		"fail-continue sweep: an orphan blob must still be swept when some refs are malformed — the sweep proceeds with the parseable refs' live set")
@@ -214,15 +214,16 @@ func TestCollector_ContinuesSweepWhenAnIndividualDeleteFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	store := newFaultyStorage()
+	inner := newFSBundle(t)
+	store := newFaultyStorage(inner)
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": []byte("AAAA"),
 	})
-	seedRemote(t, store.memStorage, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
+	seedRemote(t, inner, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 	stuckOrphanKey := "objects/" + hashHex("STUCK")
-	store.put(stuckOrphanKey, []byte("STUCK"))
+	store.put(t, stuckOrphanKey, []byte("STUCK"))
 	reapableOrphanKey := "objects/" + hashHex("REAPABLE")
-	store.put(reapableOrphanKey, []byte("REAPABLE"))
+	store.put(t, reapableOrphanKey, []byte("REAPABLE"))
 	store.deleteFail[stuckOrphanKey] = errors.New("simulated R2 503 on DELETE")
 
 	collector := refs.NewCollector(store)
@@ -239,4 +240,3 @@ func TestCollector_ContinuesSweepWhenAnIndividualDeleteFails(t *testing.T) {
 	assert.False(t, reapablePresent,
 		"fail-continue delete: orphans after the failing key must still be swept — one flaky delete cannot block the rest of the sweep")
 }
-
