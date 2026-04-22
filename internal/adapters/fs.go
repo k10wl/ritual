@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"ritual/internal/core/ports"
@@ -79,6 +80,51 @@ func (f *FSRepository) Get(_ context.Context, key string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to read file %s: %w", key, err)
 	}
 	return data, nil
+}
+
+// GetStream opens key for streaming read. Caller closes the returned ReadCloser.
+func (f *FSRepository) GetStream(_ context.Context, key string) (io.ReadCloser, error) {
+	key = filepath.FromSlash(key)
+	file, err := f.root.Open(key)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("key not found: %s", key)
+		}
+		return nil, fmt.Errorf("failed to open %s: %w", key, err)
+	}
+	return file, nil
+}
+
+// PutStream writes body under key, creating parent dirs as needed.
+func (f *FSRepository) PutStream(_ context.Context, key string, body io.ReadSeeker) error {
+	key = filepath.FromSlash(key)
+	dir := filepath.Dir(key)
+	if dir != "." {
+		if err := f.root.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+	file, err := f.root.OpenFile(key, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %w", key, err)
+	}
+	defer func() { _ = file.Close() }()
+	if _, err := io.Copy(file, body); err != nil {
+		return fmt.Errorf("failed to write file %s: %w", key, err)
+	}
+	return nil
+}
+
+// Exists reports whether key is present on the filesystem.
+func (f *FSRepository) Exists(_ context.Context, key string) (bool, error) {
+	key = filepath.FromSlash(key)
+	if _, err := f.root.Stat(key); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to stat %s: %w", key, err)
+	}
+	return true, nil
 }
 
 // Put stores data with the given key to filesystem

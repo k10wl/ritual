@@ -1,8 +1,10 @@
 package adapters
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,7 +13,91 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func newFSRepo(t *testing.T) (*FSRepository, string) {
+	t.Helper()
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+	repo, err := NewFSRepository(root)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = repo.Close() })
+	return repo, dir
+}
+
+func TestFSRepository_GetStream_Hit(t *testing.T) {
+	repo, dir := newFSRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "a", "b"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a", "b", "c.txt"), []byte("hello"), 0o644))
+
+	rc, err := repo.GetStream(t.Context(), "a/b/c.txt")
+	require.NoError(t, err, "GetStream should succeed for existing key")
+	defer rc.Close()
+
+	data, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(data), "streamed bytes equal file contents")
+}
+
+func TestFSRepository_GetStream_Miss(t *testing.T) {
+	repo, _ := newFSRepo(t)
+
+	_, err := repo.GetStream(t.Context(), "missing/key")
+	require.Error(t, err, "GetStream returns error for missing key")
+	assert.True(t, strings.Contains(err.Error(), "key not found"), "error message names missing key: %v", err)
+}
+
+func TestFSRepository_PutStream_Roundtrip(t *testing.T) {
+	repo, dir := newFSRepo(t)
+	payload := []byte("stream me please")
+
+	err := repo.PutStream(t.Context(), "nested/deep/path.bin", bytes.NewReader(payload))
+	require.NoError(t, err, "PutStream succeeds and creates parent dirs")
+
+	written, err := os.ReadFile(filepath.Join(dir, "nested", "deep", "path.bin"))
+	require.NoError(t, err)
+	assert.Equal(t, payload, written, "file on disk equals streamed payload")
+
+	rc, err := repo.GetStream(t.Context(), "nested/deep/path.bin")
+	require.NoError(t, err)
+	defer rc.Close()
+	read, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Equal(t, payload, read, "GetStream returns same bytes as PutStream wrote")
+}
+
+func TestFSRepository_PutStream_OverwritesExisting(t *testing.T) {
+	repo, _ := newFSRepo(t)
+
+	require.NoError(t, repo.PutStream(t.Context(), "k", bytes.NewReader([]byte("longer original bytes"))))
+	require.NoError(t, repo.PutStream(t.Context(), "k", bytes.NewReader([]byte("short"))))
+
+	rc, err := repo.GetStream(t.Context(), "k")
+	require.NoError(t, err)
+	defer rc.Close()
+	read, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Equal(t, "short", string(read), "second PutStream truncates to new size")
+}
+
+func TestFSRepository_Exists_Hit(t *testing.T) {
+	repo, _ := newFSRepo(t)
+	require.NoError(t, repo.PutStream(t.Context(), "present.txt", bytes.NewReader([]byte("x"))))
+
+	hit, err := repo.Exists(t.Context(), "present.txt")
+	require.NoError(t, err)
+	assert.True(t, hit, "Exists returns true for present key")
+}
+
+func TestFSRepository_Exists_Miss(t *testing.T) {
+	repo, _ := newFSRepo(t)
+
+	hit, err := repo.Exists(t.Context(), "nope.txt")
+	require.NoError(t, err, "missing key is not an error")
+	assert.False(t, hit, "Exists returns false for absent key")
+}
 
 func TestFSRepository_Get(t *testing.T) {
 	ctx := context.Background()
