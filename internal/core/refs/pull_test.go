@@ -162,6 +162,50 @@ func TestPuller_SurfacesBlobFetchError(t *testing.T) {
 		"pull step 2: missing referenced blob on remote must surface an error — partial success violates step 3 barrier")
 }
 
+func TestPuller_OnlyFetchesBlobsForFilesThatChangedAcrossRefs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	remote := newMemStorage()
+	local := newMemStorage()
+
+	version1 := map[string][]byte{
+		"worlds/level.dat":  []byte("LEVEL_V1"),
+		"worlds/region.mca": []byte("REGION_STABLE"),
+	}
+	ref1 := sampleRef("2026-04-22T09-00-00.000Z", version1)
+	seedRemote(t, remote, ref1, version1)
+
+	puller := refs.NewPuller(remote, local)
+	require.NoError(t, puller.Pull(ctx, ref1.Timestamp),
+		"first pull must hydrate local with every blob referenced by ref1")
+
+	version2 := map[string][]byte{
+		"worlds/level.dat":  []byte("LEVEL_V2"),
+		"worlds/region.mca": []byte("REGION_STABLE"),
+	}
+	ref2 := sampleRef("2026-04-22T10-00-00.000Z", version2)
+	seedRemote(t, remote, ref2, version2)
+
+	hitsBeforeSecondPull := map[string]int{
+		"objects/" + hashHex("LEVEL_V1"):      remote.getHits("objects/" + hashHex("LEVEL_V1")),
+		"objects/" + hashHex("LEVEL_V2"):      remote.getHits("objects/" + hashHex("LEVEL_V2")),
+		"objects/" + hashHex("REGION_STABLE"): remote.getHits("objects/" + hashHex("REGION_STABLE")),
+	}
+
+	require.NoError(t, puller.Pull(ctx, ref2.Timestamp),
+		"second pull (with only level.dat changed between refs) must succeed")
+
+	assert.Equal(t,
+		hitsBeforeSecondPull["objects/"+hashHex("LEVEL_V2")]+1,
+		remote.getHits("objects/"+hashHex("LEVEL_V2")),
+		"content-addressed incremental pull: the blob for the file that CHANGED must be fetched exactly once — new hash, new key, not present locally")
+	assert.Equal(t,
+		hitsBeforeSecondPull["objects/"+hashHex("REGION_STABLE")],
+		remote.getHits("objects/"+hashHex("REGION_STABLE")),
+		"content-addressed incremental pull: the blob for the file whose content did NOT change must not be re-fetched — same content → same hash → local Exists-gate skips remote GET")
+}
+
 func TestPuller_IsIdempotentAcrossReruns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()

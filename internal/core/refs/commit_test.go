@@ -135,6 +135,45 @@ func TestCommitter_SkipsBlobPutWhenContentAlreadyStored(t *testing.T) {
 		"commit must leave the existing blob byte-identical — re-Put risks a partial write that overwrites a good blob")
 }
 
+func TestCommitter_OnlyStoresBlobsForFilesThatChangedAcrossCommits(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	workdir := newMemStorage()
+	blobs := newMemStorage()
+
+	workdir.put("worlds/level.dat", []byte("LEVEL_V1"))
+	workdir.put("worlds/region.mca", []byte("REGION_STABLE"))
+
+	stableHash := commitXXHashHex(t, []byte("REGION_STABLE"))
+	changedV2Hash := commitXXHashHex(t, []byte("LEVEL_V2"))
+
+	committer := refs.NewCommitter(workdir, blobs).
+		WithClock(commitFixedClock(t, "2026-04-22T09:00:00.000Z"))
+	_, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
+	require.NoError(t, err, "first commit must succeed to populate the blob store for both files")
+
+	workdir.put("worlds/level.dat", []byte("LEVEL_V2"))
+
+	putsBeforeSecondCommit := map[string]int{
+		"objects/" + stableHash:    blobs.putHits("objects/" + stableHash),
+		"objects/" + changedV2Hash: blobs.putHits("objects/" + changedV2Hash),
+	}
+
+	committer.WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z"))
+	_, err = committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
+	require.NoError(t, err, "second commit (with only level.dat changed) must succeed")
+
+	assert.Equal(t,
+		putsBeforeSecondCommit["objects/"+changedV2Hash]+1,
+		blobs.putHits("objects/"+changedV2Hash),
+		"content-addressed incremental commit: the blob for the file whose content CHANGED must be written exactly once — new hash is absent from the blob store")
+	assert.Equal(t,
+		putsBeforeSecondCommit["objects/"+stableHash],
+		blobs.putHits("objects/"+stableHash),
+		"content-addressed incremental commit: the blob for the file whose content did NOT change must NOT be re-written — same hash, Exists-gate skips the write")
+}
+
 func TestCommitter_PropagatesParentFromOpts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()

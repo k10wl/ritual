@@ -151,6 +151,49 @@ func TestPusher_DoesNotWriteRefWhenLocalBlobMissing(t *testing.T) {
 	assertNoRefOnRemote(t, remote, ref.Timestamp)
 }
 
+func TestPusher_OnlyUploadsBlobsForFilesThatChangedAcrossRefs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	local := newMemStorage()
+	remote := newMemStorage()
+
+	version1 := map[string][]byte{
+		"worlds/level.dat":  []byte("LEVEL_V1"),
+		"worlds/region.mca": []byte("REGION_STABLE"),
+	}
+	ref1 := sampleRef("2026-04-22T09-00-00.000Z", version1)
+	seedLocalForPush(t, local, ref1, version1)
+
+	pusher := refs.NewPusher(local, remote)
+	require.NoError(t, pusher.Push(ctx, ref1.Timestamp),
+		"first push must upload every referenced blob to the empty remote")
+
+	version2 := map[string][]byte{
+		"worlds/level.dat":  []byte("LEVEL_V2"),
+		"worlds/region.mca": []byte("REGION_STABLE"),
+	}
+	ref2 := sampleRef("2026-04-22T10-00-00.000Z", version2)
+	seedLocalForPush(t, local, ref2, version2)
+
+	putsBeforeSecondPush := map[string]int{
+		"objects/" + hashHex("LEVEL_V2"):      remote.putHits("objects/" + hashHex("LEVEL_V2")),
+		"objects/" + hashHex("REGION_STABLE"): remote.putHits("objects/" + hashHex("REGION_STABLE")),
+	}
+
+	require.NoError(t, pusher.Push(ctx, ref2.Timestamp),
+		"second push (with only level.dat changed between refs) must succeed")
+
+	assert.Equal(t,
+		putsBeforeSecondPush["objects/"+hashHex("LEVEL_V2")]+1,
+		remote.putHits("objects/"+hashHex("LEVEL_V2")),
+		"content-addressed incremental push: the blob for the file that CHANGED must be uploaded exactly once — new hash, not present on remote")
+	assert.Equal(t,
+		putsBeforeSecondPush["objects/"+hashHex("REGION_STABLE")],
+		remote.putHits("objects/"+hashHex("REGION_STABLE")),
+		"content-addressed incremental push: the blob for the file whose content did NOT change must not be re-uploaded — same content → same hash → remote Exists-gate skips the PUT")
+}
+
 func TestPusher_IsIdempotentAcrossReruns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()

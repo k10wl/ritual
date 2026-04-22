@@ -156,6 +156,53 @@ func TestApplier_ReturnsErrorWhenRefMissing(t *testing.T) {
 		"failed apply with no ref must leave workdir untouched — ref load is the first read and must gate all mutation")
 }
 
+func TestApplier_OnlyRewritesFilesThatChangedAcrossRefs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	blobs := newMemStorage()
+	workdir := newMemStorage()
+
+	version1 := map[string][]byte{
+		"worlds/level.dat":  []byte("LEVEL_V1"),
+		"worlds/region.mca": []byte("REGION_STABLE"),
+	}
+	ref1 := sampleRef("2026-04-22T09-00-00.000Z", version1)
+	seedRemote(t, blobs, ref1, version1)
+
+	version2 := map[string][]byte{
+		"worlds/level.dat":  []byte("LEVEL_V2"),
+		"worlds/region.mca": []byte("REGION_STABLE"),
+	}
+	ref2 := sampleRef("2026-04-22T10-00-00.000Z", version2)
+	seedRemote(t, blobs, ref2, version2)
+
+	applier := refs.NewApplier(blobs, workdir)
+	require.NoError(t, applier.Apply(ctx, ref1.Timestamp),
+		"first apply must materialise both files from ref1 into the empty workdir")
+
+	hitsBeforeSecondApply := map[string]int{
+		"objects/" + hashHex("LEVEL_V2"):      blobs.getHits("objects/" + hashHex("LEVEL_V2")),
+		"objects/" + hashHex("REGION_STABLE"): blobs.getHits("objects/" + hashHex("REGION_STABLE")),
+	}
+
+	require.NoError(t, applier.Apply(ctx, ref2.Timestamp),
+		"second apply (with only level.dat changed between refs) must succeed")
+
+	assert.Equal(t, []byte("LEVEL_V2"), workdir.mustGet(t, "worlds/level.dat"),
+		"§Apply step 3: the file whose hash changed must be rewritten in the workdir — skip gate (exists AND xxhash matches) evaluates to false when hashes differ")
+	assert.Equal(t, []byte("REGION_STABLE"), workdir.mustGet(t, "worlds/region.mca"),
+		"§Apply step 3: the file whose hash did not change must remain untouched — skip gate evaluates to true")
+	assert.Equal(t,
+		hitsBeforeSecondApply["objects/"+hashHex("LEVEL_V2")]+1,
+		blobs.getHits("objects/"+hashHex("LEVEL_V2")),
+		"content-addressed incremental apply: the blob backing the CHANGED file must be read exactly once — new hash means the workdir file misses the skip gate")
+	assert.Equal(t,
+		hitsBeforeSecondApply["objects/"+hashHex("REGION_STABLE")],
+		blobs.getHits("objects/"+hashHex("REGION_STABLE")),
+		"content-addressed incremental apply: the blob backing the UNCHANGED file must NOT be re-read — skip gate short-circuits before any blob IO when workdir bytes already hash to the ref's Object.Hash")
+}
+
 func TestApplier_IsIdempotentAcrossReruns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
