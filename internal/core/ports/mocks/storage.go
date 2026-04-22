@@ -1,7 +1,9 @@
 package mocks
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"ritual/internal/core/ports"
 )
 
@@ -10,6 +12,9 @@ type MockStorageRepository struct {
 	Label           string
 	GetFunc         func(ctx context.Context, key string) ([]byte, error)
 	PutFunc         func(ctx context.Context, key string, data []byte) error
+	GetStreamFunc   func(ctx context.Context, key string) (io.ReadCloser, error)
+	PutStreamFunc   func(ctx context.Context, key string, body io.ReadSeeker) error
+	ExistsFunc      func(ctx context.Context, key string) (bool, error)
 	DeleteFunc      func(ctx context.Context, key string) error
 	DeleteBatchFunc func(ctx context.Context, keys []string) error
 	ListFunc        func(ctx context.Context, prefix string) ([]string, error)
@@ -57,6 +62,30 @@ func (m *MockStorageRepository) Put(ctx context.Context, key string, data []byte
 	return nil
 }
 
+// GetStream opens key for streaming read. Default returns an empty ReadCloser.
+func (m *MockStorageRepository) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
+	if m.GetStreamFunc != nil {
+		return m.GetStreamFunc(ctx, key)
+	}
+	return io.NopCloser(bytes.NewReader(nil)), nil
+}
+
+// PutStream writes body under key. Default is a no-op.
+func (m *MockStorageRepository) PutStream(ctx context.Context, key string, body io.ReadSeeker) error {
+	if m.PutStreamFunc != nil {
+		return m.PutStreamFunc(ctx, key, body)
+	}
+	return nil
+}
+
+// Exists reports whether key is present. Default returns (false, nil).
+func (m *MockStorageRepository) Exists(ctx context.Context, key string) (bool, error) {
+	if m.ExistsFunc != nil {
+		return m.ExistsFunc(ctx, key)
+	}
+	return false, nil
+}
+
 // Delete removes data by key
 func (m *MockStorageRepository) Delete(ctx context.Context, key string) error {
 	if m.DeleteFunc != nil {
@@ -93,3 +122,5 @@ func (m *MockStorageRepository) Copy(ctx context.Context, sourceKey string, dest
 	}
 	return nil
 }
+
+var _ ports.StorageRepository = (*MockStorageRepository)(nil)

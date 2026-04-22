@@ -1,7 +1,10 @@
 package mocks
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"testing"
 )
 
@@ -88,6 +91,115 @@ func TestMockStorageRepository_DeleteBatch_WithFunc(t *testing.T) {
 	}
 	if len(calledWith) != 3 {
 		t.Errorf("Expected 3 keys, got %d", len(calledWith))
+	}
+}
+
+func TestMockStorageRepository_GetStream_Default(t *testing.T) {
+	mock := NewMockStorageRepository()
+
+	rc, err := mock.GetStream(context.Background(), "k")
+	if err != nil {
+		t.Fatalf("default GetStream should not error, got %v", err)
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("default GetStream body read failed: %v", err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("default GetStream body expected empty, got %d bytes", len(data))
+	}
+}
+
+func TestMockStorageRepository_GetStream_Delegates(t *testing.T) {
+	mock := NewMockStorageRepository().(*MockStorageRepository)
+
+	want := []byte("streamed")
+	mock.GetStreamFunc = func(ctx context.Context, key string) (io.ReadCloser, error) {
+		if key != "expected-key" {
+			t.Errorf("GetStreamFunc got key %q, want expected-key", key)
+		}
+		return io.NopCloser(bytes.NewReader(want)), nil
+	}
+
+	rc, err := mock.GetStream(context.Background(), "expected-key")
+	if err != nil {
+		t.Fatalf("delegate returned err: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("body read failed: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestMockStorageRepository_PutStream_DefaultIsNoop(t *testing.T) {
+	mock := NewMockStorageRepository()
+
+	if err := mock.PutStream(context.Background(), "k", bytes.NewReader([]byte("x"))); err != nil {
+		t.Fatalf("default PutStream should be no-op, got %v", err)
+	}
+}
+
+func TestMockStorageRepository_PutStream_Delegates(t *testing.T) {
+	mock := NewMockStorageRepository().(*MockStorageRepository)
+
+	var seenKey string
+	var seenBytes []byte
+	mock.PutStreamFunc = func(ctx context.Context, key string, body io.ReadSeeker) error {
+		seenKey = key
+		data, _ := io.ReadAll(body)
+		seenBytes = data
+		return nil
+	}
+
+	payload := []byte("body")
+	if err := mock.PutStream(context.Background(), "k", bytes.NewReader(payload)); err != nil {
+		t.Fatalf("PutStream returned err: %v", err)
+	}
+	if seenKey != "k" {
+		t.Errorf("delegate got key %q, want k", seenKey)
+	}
+	if string(seenBytes) != string(payload) {
+		t.Errorf("delegate got body %q, want %q", seenBytes, payload)
+	}
+}
+
+func TestMockStorageRepository_Exists_Default(t *testing.T) {
+	mock := NewMockStorageRepository()
+
+	ok, err := mock.Exists(context.Background(), "k")
+	if err != nil {
+		t.Fatalf("default Exists should not error, got %v", err)
+	}
+	if ok {
+		t.Error("default Exists should return false")
+	}
+}
+
+func TestMockStorageRepository_Exists_Delegates(t *testing.T) {
+	mock := NewMockStorageRepository().(*MockStorageRepository)
+
+	sentinel := errors.New("exists failed")
+	mock.ExistsFunc = func(ctx context.Context, key string) (bool, error) {
+		if key == "hit" {
+			return true, nil
+		}
+		if key == "err" {
+			return false, sentinel
+		}
+		return false, nil
+	}
+
+	ok, err := mock.Exists(context.Background(), "hit")
+	if err != nil || !ok {
+		t.Errorf("hit: got ok=%v err=%v, want true nil", ok, err)
+	}
+	if _, err := mock.Exists(context.Background(), "err"); !errors.Is(err, sentinel) {
+		t.Errorf("err: got %v, want %v", err, sentinel)
 	}
 }
 
