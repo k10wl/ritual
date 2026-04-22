@@ -9,6 +9,7 @@ import (
 	"ritual/internal/app"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,11 +23,16 @@ type fakeStorage struct{}
 func (fakeStorage) String() string                                     { return "fake::storage" }
 func (fakeStorage) Get(_ context.Context, _ string) ([]byte, error)    { return nil, nil }
 func (fakeStorage) Put(_ context.Context, _ string, _ []byte) error    { return nil }
-func (fakeStorage) Delete(_ context.Context, _ string) error           { return nil }
-func (fakeStorage) DeleteBatch(_ context.Context, _ []string) error    { return nil }
-func (fakeStorage) List(_ context.Context, _ string) ([]string, error) { return nil, nil }
-func (fakeStorage) Copy(_ context.Context, _, _ string) error          { return nil }
-func (fakeStorage) Rename(_ context.Context, _, _ string) error        { return nil }
+func (fakeStorage) GetStream(_ context.Context, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+func (fakeStorage) PutStream(_ context.Context, _ string, _ io.ReadSeeker) error { return nil }
+func (fakeStorage) Exists(_ context.Context, _ string) (bool, error)             { return false, nil }
+func (fakeStorage) Delete(_ context.Context, _ string) error                     { return nil }
+func (fakeStorage) DeleteBatch(_ context.Context, _ []string) error              { return nil }
+func (fakeStorage) List(_ context.Context, _ string) ([]string, error)           { return nil, nil }
+func (fakeStorage) Copy(_ context.Context, _, _ string) error                    { return nil }
+func (fakeStorage) Rename(_ context.Context, _, _ string) error                  { return nil }
 
 type fakeManifestStore struct{}
 

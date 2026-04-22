@@ -3,6 +3,7 @@ package sync_test
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -203,6 +204,21 @@ func (f *failingPutStorage) DeleteBatch(ctx context.Context, keys []string) erro
 
 func (f *failingPutStorage) List(ctx context.Context, prefix string) ([]string, error) {
 	return f.inner.List(ctx, prefix)
+}
+
+func (f *failingPutStorage) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
+	return f.inner.GetStream(ctx, key)
+}
+
+func (f *failingPutStorage) PutStream(ctx context.Context, key string, body io.ReadSeeker) error {
+	if f.failOn != "" && contains(key, f.failOn) {
+		return errors.New("forced put failure")
+	}
+	return f.inner.PutStream(ctx, key, body)
+}
+
+func (f *failingPutStorage) Exists(ctx context.Context, key string) (bool, error) {
+	return f.inner.Exists(ctx, key)
 }
 
 func contains(s, substr string) bool {
