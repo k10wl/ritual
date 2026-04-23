@@ -19,6 +19,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// serialRunner is the default BlobRunner used across refs_test fixtures.
+// Tests assert deterministic ordering and per-call counts; a serial runner
+// preserves both. Production wiring swaps this for adapters.ParallelRunner.
+var serialRunner = adapters.SerialRunner{}
+
 // fsBundle wraps a t.TempDir()-backed FSRepository with per-key call
 // observability so tests can assert skip-gate correctness (e.g. "blob
 // already present must not be re-fetched"). Three views are exposed:

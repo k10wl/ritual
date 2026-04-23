@@ -55,7 +55,7 @@ func TestPuller_PullsRefAndEveryReferencedBlobFromRemoteIntoLocal(t *testing.T) 
 		"worlds/region.mca": []byte("BBBBBBBB"),
 	})
 
-	puller := refs.NewPuller(remote.storage, local.storage)
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
 	err := puller.Pull(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -90,7 +90,7 @@ func TestPuller_SkipsBlobsAlreadyPresentLocally(t *testing.T) {
 	})
 	local.put(t, "objects/"+hashHex("AAAA"), []byte("AAAA"))
 
-	puller := refs.NewPuller(remote.storage, local.storage)
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
 	err := puller.Pull(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -110,7 +110,7 @@ func TestPuller_ReturnsErrorWhenRemoteRefMissing(t *testing.T) {
 	remote := newFSBundle(t)
 	local := newFSBundle(t)
 
-	puller := refs.NewPuller(remote.storage, local.storage)
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
 	err := puller.Pull(ctx, "2026-04-22T10-00-00.000Z")
 
 	require.Error(t, err,
@@ -129,7 +129,7 @@ func TestPuller_DeletesLocalRefWhenRemoteJSONInvalid(t *testing.T) {
 	refID := domain.RefID("2026-04-22T10-00-00.000Z")
 	remote.put(t, "refs/"+string(refID)+".json", []byte("}{ not json"))
 
-	puller := refs.NewPuller(remote.storage, local.storage)
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
 	err := puller.Pull(ctx, refID)
 
 	require.Error(t, err,
@@ -152,7 +152,7 @@ func TestPuller_SurfacesBlobFetchError(t *testing.T) {
 	require.NoError(t, err, "test fixture: ref must marshal to JSON")
 	remote.put(t, "refs/"+string(ref.Timestamp)+".json", body)
 
-	puller := refs.NewPuller(remote.storage, local.storage)
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
 	err = puller.Pull(ctx, ref.Timestamp)
 
 	require.Error(t, err,
@@ -173,7 +173,7 @@ func TestPuller_OnlyFetchesBlobsForFilesThatChangedAcrossRefs(t *testing.T) {
 	ref1 := sampleRef("2026-04-22T09-00-00.000Z", version1)
 	seedRemote(t, remote, ref1, version1)
 
-	puller := refs.NewPuller(remote.storage, local.storage)
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
 	require.NoError(t, puller.Pull(ctx, ref1.Timestamp),
 		"first pull must hydrate local with every blob referenced by ref1")
 
@@ -215,7 +215,7 @@ func TestPuller_IsIdempotentAcrossReruns(t *testing.T) {
 	})
 	seedRemote(t, remote, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 
-	puller := refs.NewPuller(remote.storage, local.storage)
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
 	require.NoError(t, puller.Pull(ctx, ref.Timestamp),
 		"first pull must succeed on complete remote state")
 
@@ -243,7 +243,7 @@ func TestPuller_SurfacesDownloadSentinelAndScrubsPartialOnWriteFailure(t *testin
 	uplinkBroken := errors.New("simulated uplink failure on put")
 	faulty.putFail["objects/"+hashHex("CONTENT")] = uplinkBroken
 
-	puller := refs.NewPuller(remote.storage, faulty)
+	puller := refs.NewPuller(remote.storage, faulty, serialRunner)
 	err := puller.Pull(ctx, ref.Timestamp)
 
 	require.Error(t, err,

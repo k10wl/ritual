@@ -62,8 +62,8 @@ func TestFlow_F1_ColdStartRemotePrePopulated(t *testing.T) {
 		originals,
 	)
 
-	puller := refs.NewPuller(remote.storage, local.storage)
-	applier := refs.NewApplier(local.storage, workdir.storage, workdir.scanner())
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
+	applier := refs.NewApplier(local.storage, workdir.storage, workdir.scanner(), serialRunner)
 	require.NoError(t, puller.Pull(ctx, originalID),
 		"F-1 step pull: remote pre-populated ref must arrive at local")
 	require.NoError(t, applier.Apply(ctx, originalID),
@@ -76,9 +76,9 @@ func TestFlow_F1_ColdStartRemotePrePopulated(t *testing.T) {
 
 	workdir.put(t, "worlds/level.dat", []byte("LEVEL_v2"))
 
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, local.storage).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, local.storage, serialRunner).
 		WithClock(fixedClock(t, "2026-04-22T11-00-00.000Z"))
-	pusher := refs.NewPusher(local.storage, remote.storage)
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
 
 	newID, err := committer.Commit(ctx, ports.CommitOpts{
 		Parent:  originalID,
@@ -90,8 +90,8 @@ func TestFlow_F1_ColdStartRemotePrePopulated(t *testing.T) {
 
 	secondHostLocal := newFSBundle(t)
 	secondHostWorkdir := newFSBundle(t)
-	secondPuller := refs.NewPuller(remote.storage, secondHostLocal.storage)
-	secondApplier := refs.NewApplier(secondHostLocal.storage, secondHostWorkdir.storage, secondHostWorkdir.scanner())
+	secondPuller := refs.NewPuller(remote.storage, secondHostLocal.storage, serialRunner)
+	secondApplier := refs.NewApplier(secondHostLocal.storage, secondHostWorkdir.storage, secondHostWorkdir.scanner(), serialRunner)
 	require.NoError(t, secondPuller.Pull(ctx, newID),
 		"F-1 verify: a second host pulling the new HEAD must succeed against the pushed remote state")
 	require.NoError(t, secondApplier.Apply(ctx, newID),
@@ -113,8 +113,8 @@ func TestFlow_F2_LiveTickerWithAmend(t *testing.T) {
 	workdir.put(t, "worlds/level.dat", []byte("tick0"))
 
 	clock := advancingClock(t, "2026-04-22T10-00-00.000Z", time.Minute)
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, local.storage).WithClock(clock)
-	pusher := refs.NewPusher(local.storage, remote.storage)
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, local.storage, serialRunner).WithClock(clock)
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
 
 	tick1, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
 	require.NoError(t, err, "F-2 tick 1: initial commit of live-ticker session")
@@ -169,8 +169,8 @@ func TestFlow_F3_RestoreToPastTimestamp(t *testing.T) {
 		map[string][]byte{"worlds/level.dat": []byte("NEW")},
 	)
 
-	puller := refs.NewPuller(remote.storage, local.storage)
-	applier := refs.NewApplier(local.storage, workdir.storage, workdir.scanner())
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
+	applier := refs.NewApplier(local.storage, workdir.storage, workdir.scanner(), serialRunner)
 	require.NoError(t, puller.Pull(ctx, newID),
 		"F-3 preparatory pull of current HEAD to seed local cache")
 	require.NoError(t, applier.Apply(ctx, newID),
@@ -199,7 +199,7 @@ func TestFlow_F4_PatchTargetEditWithoutDataChange(t *testing.T) {
 		map[string][]byte{"worlds/level.dat": []byte("LEVEL")},
 	)
 
-	puller := refs.NewPuller(remote.storage, local.storage)
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
 	require.NoError(t, puller.Pull(ctx, headID),
 		"F-4 preparatory pull to hydrate the existing HEAD locally")
 
@@ -208,7 +208,7 @@ func TestFlow_F4_PatchTargetEditWithoutDataChange(t *testing.T) {
 		func(r *domain.Ref) { r.Targets = append(r.Targets, "server/forge/**") },
 	)
 
-	pusher := refs.NewPusher(local.storage, remote.storage)
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
 	require.NoError(t, pusher.Push(ctx, patched),
 		"F-4 step push: patched ref must upload with no new blobs — only the manifest changed")
 
@@ -230,9 +230,9 @@ func TestFlow_F8_InitOnEmptyRemote(t *testing.T) {
 
 	workdir.put(t, "worlds/level.dat", []byte("fresh"))
 
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, local.storage).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, local.storage, serialRunner).
 		WithClock(fixedClock(t, "2026-04-22T10-00-00.000Z"))
-	pusher := refs.NewPusher(local.storage, remote.storage)
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
 
 	initID, err := committer.Commit(ctx, ports.CommitOpts{
 		Parent:  "",

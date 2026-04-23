@@ -47,7 +47,7 @@ func TestPusher_UploadsRefAndEveryReferencedBlobToRemote(t *testing.T) {
 		"worlds/region.mca": []byte("BBBBBBBB"),
 	})
 
-	pusher := refs.NewPusher(local.storage, remote.storage)
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
 	err := pusher.Push(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -82,7 +82,7 @@ func TestPusher_SkipsBlobsAlreadyOnRemote(t *testing.T) {
 	})
 	remote.put(t, "objects/"+hashHex("AAAA"), []byte("AAAA"))
 
-	pusher := refs.NewPusher(local.storage, remote.storage)
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
 	err := pusher.Push(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -100,7 +100,7 @@ func TestPusher_ReturnsErrorWhenLocalRefMissing(t *testing.T) {
 	local := newFSBundle(t)
 	remote := newFSBundle(t)
 
-	pusher := refs.NewPusher(local.storage, remote.storage)
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
 	err := pusher.Push(ctx, "2026-04-22T10-00-00.000Z")
 
 	require.Error(t, err,
@@ -119,7 +119,7 @@ func TestPusher_ReturnsErrorWhenLocalRefInvalidJSON(t *testing.T) {
 	id := domain.RefID("2026-04-22T10-00-00.000Z")
 	local.put(t, "refs/"+string(id)+".json", []byte("}{ not json"))
 
-	pusher := refs.NewPusher(local.storage, remote.storage)
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
 	err := pusher.Push(ctx, id)
 
 	require.Error(t, err,
@@ -142,7 +142,7 @@ func TestPusher_DoesNotWriteRefWhenLocalBlobMissing(t *testing.T) {
 	require.NoError(t, err, "test fixture: ref must marshal to JSON")
 	local.put(t, "refs/"+string(ref.Timestamp)+".json", body)
 
-	pusher := refs.NewPusher(local.storage, remote.storage)
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
 	err = pusher.Push(ctx, ref.Timestamp)
 
 	require.Error(t, err,
@@ -166,7 +166,7 @@ func TestPusher_OnlyUploadsBlobsForFilesThatChangedAcrossRefs(t *testing.T) {
 	ref1 := sampleRef("2026-04-22T09-00-00.000Z", version1)
 	seedLocalForPush(t, local, ref1, version1)
 
-	pusher := refs.NewPusher(local.storage, remote.storage)
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
 	require.NoError(t, pusher.Push(ctx, ref1.Timestamp),
 		"first push must upload every referenced blob to the empty remote")
 
@@ -207,7 +207,7 @@ func TestPusher_IsIdempotentAcrossReruns(t *testing.T) {
 	})
 	seedLocalForPush(t, local, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 
-	pusher := refs.NewPusher(local.storage, remote.storage)
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
 	require.NoError(t, pusher.Push(ctx, ref.Timestamp),
 		"first push on empty remote must succeed")
 
@@ -232,7 +232,7 @@ func TestPusher_ResumesAfterBlobsUploadedButRefMissing(t *testing.T) {
 	seedLocalForPush(t, local, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 	remote.put(t, "objects/"+hashHex("AAAA"), []byte("AAAA"))
 
-	pusher := refs.NewPusher(local.storage, remote.storage)
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
 	err := pusher.Push(ctx, ref.Timestamp)
 
 	require.NoError(t, err,

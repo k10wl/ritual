@@ -36,7 +36,6 @@ import (
 // inline.
 //
 // MVP scope (see per-simplification notes below):
-//   - Serial walk (spec calls for 10 workers).
 //   - Full walk only; mtime-based incremental walk deferred.
 //   - Live-ticker `save-all flush` lives in the ticker loop (caller
 //     side); Committer does not own Minecraft console interaction.
@@ -56,6 +55,7 @@ type Committer struct {
 	scanner ports.DirectoryScanner
 	workdir ports.StorageRepository
 	blobs   ports.StorageRepository
+	runner  ports.BlobRunner
 	now     func() time.Time
 	localGC func(ctx context.Context) error
 }
@@ -64,9 +64,9 @@ type Committer struct {
 // owns the recursive walk + xxhash), reads bytes to upload through workdir,
 // and writes objects/{hash} + refs/{id}.json to blobs. The composition root
 // decides whether blobs is wrapped with CompressingStorage (normal production
-// path).
-func NewCommitter(scanner ports.DirectoryScanner, workdir, blobs ports.StorageRepository) *Committer {
-	return &Committer{scanner: scanner, workdir: workdir, blobs: blobs, now: time.Now}
+// path). runner schedules per-blob upload concurrency.
+func NewCommitter(scanner ports.DirectoryScanner, workdir, blobs ports.StorageRepository, runner ports.BlobRunner) *Committer {
+	return &Committer{scanner: scanner, workdir: workdir, blobs: blobs, runner: runner, now: time.Now}
 }
 
 // WithClock overrides the internal clock used for RefID minting. Tests use
@@ -178,15 +178,21 @@ func (c *Committer) walkMatches(ctx context.Context, targets []string) (map[stri
 
 // storeBlobs uploads each matched file's bytes into the content-addressed
 // blob store (skipping hashes already present) and builds the ref's
-// (path → Object) map from the scanner's Hash+Size.
+// (path → Object) map from the scanner's Hash+Size. The (path → Object)
+// map is built up-front from scanner output so the per-blob upload runs
+// without map mutation; only the upload itself is scheduled by runner.
 func (c *Committer) storeBlobs(ctx context.Context, matched map[string]domain.FileEntry) (map[string]domain.Object, error) {
 	objects := make(map[string]domain.Object, len(matched))
+	items := make([]ports.BlobItem, 0, len(matched))
 	for path, entry := range matched {
-		err := c.storeOneBlob(ctx, path, entry)
-		if err != nil {
-			return nil, err
-		}
 		objects[path] = domain.Object{Hash: entry.Hash, Size: entry.Size}
+		items = append(items, ports.BlobItem{Key: path, Weight: entry.Size})
+	}
+	err := c.runner.Run(ctx, items, func(ctx context.Context, path string) error {
+		return c.storeOneBlob(ctx, path, matched[path])
+	})
+	if err != nil {
+		return nil, err
 	}
 	return objects, nil
 }

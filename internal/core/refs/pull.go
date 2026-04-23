@@ -29,17 +29,19 @@ import (
 //   - Session lock → orchestrator.
 //   - FlushFileBuffers durability → FSRepository.
 type Puller struct {
-	from ports.StorageRepository
-	to   ports.StorageRepository
+	from   ports.StorageRepository
+	to     ports.StorageRepository
+	runner ports.BlobRunner
 }
 
 // NewPuller wires a Puller. Pull reads from `from` and writes to `to`.
 // In normal composition `from` is remote R2 and `to` is local FS, but
 // Puller is direction-agnostic — swap them for a local-to-local clone
 // and the verb still works. The composition root decides whether either
-// side is wrapped with CompressingStorage.
-func NewPuller(from, to ports.StorageRepository) *Puller {
-	return &Puller{from: from, to: to}
+// side is wrapped with CompressingStorage. runner schedules per-blob
+// download concurrency.
+func NewPuller(from, to ports.StorageRepository, runner ports.BlobRunner) *Puller {
+	return &Puller{from: from, to: to, runner: runner}
 }
 
 // Pull materialises the ref identified by id at the destination:
@@ -49,13 +51,13 @@ func (p *Puller) Pull(ctx context.Context, id domain.RefID) error {
 	if err != nil {
 		return err
 	}
-	for path, obj := range ref.Objects {
-		err := p.fetchBlob(ctx, obj.Hash)
-		if err != nil {
-			return fmt.Errorf("pull %s: blob %s (%s): %w", id, obj.Hash, path, err)
+	items, pathByHash := collectHashes(ref.Objects)
+	return p.runner.Run(ctx, items, func(ctx context.Context, hash string) error {
+		if err := p.fetchBlob(ctx, hash); err != nil {
+			return fmt.Errorf("pull %s: blob %s (%s): %w", id, hash, pathByHash[hash], err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (p *Puller) fetchRef(ctx context.Context, id domain.RefID) (*domain.Ref, error) {
@@ -145,5 +147,24 @@ func downloadBlob(ctx context.Context, from, to ports.StorageRepository, key str
 
 func refKey(id domain.RefID) string { return "refs/" + string(id) + ".json" }
 func blobKey(hash string) string    { return "objects/" + hash }
+
+// collectHashes flattens a ref.Objects map into BlobItems (Key=hash,
+// Weight=size) plus a reverse index hash → first-seen path. The reverse
+// index preserves the original error-message context (which path triggered
+// the blob upload) when the runner reports per-hash failures. Map iteration
+// order is randomised; schedulers re-order via Weight anyway. Same-hash
+// duplicates collapse to one item.
+func collectHashes(objects map[string]domain.Object) ([]ports.BlobItem, map[string]string) {
+	items := make([]ports.BlobItem, 0, len(objects))
+	pathByHash := make(map[string]string, len(objects))
+	for path, obj := range objects {
+		if _, seen := pathByHash[obj.Hash]; seen {
+			continue
+		}
+		pathByHash[obj.Hash] = path
+		items = append(items, ports.BlobItem{Key: obj.Hash, Weight: obj.Size})
+	}
+	return items, pathByHash
+}
 
 var _ ports.Puller = (*Puller)(nil)

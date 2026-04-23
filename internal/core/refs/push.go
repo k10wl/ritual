@@ -36,17 +36,20 @@ import (
 //   - Session lock → orchestrator (once the fence story lands).
 //   - FlushFileBuffers durability → FSRepository.
 type Pusher struct {
-	from ports.StorageRepository
-	to   ports.StorageRepository
+	from   ports.StorageRepository
+	to     ports.StorageRepository
+	runner ports.BlobRunner
 }
 
 // NewPusher wires a Pusher. Push reads from `from` and writes to `to`.
 // In normal composition `from` is local FS and `to` is remote R2, but
 // Pusher is direction-agnostic — swap them for a local-to-local mirror
 // and the verb still works. The composition root decides whether either
-// side is wrapped with CompressingStorage.
-func NewPusher(from, to ports.StorageRepository) *Pusher {
-	return &Pusher{from: from, to: to}
+// side is wrapped with CompressingStorage. runner schedules per-blob
+// upload concurrency; pass a serial runner for deterministic order or a
+// bounded-pool runner to saturate the upload pipe.
+func NewPusher(from, to ports.StorageRepository, runner ports.BlobRunner) *Pusher {
+	return &Pusher{from: from, to: to, runner: runner}
 }
 
 // Push uploads the ref identified by id to the destination: every
@@ -57,11 +60,15 @@ func (p *Pusher) Push(ctx context.Context, id domain.RefID) error {
 	if err != nil {
 		return err
 	}
-	for path, obj := range ref.Objects {
-		err := p.uploadBlob(ctx, obj.Hash)
-		if err != nil {
-			return fmt.Errorf("push %s: blob %s (%s): %w", id, obj.Hash, path, err)
+	items, pathByHash := collectHashes(ref.Objects)
+	err = p.runner.Run(ctx, items, func(ctx context.Context, hash string) error {
+		if err := p.uploadBlob(ctx, hash); err != nil {
+			return fmt.Errorf("push %s: blob %s (%s): %w", id, hash, pathByHash[hash], err)
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	err = p.to.PutStream(ctx, refKey(id), bytes.NewReader(refRaw))
 	if err != nil {

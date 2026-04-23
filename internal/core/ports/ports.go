@@ -134,6 +134,24 @@ type DirectoryScanner interface {
 	Scan(ctx context.Context) (map[string]domain.FileEntry, error)
 }
 
+// BlobItem is one unit of work handed to a BlobRunner. Key is the opaque
+// identifier passed back to fn (usually an objects/{hash} key or a workdir
+// path). Weight is a per-item ordering hint — typically Object.Size — that
+// schedulers MAY use to optimise scheduling order; impls that don't care
+// (SerialRunner) MUST ignore it. Callers supply data, not policy.
+type BlobItem struct {
+	Key    string
+	Weight int64
+}
+
+// BlobRunner schedules per-item work across a slice of items. Implementations
+// decide concurrency policy (serial, bounded pool, ...) and ordering policy
+// (input order, weight-desc, ...). The function is invoked once per item key;
+// first non-nil error cancels remaining work and is returned.
+type BlobRunner interface {
+	Run(ctx context.Context, items []BlobItem, fn func(ctx context.Context, key string) error) error
+}
+
 // SyncService handles bidirectional synchronization between local and remote states.
 type SyncService interface {
 	Download(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error)

@@ -52,7 +52,7 @@ func TestApplier_MaterialisesEveryRefObjectIntoWorkdir(t *testing.T) {
 		"worlds/region.mca": []byte("BBBBBBBB"),
 	})
 
-	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner(), serialRunner)
 	err := applier.Apply(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -80,7 +80,7 @@ func TestApplier_SkipsFilesAlreadyPresentInWorkdir(t *testing.T) {
 	})
 	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
 
-	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner(), serialRunner)
 	err := applier.Apply(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -106,7 +106,7 @@ func TestApplier_PrunesWorkdirPathsNotInRef(t *testing.T) {
 	seedRemote(t, blobs, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 	workdir.put(t, "worlds/stale.dat", []byte("STALE"))
 
-	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner(), serialRunner)
 	err := applier.Apply(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -132,7 +132,7 @@ func TestApplier_LeavesOutOfScopePathsUntouched(t *testing.T) {
 	seedRemote(t, blobs, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 	workdir.put(t, "server/mods.cfg", []byte("OUTSIDE"))
 
-	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner(), serialRunner)
 	err := applier.Apply(ctx, ref.Timestamp)
 
 	require.NoError(t, err,
@@ -148,7 +148,7 @@ func TestApplier_ReturnsErrorWhenRefMissing(t *testing.T) {
 	blobs := newFSBundle(t)
 	workdir := newFSBundle(t)
 
-	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner(), serialRunner)
 	err := applier.Apply(ctx, "2026-04-22T10-00-00.000Z")
 
 	require.Error(t, err,
@@ -178,7 +178,7 @@ func TestApplier_OnlyRewritesFilesThatChangedAcrossRefs(t *testing.T) {
 	ref2 := sampleRef("2026-04-22T10-00-00.000Z", version2)
 	seedRemote(t, blobs, ref2, version2)
 
-	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner(), serialRunner)
 	require.NoError(t, applier.Apply(ctx, ref1.Timestamp),
 		"first apply must materialise both files from ref1 into the empty workdir")
 
@@ -216,7 +216,7 @@ func TestApplier_IsIdempotentAcrossReruns(t *testing.T) {
 	})
 	seedRemote(t, blobs, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 
-	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner(), serialRunner)
 	require.NoError(t, applier.Apply(ctx, ref.Timestamp),
 		"first apply must succeed on a fully-hydrated blob store")
 
@@ -244,7 +244,7 @@ func TestApplier_ReturnsErrorWhenReferencedBlobMissing(t *testing.T) {
 	require.NoError(t, err, "test fixture: ref must marshal to JSON")
 	blobs.put(t, "refs/"+string(ref.Timestamp)+".json", refBody)
 
-	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner())
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner(), serialRunner)
 	err = applier.Apply(ctx, ref.Timestamp)
 
 	require.Error(t, err,

@@ -52,7 +52,7 @@ func TestCommitter_WritesRefAndBlobsForEveryMatchedWorkdirFile(t *testing.T) {
 	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
 	workdir.put(t, "worlds/region.mca", []byte("BBBBBBBB"))
 
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).
 		WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z"))
 	id, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
 
@@ -88,7 +88,7 @@ func TestCommitter_IgnoresFilesNotMatchingTargets(t *testing.T) {
 	workdir.put(t, "server.jar", []byte("CCCC"))
 	workdir.put(t, "logs/latest.log", []byte("DDDD"))
 
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).
 		WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z"))
 	id, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
 
@@ -122,7 +122,7 @@ func TestCommitter_SkipsBlobPutWhenContentAlreadyStored(t *testing.T) {
 	hash := commitXXHashHex(t, []byte("AAAA"))
 
 	firstClock := commitFixedClock(t, "2026-04-22T10:00:00.000Z")
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage).WithClock(firstClock)
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).WithClock(firstClock)
 	_, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
 	require.NoError(t, err, "first commit must succeed to populate the blob store")
 
@@ -152,7 +152,7 @@ func TestCommitter_OnlyStoresBlobsForFilesThatChangedAcrossCommits(t *testing.T)
 	stableHash := commitXXHashHex(t, []byte("REGION_STABLE"))
 	changedV2Hash := commitXXHashHex(t, []byte("LEVEL_V2"))
 
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).
 		WithClock(commitFixedClock(t, "2026-04-22T09:00:00.000Z"))
 	_, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
 	require.NoError(t, err, "first commit must succeed to populate the blob store for both files")
@@ -187,7 +187,7 @@ func TestCommitter_PropagatesParentFromOpts(t *testing.T) {
 	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
 
 	parent := domain.RefID("2026-04-22T09-00-00.000Z")
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).
 		WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z"))
 	id, err := committer.Commit(ctx, ports.CommitOpts{
 		Parent:  parent,
@@ -210,7 +210,7 @@ func TestCommitter_AmendReplacesOldDraft(t *testing.T) {
 	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
 
 	grandparent := domain.RefID("2026-04-22T08-00-00.000Z")
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).
 		WithClock(commitFixedClock(t, "2026-04-22T09:00:00.000Z"))
 	idA, err := committer.Commit(ctx, ports.CommitOpts{
 		Parent:  grandparent,
@@ -244,7 +244,7 @@ func TestCommitter_AmendInvokesLocalGCAfterDeletingOldDraft(t *testing.T) {
 	blobs := newFSBundle(t)
 	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
 
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).
 		WithClock(commitFixedClock(t, "2026-04-22T09:00:00.000Z"))
 	firstID, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
 	require.NoError(t, err, "fixture: first commit must land the draft that the amend will supersede")
@@ -279,7 +279,7 @@ func TestCommitter_FreshCommitDoesNotInvokeLocalGC(t *testing.T) {
 	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
 
 	gcCalls := 0
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).
 		WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z")).
 		WithLocalGC(func(context.Context) error {
 			gcCalls++
@@ -301,7 +301,7 @@ func TestCommitter_AmendPropagatesLocalGCError(t *testing.T) {
 	blobs := newFSBundle(t)
 	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
 
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).
 		WithClock(commitFixedClock(t, "2026-04-22T09:00:00.000Z"))
 	firstID, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
 	require.NoError(t, err, "fixture: first commit must land the draft that the amend will supersede")
@@ -328,7 +328,7 @@ func TestCommitter_ReturnsErrorWhenNoWorkdirFilesMatchTargets(t *testing.T) {
 	workdir.put(t, "server.jar", []byte("CCCC"))
 	workdir.put(t, "logs/latest.log", []byte("DDDD"))
 
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).
 		WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z"))
 	_, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
 
@@ -349,7 +349,7 @@ func TestCommitter_DoesNotWriteRefWhenBlobPutFails(t *testing.T) {
 	failingBlobKey := "objects/" + commitXXHashHex(t, []byte("AAAA"))
 	blobs.putFail[failingBlobKey] = errors.New("simulated R2 503")
 
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs, serialRunner).
 		WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z"))
 	_, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
 
@@ -372,7 +372,7 @@ func TestCommitter_LeavesPartialBlobsWhenRefWriteFails(t *testing.T) {
 	committedID := domain.RefID("2026-04-22T10-00-00.000Z")
 	blobs.putFail["refs/"+string(committedID)+".json"] = errors.New("simulated ref put failure mid-write")
 
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs, serialRunner).
 		WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z"))
 	_, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
 
@@ -402,7 +402,7 @@ func TestCommitter_AmendWritesNewRefBeforeDeletingOldDraft(t *testing.T) {
 	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
 
 	blobs := newFaultyStorage(newFSBundle(t))
-	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs).
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs, serialRunner).
 		WithClock(commitFixedClock(t, "2026-04-22T09:00:00.000Z"))
 	firstID, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
 	require.NoError(t, err, "fixture: first commit must land a draft for the amend to replace")

@@ -33,7 +33,6 @@ import (
 //   - Blob decompression + content-hash verify → CompressingStorage.
 //   - Stale `.ritualapply.tmp` sweep, Windows rename guards, same-volume
 //     tmp — deferred past MVP.
-//   - Parallel worker pool across files — deferred past MVP; Apply is serial.
 //   - Session lock + server-stopped precondition — orchestrator
 //     concern (apply runs post-stop, so there is no live writer to
 //     race against).
@@ -41,6 +40,7 @@ type Applier struct {
 	blobs   ports.StorageRepository
 	workdir ports.StorageRepository
 	scanner ports.DirectoryScanner
+	runner  ports.BlobRunner
 }
 
 // NewApplier wires an Applier. Blobs are read from `blobs` (the local
@@ -51,9 +51,9 @@ type Applier struct {
 // The scanner walks the workdir filesystem to enumerate prune candidates.
 //
 // The ref itself also lives in `blobs` under `refs/{id}.json` — same layout
-// as Pull's destination.
-func NewApplier(blobs, workdir ports.StorageRepository, scanner ports.DirectoryScanner) *Applier {
-	return &Applier{blobs: blobs, workdir: workdir, scanner: scanner}
+// as Pull's destination. runner schedules per-file placement concurrency.
+func NewApplier(blobs, workdir ports.StorageRepository, scanner ports.DirectoryScanner, runner ports.BlobRunner) *Applier {
+	return &Applier{blobs: blobs, workdir: workdir, scanner: scanner, runner: runner}
 }
 
 // Apply materialises every (path, Object) in the ref identified by id into
@@ -64,11 +64,19 @@ func (a *Applier) Apply(ctx context.Context, id domain.RefID) error {
 	if err != nil {
 		return err
 	}
+	items := make([]ports.BlobItem, 0, len(ref.Objects))
 	for filePath, obj := range ref.Objects {
-		err := a.placeObject(ctx, filePath, obj)
-		if err != nil {
+		items = append(items, ports.BlobItem{Key: filePath, Weight: obj.Size})
+	}
+	err = a.runner.Run(ctx, items, func(ctx context.Context, filePath string) error {
+		obj := ref.Objects[filePath]
+		if err := a.placeObject(ctx, filePath, obj); err != nil {
 			return fmt.Errorf("apply %s: place %s (hash %s): %w", id, filePath, obj.Hash, err)
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	err = a.prune(ctx, ref)
 	if err != nil {
