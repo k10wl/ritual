@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -91,13 +92,6 @@ func (u *RitualUpdater) Run(ctx context.Context) error {
 	}
 	fmt.Printf("Current exe: %s\n", currentExe)
 
-	fmt.Printf("Downloading %s...\n", config.RemoteBinaryKey)
-	data, err := u.storage.Get(ctx, config.RemoteBinaryKey)
-	if err != nil {
-		return fmt.Errorf("failed to download %s: %w", config.RemoteBinaryKey, err)
-	}
-	fmt.Printf("Downloaded %d bytes\n", len(data))
-
 	// Update local manifest BEFORE replacing binary. Missing local manifest →
 	// seed from remote (first run).
 	fmt.Println("Updating local manifest...")
@@ -114,10 +108,12 @@ func (u *RitualUpdater) Run(ctx context.Context) error {
 	// Write new binary to temp dir (can't overwrite running exe on Windows)
 	// Use epoch nanoseconds to avoid collisions
 	updateExe := filepath.Join(os.TempDir(), fmt.Sprintf(config.UpdateFilePattern, time.Now().UnixNano()))
-	fmt.Printf("Writing update to: %s\n", updateExe)
-	if err := os.WriteFile(updateExe, data, config.FilePermission); err != nil {
-		return fmt.Errorf("failed to write update file: %w", err)
+	fmt.Printf("Downloading %s -> %s\n", config.RemoteBinaryKey, updateExe)
+	n, err := streamToFile(ctx, u.storage, config.RemoteBinaryKey, updateExe)
+	if err != nil {
+		return err
 	}
+	fmt.Printf("Downloaded %d bytes\n", n)
 
 	// Launch new binary with replace flag - it will replace the old exe and restart
 	fmt.Println("Launching new version...")
@@ -166,14 +162,8 @@ func handleReplace(oldExe string) {
 	// Wait for old process to exit
 	time.Sleep(config.UpdateProcessDelayMs * time.Millisecond)
 
-	// Copy current exe over old exe
-	data, err := os.ReadFile(currentExe) // #nosec G304 -- currentExe is os.Executable output
-	if err != nil {
-		fmt.Printf("Failed to read current exe: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := os.WriteFile(oldExe, data, config.FilePermission); err != nil { // #nosec G304,G306,G703 -- project self-update path
+	// Copy current exe over old exe (streamed; full binary never held in RAM)
+	if err := copyFile(currentExe, oldExe); err != nil {
 		fmt.Printf("Failed to replace old exe: %v\n", err)
 		os.Exit(1)
 	}
@@ -230,6 +220,55 @@ func IsVersionOlder(local, remote string) bool {
 
 	// If all compared parts are equal, shorter version is older (1.0 < 1.0.1)
 	return len(localParts) < len(remoteParts)
+}
+
+// streamToFile downloads key from storage and copies the stream into dst.
+// File handle is closed before return so the caller can immediately exec dst
+// (Windows refuses exec while a write handle is open in the same process).
+func streamToFile(ctx context.Context, storage ports.StorageRepository, key, dst string) (int64, error) {
+	body, err := storage.GetStream(ctx, key)
+	if err != nil {
+		return 0, fmt.Errorf("failed to download %s: %w", key, err)
+	}
+	defer func() { _ = body.Close() }()
+
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, config.FilePermission) // #nosec G304 -- dst is project-controlled temp path
+	if err != nil {
+		return 0, fmt.Errorf("failed to open update file %s: %w", dst, err)
+	}
+	n, copyErr := io.Copy(f, body)
+	closeErr := f.Close()
+	if copyErr != nil {
+		return n, fmt.Errorf("failed to write update file %s: %w", dst, copyErr)
+	}
+	if closeErr != nil {
+		return n, fmt.Errorf("failed to close update file %s: %w", dst, closeErr)
+	}
+	return n, nil
+}
+
+// copyFile streams src → dst. Used by handleReplace to overwrite the old exe
+// without buffering the whole binary.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src) // #nosec G304 -- src is os.Executable output
+	if err != nil {
+		return fmt.Errorf("open %s: %w", src, err)
+	}
+	defer func() { _ = in.Close() }()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, config.FilePermission) // #nosec G304,G306 -- dst is project self-update path
+	if err != nil {
+		return fmt.Errorf("open %s: %w", dst, err)
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return fmt.Errorf("copy %s -> %s: %w", src, dst, copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close %s: %w", dst, closeErr)
+	}
+	return nil
 }
 
 // parseVersion parses a version string into numeric parts
