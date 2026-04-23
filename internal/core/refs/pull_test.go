@@ -159,6 +159,31 @@ func TestPuller_SurfacesBlobFetchError(t *testing.T) {
 		"pull step 2: missing referenced blob on remote must surface an error — partial success violates step 3 barrier")
 }
 
+func TestPuller_DoesNotCommitLocalRefUntilEveryBlobLanded(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
+
+	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat": []byte("CONTENT"),
+	})
+	body, err := json.Marshal(ref)
+	require.NoError(t, err, "test fixture: ref must marshal to JSON")
+	remote.put(t, "refs/"+string(ref.Timestamp)+".json", body)
+
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
+	err = puller.Pull(ctx, ref.Timestamp)
+
+	require.Error(t, err,
+		"pull with missing referenced blob on remote must surface an error — step 3 barrier is violated")
+	present, existsErr := local.storage.Exists(ctx, "refs/"+string(ref.Timestamp)+".json")
+	require.NoError(t, existsErr, "post-failure sanity: Exists must answer cleanly")
+	assert.False(t, present,
+		"pull commit barrier: refs/{id}.json must NOT exist locally after a failed pull — else retention treats the ref as live and apply tries to materialize missing blobs")
+}
+
 func TestPuller_OnlyFetchesBlobsForFilesThatChangedAcrossRefs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()

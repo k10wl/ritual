@@ -45,46 +45,49 @@ func NewPuller(from, to ports.StorageRepository, runner ports.BlobRunner) *Pulle
 }
 
 // Pull materialises the ref identified by id at the destination:
-// refs/{id}.json plus every referenced objects/{hash}.
+// refs/{id}.json plus every referenced objects/{hash}. The destination
+// ref is written LAST — only after every referenced blob has landed — so
+// a crashed or failed pull leaves no live ref on disk. This mirrors
+// Commit's ref-last barrier: retention cannot observe a ref pointing at
+// missing blobs, and apply cannot be invoked against a half-pulled ref.
 func (p *Puller) Pull(ctx context.Context, id domain.RefID) error {
-	ref, err := p.fetchRef(ctx, id)
+	ref, raw, err := p.fetchRef(ctx, id)
 	if err != nil {
 		return err
 	}
 	items, pathByHash := collectHashes(ref.Objects)
-	return p.runner.Run(ctx, items, func(ctx context.Context, hash string) error {
+	err = p.runner.Run(ctx, items, func(ctx context.Context, hash string) error {
 		if err := p.fetchBlob(ctx, hash); err != nil {
 			return fmt.Errorf("pull %s: blob %s (%s): %w", id, hash, pathByHash[hash], err)
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if err := p.to.PutStream(ctx, refKey(id), bytes.NewReader(raw)); err != nil {
+		return fmt.Errorf("pull %s: commit ref: %w", id, err)
+	}
+	return nil
 }
 
-func (p *Puller) fetchRef(ctx context.Context, id domain.RefID) (*domain.Ref, error) {
-	key := refKey(id)
-	rc, err := p.from.GetStream(ctx, key)
+func (p *Puller) fetchRef(ctx context.Context, id domain.RefID) (*domain.Ref, []byte, error) {
+	rc, err := p.from.GetStream(ctx, refKey(id))
 	if err != nil {
-		return nil, fmt.Errorf("pull %s: fetch ref: %w", id, err)
+		return nil, nil, fmt.Errorf("pull %s: fetch ref: %w", id, err)
 	}
 	defer rc.Close()
 
 	raw, err := io.ReadAll(rc)
 	if err != nil {
-		return nil, fmt.Errorf("pull %s: read ref: %w", id, err)
-	}
-
-	err = p.to.PutStream(ctx, key, bytes.NewReader(raw))
-	if err != nil {
-		return nil, fmt.Errorf("pull %s: write ref: %w", id, err)
+		return nil, nil, fmt.Errorf("pull %s: read ref: %w", id, err)
 	}
 
 	ref := &domain.Ref{}
-	err = json.Unmarshal(raw, ref)
-	if err != nil {
-		_ = p.to.Delete(ctx, key)
-		return nil, fmt.Errorf("pull %s: parse ref (destination copy deleted, next pull refetches): %w", id, err)
+	if err := json.Unmarshal(raw, ref); err != nil {
+		return nil, nil, fmt.Errorf("pull %s: parse ref: %w", id, err)
 	}
-	return ref, nil
+	return ref, raw, nil
 }
 
 // fetchBlob materialises a single objects/{hash} at the destination. Flow
