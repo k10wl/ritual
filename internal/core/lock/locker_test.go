@@ -401,7 +401,7 @@ func (s *leaseStore) GetStream(_ context.Context, key string) (io.ReadCloser, er
 	return io.NopCloser(bytes.NewReader(append([]byte(nil), data...))), nil
 }
 
-func (s *leaseStore) PutStream(_ context.Context, key string, body io.ReadSeeker) error {
+func (s *leaseStore) PutStream(_ context.Context, key string, body io.Reader) error {
 	data, err := io.ReadAll(body)
 	if err != nil {
 		return err

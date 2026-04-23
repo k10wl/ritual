@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
@@ -83,33 +85,62 @@ func (p *Puller) fetchRef(ctx context.Context, id domain.RefID) (*domain.Ref, er
 	return ref, nil
 }
 
+// fetchBlob materialises a single objects/{hash} at the destination. Flow
+// is a single linear pass — no retries inside refs, no loops, no tmp
+// files. When the blob is already present the Exists-gate skips; when
+// the download itself fails, partial bytes are scrubbed so the next Pull
+// sees Exists == false. Hash verification is deferred to Apply per spec
+// §Integrity Model (CompressingStorage.GetStream catches mismatches at
+// read time), so Puller treats existing bytes as trustworthy: the spec's
+// recovery contract is "corrupt local blob detected on next read →
+// delete + refetch", which Apply executes.
+//
+// Failure classification uses the package sentinels. ErrBlobDownload
+// wraps any Get/Put/Close failure; ErrBlobCleanup wraps any Delete
+// failure during scrub. Both surface through errors.Join so errors.Is /
+// errors.As reach each concrete cause. Cleanup failures are never
+// hidden — only fs.ErrNotExist on the scrub Delete is tolerated (no
+// bytes landed → nothing to remove).
 func (p *Puller) fetchBlob(ctx context.Context, hash string) error {
 	key := blobKey(hash)
 
 	present, err := p.to.Exists(ctx, key)
 	if err != nil {
-		return fmt.Errorf("exists check: %w", err)
+		return fmt.Errorf("exists %s: %w", key, err)
 	}
 	if present {
 		return nil
 	}
 
-	rc, err := p.from.GetStream(ctx, key)
-	if err != nil {
-		return fmt.Errorf("fetch blob: %w", err)
-	}
-	defer rc.Close()
+	return downloadBlob(ctx, p.from, p.to, key)
+}
 
-	data, err := io.ReadAll(rc)
+// downloadBlob streams source → destination, then scrubs the destination
+// on any failure so the next Pull starts from a clean slate. Single
+// attempt. Retries happen at the verb level — the caller reruns Pull.
+func downloadBlob(ctx context.Context, from, to ports.StorageRepository, key string) error {
+	rc, err := from.GetStream(ctx, key)
 	if err != nil {
-		return fmt.Errorf("read blob: %w", err)
+		return fmt.Errorf("%w (%s): %w", ErrBlobDownload, key, err)
+	}
+	putErr := to.PutStream(ctx, key, rc)
+	closeErr := rc.Close()
+	writeErr := errors.Join(putErr, closeErr)
+	if writeErr == nil {
+		return nil
 	}
 
-	err = p.to.PutStream(ctx, key, bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("write blob: %w", err)
+	delErr := to.Delete(ctx, key)
+	if errors.Is(delErr, fs.ErrNotExist) {
+		delErr = nil
 	}
-	return nil
+
+	download := fmt.Errorf("%w (%s): %w", ErrBlobDownload, key, writeErr)
+	if delErr == nil {
+		return download
+	}
+	cleanup := fmt.Errorf("%w (%s): %w", ErrBlobCleanup, key, delErr)
+	return errors.Join(download, cleanup)
 }
 
 func refKey(id domain.RefID) string { return "refs/" + string(id) + ".json" }

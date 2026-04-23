@@ -26,6 +26,7 @@ package refs_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -224,6 +225,37 @@ func TestPuller_IsIdempotentAcrossReruns(t *testing.T) {
 
 	assert.Equal(t, hitsBeforeRerun, remote.getHits("objects/"+hashHex("AAAA")),
 		"atomicity via idempotent stage replay: a second pull must not re-fetch blobs already present locally")
+}
+
+func TestPuller_SurfacesDownloadSentinelAndScrubsPartialOnWriteFailure(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
+
+	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat": []byte("CONTENT"),
+	})
+	seedRemote(t, remote, ref, map[string][]byte{"worlds/level.dat": []byte("CONTENT")})
+
+	faulty := newFaultyStorage(local)
+	uplinkBroken := errors.New("simulated uplink failure on put")
+	faulty.putFail["objects/"+hashHex("CONTENT")] = uplinkBroken
+
+	puller := refs.NewPuller(remote.storage, faulty)
+	err := puller.Pull(ctx, ref.Timestamp)
+
+	require.Error(t, err,
+		"download failure MUST surface — silent success would let the Pull ACID barrier lie about blob presence")
+	assert.ErrorIs(t, err, refs.ErrBlobDownload,
+		"error chain must classify via ErrBlobDownload so callers filter on the failure category")
+	assert.ErrorIs(t, err, uplinkBroken,
+		"error chain must wrap the original PutStream cause; callers that want the concrete failure reach it via errors.Is/As")
+	present, existsErr := local.storage.Exists(ctx, "objects/"+hashHex("CONTENT"))
+	require.NoError(t, existsErr, "post-failure sanity: Exists must answer cleanly")
+	assert.False(t, present,
+		"post-failure invariant: no partial bytes under the blob key — the scrub-on-failure path must leave destination clean so the next Pull sees Exists == false and starts fresh")
 }
 
 // --- test fixtures ---

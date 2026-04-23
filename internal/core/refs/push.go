@@ -106,16 +106,13 @@ func (p *Pusher) uploadBlob(ctx context.Context, hash string) error {
 	if err != nil {
 		return fmt.Errorf("read blob: %w", err)
 	}
-	defer rc.Close()
-
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		return fmt.Errorf("buffer blob: %w", err)
+	putErr := p.to.PutStream(ctx, key, rc)
+	closeErr := rc.Close()
+	if putErr != nil {
+		return fmt.Errorf("upload blob: %w", putErr)
 	}
-
-	err = p.to.PutStream(ctx, key, bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("upload blob: %w", err)
+	if closeErr != nil {
+		return fmt.Errorf("close source blob %s: %w", key, closeErr)
 	}
 	return nil
 }

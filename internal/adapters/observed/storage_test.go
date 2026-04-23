@@ -236,7 +236,7 @@ func TestObservedStorage_GetStream_FailureBeforeBody(t *testing.T) {
 func TestObservedStorage_PutStream_Success(t *testing.T) {
 	inner, bus, ch, cancel := setup(t)
 	defer cancel()
-	inner.PutStreamFunc = func(_ context.Context, _ string, body io.ReadSeeker) error {
+	inner.PutStreamFunc = func(_ context.Context, _ string, body io.Reader) error {
 		_, _ = io.Copy(io.Discard, body)
 		return nil
 	}
@@ -255,7 +255,7 @@ func TestObservedStorage_PutStream_InnerError(t *testing.T) {
 	inner, bus, ch, cancel := setup(t)
 	defer cancel()
 	sentinel := errors.New("upload failed")
-	inner.PutStreamFunc = func(_ context.Context, _ string, _ io.ReadSeeker) error { return sentinel }
+	inner.PutStreamFunc = func(_ context.Context, _ string, _ io.Reader) error { return sentinel }
 	s := observed.NewStorage(inner, bus)
 
 	err := s.PutStream(t.Context(), "k", bytes.NewReader([]byte("x")))

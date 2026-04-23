@@ -321,126 +321,12 @@ func TestR2Repository_InterfaceCompliance(t *testing.T) {
 	var _ ports.StorageRepository = (*R2Repository)(nil)
 }
 
-// TestR2Repository_RetriesTransient verifies every StorageRepository method
-// retries when the S3Client returns a transient error (here: generic error,
-// which r2Retryable treats as retryable by default). Each subtest fails the
-// mock N-1 times then succeeds, asserting the mock was called N times and the
-// retry hook published RetryAttemptInfo (N-1 times).
-func TestR2Repository_RetriesTransient(t *testing.T) {
-	flaky := errors.New("transient")
+// Retry classification and rewind behaviour are owned by aws-sdk-go-v2's
+// retry.Standard middleware (see r2.go newRetryer). Unit tests using the
+// MockS3Client interface bypass SDK middleware entirely, so retry
+// assertions belong in integration tests against an httptest server —
+// not here. What this file covers is the wire-shape of each R2 method.
 
-	type subtest struct {
-		name   string
-		setup  func(m *MockS3Client)
-		invoke func(repo *R2Repository) error
-		call   string
-	}
-
-	subtests := []subtest{
-		{
-			name: "Get",
-			setup: func(m *MockS3Client) {
-				m.On("GetObject", mock.Anything, mock.Anything, mock.Anything).
-					Return((*s3.GetObjectOutput)(nil), flaky).Twice()
-				body := io.NopCloser(bytes.NewReader([]byte("ok")))
-				m.On("GetObject", mock.Anything, mock.Anything, mock.Anything).
-					Return(&s3.GetObjectOutput{Body: body}, nil).Once()
-			},
-			invoke: func(repo *R2Repository) error { _, err := repo.Get(context.Background(), "k"); return err },
-			call:   "GetObject",
-		},
-		{
-			name: "Put",
-			setup: func(m *MockS3Client) {
-				m.On("PutObject", mock.Anything, mock.Anything, mock.Anything).
-					Return(&s3.PutObjectOutput{}, flaky).Twice()
-				m.On("PutObject", mock.Anything, mock.Anything, mock.Anything).
-					Return(&s3.PutObjectOutput{}, nil).Once()
-			},
-			invoke: func(repo *R2Repository) error { return repo.Put(context.Background(), "k", []byte("v")) },
-			call:   "PutObject",
-		},
-		{
-			name: "List",
-			setup: func(m *MockS3Client) {
-				m.On("ListObjectsV2", mock.Anything, mock.Anything, mock.Anything).
-					Return(&s3.ListObjectsV2Output{}, flaky).Twice()
-				m.On("ListObjectsV2", mock.Anything, mock.Anything, mock.Anything).
-					Return(&s3.ListObjectsV2Output{}, nil).Once()
-			},
-			invoke: func(repo *R2Repository) error { _, err := repo.List(context.Background(), "p"); return err },
-			call:   "ListObjectsV2",
-		},
-		{
-			name: "Copy",
-			setup: func(m *MockS3Client) {
-				m.On("CopyObject", mock.Anything, mock.Anything, mock.Anything).
-					Return(&s3.CopyObjectOutput{}, flaky).Twice()
-				m.On("CopyObject", mock.Anything, mock.Anything, mock.Anything).
-					Return(&s3.CopyObjectOutput{}, nil).Once()
-			},
-			invoke: func(repo *R2Repository) error { return repo.Copy(context.Background(), "src", "dst") },
-			call:   "CopyObject",
-		},
-		{
-			name: "DeleteBatch",
-			setup: func(m *MockS3Client) {
-				m.On("DeleteObjects", mock.Anything, mock.Anything, mock.Anything).
-					Return(&s3.DeleteObjectsOutput{}, flaky).Twice()
-				m.On("DeleteObjects", mock.Anything, mock.Anything, mock.Anything).
-					Return(&s3.DeleteObjectsOutput{}, nil).Once()
-			},
-			invoke: func(repo *R2Repository) error { return repo.DeleteBatch(context.Background(), []string{"a", "b"}) },
-			call:   "DeleteObjects",
-		},
-	}
-
-	for _, tc := range subtests {
-		t.Run(tc.name, func(t *testing.T) {
-			mockClient := new(MockS3Client)
-			bus := NewEventBus(16)
-			ch, cancel := bus.Subscribe()
-			defer cancel()
-			repo := NewR2RepositoryWithClient(mockClient, "bucket", bus)
-			tc.setup(mockClient)
-
-			if err := tc.invoke(repo); err != nil {
-				t.Fatalf("invoke: %v", err)
-			}
-
-			// Count SDK calls: 2 failures + 1 success = 3
-			calls := 0
-			for _, c := range mockClient.Calls {
-				if c.Method == tc.call {
-					calls++
-				}
-			}
-			if calls != 3 {
-				t.Errorf("%s calls = %d, want 3", tc.call, calls)
-			}
-
-			// Count retry events (best-effort, bus is lossy but buffer is large)
-			retries := 0
-		drainLoop:
-			for {
-				select {
-				case evt := <-ch:
-					if _, ok := evt.(RetryAttemptInfo); ok {
-						retries++
-					}
-				default:
-					break drainLoop
-				}
-			}
-			if retries != 2 {
-				t.Errorf("RetryAttemptInfo count = %d, want 2", retries)
-			}
-		})
-	}
-}
-
-// TestR2Repository_NoRetryOnPermanent verifies permanent errors (AccessDenied)
-// short-circuit retry — r2Retryable returns false, so exactly one SDK call is made.
 func TestR2Repository_NoRetryOnPermanent(t *testing.T) {
 	mockClient := new(MockS3Client)
 	repo := NewR2RepositoryWithClient(mockClient, "bucket", nil)
@@ -497,18 +383,15 @@ func TestR2Repository_GetStream_PropagatesError(t *testing.T) {
 	assert.True(t, strings.Contains(err.Error(), "failed to get object"), "error wraps operation: %v", err)
 }
 
-func TestR2Repository_PutStream_SendsBodyWithContentLength(t *testing.T) {
+func TestR2Repository_PutStream_ForwardsBodyToSDK(t *testing.T) {
 	mockClient := new(MockS3Client)
 	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
 
 	payload := []byte("put me via stream")
-	var capturedLen int64
 	var capturedBody []byte
 	mockClient.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil).
 		Run(func(args mock.Arguments) {
 			in := args.Get(1).(*s3.PutObjectInput)
-			require.NotNil(t, in.ContentLength, "ContentLength must be set explicitly")
-			capturedLen = *in.ContentLength
 			b, err := io.ReadAll(in.Body)
 			require.NoError(t, err)
 			capturedBody = b
@@ -516,34 +399,8 @@ func TestR2Repository_PutStream_SendsBodyWithContentLength(t *testing.T) {
 
 	err := repo.PutStream(context.Background(), "k", bytes.NewReader(payload))
 	require.NoError(t, err)
-	assert.Equal(t, int64(len(payload)), capturedLen, "ContentLength equals payload size")
-	assert.Equal(t, payload, capturedBody, "sent body equals input")
+	assert.Equal(t, payload, capturedBody, "sent body equals input — ContentLength + rewind are SDK concerns and are asserted in integration tests against a real s3.Client")
 	mockClient.AssertExpectations(t)
-}
-
-func TestR2Repository_PutStream_RewindsOnRetry(t *testing.T) {
-	mockClient := new(MockS3Client)
-	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
-
-	payload := []byte("retry-me")
-	attempts := 0
-	seen := [][]byte{}
-	mockClient.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, errors.New("transient")).
-		Run(func(args mock.Arguments) {
-			attempts++
-			in := args.Get(1).(*s3.PutObjectInput)
-			b, _ := io.ReadAll(in.Body)
-			seen = append(seen, b)
-			if attempts >= 2 {
-				return
-			}
-		})
-
-	_ = repo.PutStream(context.Background(), "k", bytes.NewReader(payload))
-
-	require.GreaterOrEqual(t, len(seen), 2, "retry happened at least once")
-	assert.Equal(t, payload, seen[0], "first attempt reads full body")
-	assert.Equal(t, payload, seen[1], "second attempt reads full body after rewind")
 }
 
 func TestR2Repository_Exists_HitAndMiss(t *testing.T) {
@@ -602,7 +459,8 @@ func TestR2Repository_Exists_HitAndMiss(t *testing.T) {
 	})
 }
 
-func TestR2Retryable_HeadObjectNotFoundNonRetryable(t *testing.T) {
-	assert.False(t, r2Retryable(notFoundErr{code: "NotFound"}), "HeadObject NotFound must not be retried")
-	assert.False(t, r2Retryable(notFoundErr{code: "NoSuchKey"}), "NoSuchKey must not be retried")
+func TestIsNotFound_HeadObjectNotFoundAndNoSuchKey(t *testing.T) {
+	assert.True(t, isNotFound(notFoundErr{code: "NotFound"}), "HeadObject NotFound must map to Exists=false")
+	assert.True(t, isNotFound(notFoundErr{code: "NoSuchKey"}), "NoSuchKey must map to Exists=false")
+	assert.False(t, isNotFound(notFoundErr{code: "AccessDenied"}), "other API codes are real errors, not Exists=false")
 }

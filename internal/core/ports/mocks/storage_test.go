@@ -149,7 +149,7 @@ func TestMockStorageRepository_PutStream_Delegates(t *testing.T) {
 
 	var seenKey string
 	var seenBytes []byte
-	mock.PutStreamFunc = func(ctx context.Context, key string, body io.ReadSeeker) error {
+	mock.PutStreamFunc = func(ctx context.Context, key string, body io.Reader) error {
 		seenKey = key
 		data, _ := io.ReadAll(body)
 		seenBytes = data

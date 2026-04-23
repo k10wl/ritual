@@ -13,7 +13,7 @@ type MockStorageRepository struct {
 	GetFunc         func(ctx context.Context, key string) ([]byte, error)
 	PutFunc         func(ctx context.Context, key string, data []byte) error
 	GetStreamFunc   func(ctx context.Context, key string) (io.ReadCloser, error)
-	PutStreamFunc   func(ctx context.Context, key string, body io.ReadSeeker) error
+	PutStreamFunc   func(ctx context.Context, key string, body io.Reader) error
 	ExistsFunc      func(ctx context.Context, key string) (bool, error)
 	DeleteFunc      func(ctx context.Context, key string) error
 	DeleteBatchFunc func(ctx context.Context, keys []string) error
@@ -71,7 +71,7 @@ func (m *MockStorageRepository) GetStream(ctx context.Context, key string) (io.R
 }
 
 // PutStream writes body under key. Default is a no-op.
-func (m *MockStorageRepository) PutStream(ctx context.Context, key string, body io.ReadSeeker) error {
+func (m *MockStorageRepository) PutStream(ctx context.Context, key string, body io.Reader) error {
 	if m.PutStreamFunc != nil {
 		return m.PutStreamFunc(ctx, key, body)
 	}

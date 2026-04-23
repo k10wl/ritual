@@ -25,9 +25,12 @@ type StorageRepository interface {
 
 	// GetStream opens an object for streaming read. Caller must Close the body.
 	GetStream(ctx context.Context, key string) (io.ReadCloser, error)
-	// PutStream writes body under key. Body is an io.ReadSeeker because
-	// retry implementations (R2/S3) rewind on every attempt.
-	PutStream(ctx context.Context, key string, body io.ReadSeeker) error
+	// PutStream writes body under key. Body is a plain io.Reader: adapters
+	// that need rewind (R2/S3 retry middleware) type-assert to io.Seeker and
+	// error loudly if the caller broke the contract. In real composition the
+	// only caller that reaches R2.PutStream is Push, whose source is FS
+	// (*os.File — natively seekable), so the assertion never trips.
+	PutStream(ctx context.Context, key string, body io.Reader) error
 	// Exists reports whether key is present without transferring bytes.
 	Exists(ctx context.Context, key string) (bool, error)
 

@@ -65,7 +65,7 @@ func (f *faultyStorage) GetStream(ctx context.Context, key string) (io.ReadClose
 	return f.bundle.storage.GetStream(ctx, key)
 }
 
-func (f *faultyStorage) PutStream(ctx context.Context, key string, body io.ReadSeeker) error {
+func (f *faultyStorage) PutStream(ctx context.Context, key string, body io.Reader) error {
 	err, shouldFail := f.putFail[key]
 	if shouldFail {
 		return err

@@ -95,8 +95,11 @@ func (f *FSRepository) GetStream(_ context.Context, key string) (io.ReadCloser, 
 	return file, nil
 }
 
-// PutStream writes body under key, creating parent dirs as needed.
-func (f *FSRepository) PutStream(_ context.Context, key string, body io.ReadSeeker) error {
+// PutStream writes body under key, creating parent dirs as needed. Direct
+// write with O_TRUNC — content-addressed blobs and parse-validated refs
+// self-detect partial writes on the next read (see spec §No .ritual.tmp
+// for blob writes, lines 740–744), so no tmp+rename dance is needed here.
+func (f *FSRepository) PutStream(_ context.Context, key string, body io.Reader) error {
 	key = filepath.FromSlash(key)
 	dir := filepath.Dir(key)
 	if dir != "." {
@@ -108,9 +111,13 @@ func (f *FSRepository) PutStream(_ context.Context, key string, body io.ReadSeek
 	if err != nil {
 		return fmt.Errorf("failed to open file %s: %w", key, err)
 	}
-	defer func() { _ = file.Close() }()
-	if _, err := io.Copy(file, body); err != nil {
-		return fmt.Errorf("failed to write file %s: %w", key, err)
+	_, copyErr := io.Copy(file, body)
+	closeErr := file.Close()
+	if copyErr != nil {
+		return fmt.Errorf("failed to write file %s: %w", key, copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("failed to close file %s: %w", key, closeErr)
 	}
 	return nil
 }

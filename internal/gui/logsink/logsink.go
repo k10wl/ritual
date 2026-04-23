@@ -6,7 +6,6 @@ package logsink
 
 import (
 	"context"
-	"ritual/internal/adapters"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"time"
@@ -76,8 +75,6 @@ func deriveLevel(evt ports.Event) Level {
 	switch evt.(type) {
 	case ritual.ErrorInfo, ritual.StateFailedInfo, ritual.LockLostInfo:
 		return LevelError
-	case adapters.RetryAttemptInfo:
-		return LevelWarn
 	}
 	return LevelInfo
 }

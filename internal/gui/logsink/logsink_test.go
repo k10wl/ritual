@@ -87,22 +87,3 @@ func TestLogsink_ErrorInfo_TaggedError(t *testing.T) {
 	assert.Equal(t, logsink.LevelError, lines[0].Level, "ErrorInfo must be tagged LevelError so the log console renders it red — users should notice failures immediately")
 }
 
-func TestLogsink_RetryAttemptInfo_TaggedWarn(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 400*time.Millisecond)
-	defer cancel()
-
-	bus := adapters.NewEventBus(16)
-	rec := &recorder{}
-	sink := logsink.New(bus, rec)
-	done := make(chan struct{})
-	go func() { sink.Run(ctx); close(done) }()
-
-	bus.Publish(adapters.RetryAttemptInfo{Operation: "r2.Get", Key: "manifest.json", Attempt: 2, Err: errors.New("conn reset")})
-	waitFor(t, func() bool { return len(rec.snapshot()) >= 1 }, "one log line")
-	cancel()
-	<-done
-
-	lines := rec.snapshot()
-	require.Len(t, lines, 1, "exactly one event was published — exactly one log line must be forwarded")
-	assert.Equal(t, logsink.LevelWarn, lines[0].Level, "RetryAttemptInfo is a transient condition — tagged warn so the log console highlights it without raising a red alarm")
-}

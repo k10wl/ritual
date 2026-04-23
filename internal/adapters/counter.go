@@ -56,10 +56,24 @@ func (c *CounterStorage) GetStream(ctx context.Context, key string) (io.ReadClos
 
 // PutStream wraps the body so every Read consumed by the inner adapter
 // increments BytesOut. Op counters advance when the inner call returns.
-func (c *CounterStorage) PutStream(ctx context.Context, key string, body io.ReadSeeker) error {
-	err := c.inner.PutStream(ctx, key, &counterTapReadSeeker{inner: body, counter: &c.counters.BytesOut})
+// If body is also seekable, the wrapper preserves Seek so the inner
+// adapter's retry rewind path (R2) still functions.
+func (c *CounterStorage) PutStream(ctx context.Context, key string, body io.Reader) error {
+	wrap := wrapCounterTap(body, &c.counters.BytesOut)
+	err := c.inner.PutStream(ctx, key, wrap)
 	c.completeOp(err)
 	return err
+}
+
+// wrapCounterTap returns body wrapped so every Read consumed by the
+// inner adapter advances counter. When body implements io.Seeker the
+// returned wrapper passes Seek through; otherwise it is a plain Reader.
+func wrapCounterTap(body io.Reader, counter *atomic.Int64) io.Reader {
+	base := &counterTapReader{inner: body, counter: counter}
+	if s, ok := body.(io.Seeker); ok {
+		return &counterTapReadSeeker{counterTapReader: base, seeker: s}
+	}
+	return base
 }
 
 // Exists advances op counters only (no byte transfer).
@@ -138,14 +152,14 @@ func (c *counterTapReadCloser) Close() error {
 	return err
 }
 
-// counterTapReadSeeker taps Read calls against the counter. Seek passes
-// through so the inner adapter (R2 retry path) can still rewind the body.
-type counterTapReadSeeker struct {
-	inner   io.ReadSeeker
+// counterTapReader taps Read calls against the counter. Used when the
+// source body is not seekable.
+type counterTapReader struct {
+	inner   io.Reader
 	counter *atomic.Int64
 }
 
-func (c *counterTapReadSeeker) Read(p []byte) (int, error) {
+func (c *counterTapReader) Read(p []byte) (int, error) {
 	n, err := c.inner.Read(p)
 	if n > 0 {
 		c.counter.Add(int64(n))
@@ -153,8 +167,15 @@ func (c *counterTapReadSeeker) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// counterTapReadSeeker wraps counterTapReader and re-exports Seek for
+// seekable source bodies. Inner R2 retry rewind goes through this path.
+type counterTapReadSeeker struct {
+	*counterTapReader
+	seeker io.Seeker
+}
+
 func (c *counterTapReadSeeker) Seek(offset int64, whence int) (int64, error) {
-	return c.inner.Seek(offset, whence)
+	return c.seeker.Seek(offset, whence)
 }
 
 var _ ports.StorageRepository = (*CounterStorage)(nil)

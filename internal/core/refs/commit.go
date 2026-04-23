@@ -205,21 +205,13 @@ func (c *Committer) storeOneBlob(ctx context.Context, path string, entry domain.
 	if err != nil {
 		return fmt.Errorf("refs.Committer.Commit: read %s: %w", path, err)
 	}
-	defer rc.Close()
-
-	// PutStream requires an io.ReadSeeker because R2/S3 retries rewind the
-	// body on every attempt. GetStream returns a plain ReadCloser (file or
-	// HTTP response), so we drain into memory and wrap in a bytes.Reader.
-	// Pre-draining here is equivalent to the previous inline hash path's
-	// buffering — the scanner already read the file once to hash it, but
-	// adding a tee/seek-capable stream adapter is post-MVP work.
-	raw, err := io.ReadAll(rc)
-	if err != nil {
-		return fmt.Errorf("refs.Committer.Commit: drain %s: %w", path, err)
+	putErr := c.blobs.PutStream(ctx, key, rc)
+	closeErr := rc.Close()
+	if putErr != nil {
+		return fmt.Errorf("refs.Committer.Commit: write blob %s: %w", key, putErr)
 	}
-	err = c.blobs.PutStream(ctx, key, bytes.NewReader(raw))
-	if err != nil {
-		return fmt.Errorf("refs.Committer.Commit: write blob %s: %w", key, err)
+	if closeErr != nil {
+		return fmt.Errorf("refs.Committer.Commit: close %s: %w", path, closeErr)
 	}
 	return nil
 }

@@ -27,7 +27,7 @@ func (fakeStorage) Put(_ context.Context, _ string, _ []byte) error    { return 
 func (fakeStorage) GetStream(_ context.Context, _ string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
-func (fakeStorage) PutStream(_ context.Context, _ string, _ io.ReadSeeker) error { return nil }
+func (fakeStorage) PutStream(_ context.Context, _ string, _ io.Reader) error { return nil }
 func (fakeStorage) Exists(_ context.Context, _ string) (bool, error)             { return false, nil }
 func (fakeStorage) Delete(_ context.Context, _ string) error                     { return nil }
 func (fakeStorage) DeleteBatch(_ context.Context, _ []string) error              { return nil }

@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"ritual/internal/adapters"
 	"ritual/internal/config"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
@@ -68,8 +67,6 @@ func write(w io.Writer, evt ports.Event) {
 		_, _ = fmt.Fprintf(w, "[%s] %s → %s\n", stamp(), e.From, e.To)
 	case ritual.StateFailedInfo:
 		_, _ = fmt.Fprintf(w, "[%s] FAILED in %s: %v\n", stamp(), e.State, e.Err)
-	case adapters.RetryAttemptInfo:
-		writeRetry(w, e)
 	default:
 		_, _ = fmt.Fprintf(w, "[%s] %v\n", stamp(), evt)
 	}
@@ -85,12 +82,4 @@ func writeUpdate(w io.Writer, e ritual.UpdateInfo) {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "[%s] [%s] %s %v\n", stamp(), e.Operation, e.Message, e.Data)
-}
-
-func writeRetry(w io.Writer, e adapters.RetryAttemptInfo) {
-	if e.Key != "" {
-		_, _ = fmt.Fprintf(w, "[%s] [retry] %s key=%s attempt=%d err=%v\n", stamp(), e.Operation, e.Key, e.Attempt, e.Err)
-		return
-	}
-	_, _ = fmt.Fprintf(w, "[%s] [retry] %s attempt=%d err=%v\n", stamp(), e.Operation, e.Attempt, e.Err)
 }

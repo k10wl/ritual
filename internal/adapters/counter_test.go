@@ -61,7 +61,7 @@ func TestCounterStorage_GetStream_OpenFailure(t *testing.T) {
 func TestCounterStorage_PutStream_BytesAdvanceDuringWrite(t *testing.T) {
 	payload := bytes.Repeat([]byte("B"), 2048)
 	inner := &mocks.MockStorageRepository{}
-	inner.PutStreamFunc = func(_ context.Context, _ string, body io.ReadSeeker) error {
+	inner.PutStreamFunc = func(_ context.Context, _ string, body io.Reader) error {
 		tmp := make([]byte, 256)
 		n, err := body.Read(tmp)
 		if err != nil {
@@ -86,11 +86,13 @@ func TestCounterStorage_PutStream_RetryDoubleCounts(t *testing.T) {
 	payload := []byte("retry-bytes")
 	inner := &mocks.MockStorageRepository{}
 	attempt := 0
-	inner.PutStreamFunc = func(_ context.Context, _ string, body io.ReadSeeker) error {
+	inner.PutStreamFunc = func(_ context.Context, _ string, body io.Reader) error {
 		attempt++
 		_, _ = io.Copy(io.Discard, body)
 		if attempt == 1 {
-			_, _ = body.Seek(0, io.SeekStart)
+			seeker, ok := body.(io.Seeker)
+			require.True(t, ok, "counter wrapper must expose Seek when inner body is seekable — retry rewind path must survive the tap")
+			_, _ = seeker.Seek(0, io.SeekStart)
 			_, _ = io.Copy(io.Discard, body)
 		}
 		return nil
@@ -123,7 +125,7 @@ func TestCounterStorage_Concurrent(t *testing.T) {
 	const perWorker = 16
 	payload := bytes.Repeat([]byte("X"), 1024)
 	inner := &mocks.MockStorageRepository{
-		PutStreamFunc: func(_ context.Context, _ string, body io.ReadSeeker) error {
+		PutStreamFunc: func(_ context.Context, _ string, body io.Reader) error {
 			_, _ = io.Copy(io.Discard, body)
 			return nil
 		},

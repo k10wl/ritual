@@ -1,7 +1,6 @@
 package refs
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -111,16 +110,13 @@ func (a *Applier) placeObject(ctx context.Context, filePath string, obj domain.O
 	if err != nil {
 		return fmt.Errorf("fetch blob: %w", err)
 	}
-	defer rc.Close()
-
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		return fmt.Errorf("read blob: %w", err)
+	putErr := a.workdir.PutStream(ctx, filePath, rc)
+	closeErr := rc.Close()
+	if putErr != nil {
+		return fmt.Errorf("write workdir: %w", putErr)
 	}
-
-	err = a.workdir.PutStream(ctx, filePath, bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("write workdir: %w", err)
+	if closeErr != nil {
+		return fmt.Errorf("close blob source %s: %w", filePath, closeErr)
 	}
 	return nil
 }

@@ -1,10 +1,21 @@
 package adapters
 
-// All network methods on R2Repository route through retry.Do / retry.DoVoid.
-// Classification lives in r2_classify.go (r2Retryable). Transient retries
-// publish RetryAttemptInfo on the events channel — same channel that
-// carries UploadProgress / DownloadProgress. Retry delays are zero under
-// `go test` via testing.Testing() inside internal/adapters/retry.
+// R2Repository delegates retry, rewind, and error classification to
+// aws-sdk-go-v2's built-in retry.Standard middleware (configured in
+// setupS3Client). R2 methods are thin one-shot wrappers — the SDK owns:
+//   - attempt count + backoff (retry.Standard)
+//   - transient error classification (retry.Retryables: net, 5xx, 408,
+//     429, throttling codes)
+//   - body rewind for seekable PutObject bodies (finalize middleware)
+//   - adaptive token bucket (disabled by default; enable via RetryMode)
+//
+// Non-seekable bodies passed to PutStream are uploaded once and not
+// retried — SDK behaviour, matches the spec's "retry happens at the verb
+// level" stance: caller reruns the verb, next round sees fresh bytes.
+//
+// isNotFound remains local because the Exists gate maps {NotFound,
+// NoSuchKey, 404} → (false, nil) — that's storage-repo semantics, not a
+// retry classifier.
 
 import (
 	"bytes"
@@ -15,13 +26,12 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"ritual/internal/adapters/retry"
 	appconfig "ritual/internal/config"
 	"ritual/internal/core/ports"
-
-	rg "github.com/avast/retry-go/v4"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsretry "github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -55,10 +65,19 @@ func (r *R2Repository) String() string {
 	return "r2::" + r.bucket + "/" + r.prefix
 }
 
+// newRetryer returns the SDK retryer config applied to every R2 client.
+func newRetryer() aws.Retryer {
+	return awsretry.NewStandard(func(o *awsretry.StandardOptions) {
+		o.MaxAttempts = 5
+		o.MaxBackoff = 15 * time.Second
+	})
+}
+
 func setupS3Client(ctx context.Context, accountID string, accessKeyID string, secretAccessKey string) (S3Client, error) {
 	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, "")),
 		config.WithRegion("auto"),
+		config.WithRetryer(newRetryer),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
@@ -101,122 +120,84 @@ func (r *R2Repository) WithPrefix(prefix string) *R2Repository {
 	return r
 }
 
-// publish emits an event on the bus (nil-safe).
-func (r *R2Repository) publish(evt ports.Event) {
-	if r.bus != nil {
-		r.bus.Publish(evt)
-	}
-}
-
-// retryOpts returns per-call options: classifier + retry-event hook.
-// The closure captures op+key so the published event is self-describing.
-func (r *R2Repository) retryOpts(op, key string) []rg.Option {
-	return []rg.Option{
-		rg.RetryIf(r2Retryable),
-		rg.OnRetry(func(n uint, err error) {
-			r.publish(RetryAttemptInfo{
-				Operation: op,
-				Key:       key,
-				Attempt:   n + 1,
-				Err:       err,
-			})
-		}),
-	}
-}
-
-// Get reads an object from R2 and returns its bytes.
+// Get reads an object from R2 and returns its bytes. Retries handled by SDK.
 func (r *R2Repository) Get(ctx context.Context, key string) ([]byte, error) {
 	key = filepath.ToSlash(key)
-	return retry.Do(ctx, func(ctx context.Context) ([]byte, error) {
-		result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(r.bucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to get object %s: %w", key, err)
-		}
-		defer func() { _ = result.Body.Close() }()
-		return io.ReadAll(result.Body)
-	}, r.retryOpts("r2.Get", key)...)
+	result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(r.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object %s: %w", key, err)
+	}
+	defer func() { _ = result.Body.Close() }()
+	return io.ReadAll(result.Body)
 }
 
 // GetStream retrieves object body by key as a streaming reader. Caller closes
-// the returned ReadCloser. Wraps GetObject in retry; body is the S3 response body.
+// the returned ReadCloser. Retries handled by SDK.
 func (r *R2Repository) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
 	key = filepath.ToSlash(key)
-	return retry.Do(ctx, func(ctx context.Context) (io.ReadCloser, error) {
-		result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(r.bucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to get object %s: %w", key, err)
-		}
-		return result.Body, nil
-	}, r.retryOpts("r2.GetStream", key)...)
+	result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(r.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object %s: %w", key, err)
+	}
+	return result.Body, nil
 }
 
-// PutStream uploads body under key. Size is discovered via body.Seek, and body
-// is rewound before every attempt so retries send the full payload.
-func (r *R2Repository) PutStream(ctx context.Context, key string, body io.ReadSeeker) error {
+// PutStream uploads body under key. SDK-level retry middleware rewinds
+// seekable bodies on each attempt; non-seekable bodies upload once and
+// surface the first failure to the caller (retry lives at the verb
+// level per spec §Pull/Push — ACID).
+func (r *R2Repository) PutStream(ctx context.Context, key string, body io.Reader) error {
 	key = filepath.ToSlash(key)
-	size, err := body.Seek(0, io.SeekEnd)
+	_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(r.bucket),
+		Key:    aws.String(key),
+		Body:   body,
+	})
 	if err != nil {
-		return fmt.Errorf("failed to size body for %s: %w", key, err)
+		return fmt.Errorf("failed to put object %s: %w", key, err)
 	}
-	return retry.DoVoid(ctx, func(ctx context.Context) error {
-		if _, err := body.Seek(0, io.SeekStart); err != nil {
-			return retry.Fatal(fmt.Errorf("failed to rewind body for %s: %w", key, err))
-		}
-		_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(r.bucket),
-			Key:           aws.String(key),
-			Body:          body,
-			ContentLength: aws.Int64(size),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to put object %s: %w", key, err)
-		}
-		return nil
-	}, r.retryOpts("r2.PutStream", key)...)
+	return nil
 }
 
 // Exists reports whether key is present. HeadObject surfaces a NotFound /
 // NoSuchKey APIError when the object is absent; both map to (false, nil).
+// Retries handled by SDK.
 func (r *R2Repository) Exists(ctx context.Context, key string) (bool, error) {
 	key = filepath.ToSlash(key)
-	return retry.Do(ctx, func(ctx context.Context) (bool, error) {
-		_, err := r.client.HeadObject(ctx, &s3.HeadObjectInput{
-			Bucket: aws.String(r.bucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			if isNotFound(err) {
-				return false, nil
-			}
-			return false, fmt.Errorf("failed to head object %s: %w", key, err)
+	_, err := r.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(r.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return false, nil
 		}
-		return true, nil
-	}, r.retryOpts("r2.Exists", key)...)
+		return false, fmt.Errorf("failed to head object %s: %w", key, err)
+	}
+	return true, nil
 }
 
-// Put uploads data under key to R2.
+// Put uploads data under key to R2 with Content-MD5 for server-side integrity verification.
 func (r *R2Repository) Put(ctx context.Context, key string, data []byte) error {
 	key = filepath.ToSlash(key)
 	md5sum := md5.Sum(data) // #nosec G401 -- AWS S3 Content-MD5 header, not cryptographic use.
 	contentMD5 := base64.StdEncoding.EncodeToString(md5sum[:])
-	return retry.DoVoid(ctx, func(ctx context.Context) error {
-		_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:     aws.String(r.bucket),
-			Key:        aws.String(key),
-			Body:       bytes.NewReader(data),
-			ContentMD5: &contentMD5,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to put object %s: %w", key, err)
-		}
-		return nil
-	}, r.retryOpts("r2.Put", key)...)
+	_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:     aws.String(r.bucket),
+		Key:        aws.String(key),
+		Body:       bytes.NewReader(data),
+		ContentMD5: &contentMD5,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to put object %s: %w", key, err)
+	}
+	return nil
 }
 
 // Delete removes everything matching key as a tree-delete:
@@ -244,40 +225,36 @@ func (r *R2Repository) Rename(ctx context.Context, sourceKey string, destKey str
 		return err
 	}
 	sourceKey = filepath.ToSlash(sourceKey)
-	return retry.DoVoid(ctx, func(ctx context.Context) error {
-		_, err := r.client.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(r.bucket),
-			Key:    aws.String(sourceKey),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to delete source %s: %w", sourceKey, err)
-		}
-		return nil
-	}, r.retryOpts("r2.Rename.Delete", sourceKey)...)
+	_, err := r.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(r.bucket),
+		Key:    aws.String(sourceKey),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete source %s: %w", sourceKey, err)
+	}
+	return nil
 }
 
 // List returns keys under the given prefix.
 func (r *R2Repository) List(ctx context.Context, prefix string) ([]string, error) {
 	prefix = filepath.ToSlash(prefix)
-	return retry.Do(ctx, func(ctx context.Context) ([]string, error) {
-		result, err := r.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket: aws.String(r.bucket),
-			Prefix: aws.String(prefix),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to list objects with prefix %s: %w", prefix, err)
+	result, err := r.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String(r.bucket),
+		Prefix: aws.String(prefix),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list objects with prefix %s: %w", prefix, err)
+	}
+	keys := make([]string, 0, len(result.Contents))
+	for _, obj := range result.Contents {
+		if obj.Key != nil {
+			keys = append(keys, *obj.Key)
 		}
-		keys := make([]string, 0, len(result.Contents))
-		for _, obj := range result.Contents {
-			if obj.Key != nil {
-				keys = append(keys, *obj.Key)
-			}
-		}
-		return keys, nil
-	}, r.retryOpts("r2.List", prefix)...)
+	}
+	return keys, nil
 }
 
-// Copy copies data from source key to destination key
+// Copy copies data from source key to destination key.
 func (r *R2Repository) Copy(ctx context.Context, sourceKey string, destKey string) error {
 	if ctx == nil {
 		return errors.New("context cannot be nil")
@@ -302,17 +279,15 @@ func (r *R2Repository) Copy(ctx context.Context, sourceKey string, destKey strin
 	destKey = filepath.ToSlash(destKey)
 	sourceURI := fmt.Sprintf("%s/%s", r.bucket, sourceKey)
 
-	return retry.DoVoid(ctx, func(ctx context.Context) error {
-		_, err := r.client.CopyObject(ctx, &s3.CopyObjectInput{
-			Bucket:     aws.String(r.bucket),
-			Key:        aws.String(destKey),
-			CopySource: aws.String(sourceURI),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to copy object from %s to %s: %w", sourceKey, destKey, err)
-		}
-		return nil
-	}, r.retryOpts("r2.Copy", destKey)...)
+	_, err := r.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(r.bucket),
+		Key:        aws.String(destKey),
+		CopySource: aws.String(sourceURI),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to copy object from %s to %s: %w", sourceKey, destKey, err)
+	}
+	return nil
 }
 
 // DeleteBatch removes keys from R2 in 1000-object batches (S3 API limit).
@@ -329,18 +304,12 @@ func (r *R2Repository) DeleteBatch(ctx context.Context, keys []string) error {
 			k := key
 			objects[j] = types.ObjectIdentifier{Key: &k}
 		}
-		err := retry.DoVoid(ctx, func(ctx context.Context) error {
-			_, err := r.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
-				Bucket: &r.bucket,
-				Delete: &types.Delete{Objects: objects, Quiet: aws.Bool(true)},
-			})
-			if err != nil {
-				return fmt.Errorf("batch delete failed: %w", err)
-			}
-			return nil
-		}, r.retryOpts("r2.DeleteBatch", "")...)
+		_, err := r.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+			Bucket: &r.bucket,
+			Delete: &types.Delete{Objects: objects, Quiet: aws.Bool(true)},
+		})
 		if err != nil {
-			return err
+			return fmt.Errorf("batch delete failed: %w", err)
 		}
 	}
 	return nil

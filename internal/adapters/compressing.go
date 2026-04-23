@@ -1,11 +1,11 @@
 package adapters
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"ritual/internal/core/ports"
 	"strconv"
@@ -99,13 +99,24 @@ func (c *CompressingStorage) Exists(ctx context.Context, key string) (bool, erro
 	return c.inner.Exists(ctx, key)
 }
 
-// PutStream consumes body, zstd-compresses it into a memory-resident buffer,
-// then hands that buffer to inner.PutStream. The decorator's single encoder
-// is reset per call under encMu; io.CopyBuffer uses a pooled 64 KB scratch.
-func (c *CompressingStorage) PutStream(ctx context.Context, key string, body io.ReadSeeker) error {
-	var sink bytes.Buffer
+// PutStream consumes body, zstd-compresses it to a local tempfile, then
+// hands the rewound *os.File to inner.PutStream. Tempfile spool (not a
+// memory buffer) keeps RAM flat regardless of blob size; the inner
+// adapter receives a native io.ReadSeeker so SDK-level retry rewind
+// works without a secondary buffer. The tempfile is removed on return
+// whether inner succeeds or fails.
+func (c *CompressingStorage) PutStream(ctx context.Context, key string, body io.Reader) error {
+	tmp, err := os.CreateTemp("", "ritual-cmprs-*")
+	if err != nil {
+		return fmt.Errorf("failed to open compression spool for %s: %w", key, err)
+	}
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+	}()
+
 	c.encMu.Lock()
-	c.enc.Reset(&sink)
+	c.enc.Reset(tmp)
 	bufPtr := c.bufPool.Get().(*[]byte)
 	_, copyErr := io.CopyBuffer(c.enc, body, *bufPtr)
 	c.bufPool.Put(bufPtr)
@@ -117,7 +128,10 @@ func (c *CompressingStorage) PutStream(ctx context.Context, key string, body io.
 	if closeErr != nil {
 		return fmt.Errorf("failed to finalize compressed %s: %w", key, closeErr)
 	}
-	return c.inner.PutStream(ctx, key, bytes.NewReader(sink.Bytes()))
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("failed to rewind compression spool for %s: %w", key, err)
+	}
+	return c.inner.PutStream(ctx, key, tmp)
 }
 
 // GetStream returns a reader that decompresses the inner body and verifies

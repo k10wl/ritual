@@ -179,7 +179,7 @@ func (c *keyCounter) GetStream(ctx context.Context, key string) (io.ReadCloser, 
 	return rc, nil
 }
 
-func (c *keyCounter) PutStream(ctx context.Context, key string, body io.ReadSeeker) error {
+func (c *keyCounter) PutStream(ctx context.Context, key string, body io.Reader) error {
 	err := c.inner.PutStream(ctx, key, body)
 	if err != nil {
 		return err

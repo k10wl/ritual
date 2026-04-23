@@ -210,7 +210,7 @@ func (f *failingPutStorage) GetStream(ctx context.Context, key string) (io.ReadC
 	return f.inner.GetStream(ctx, key)
 }
 
-func (f *failingPutStorage) PutStream(ctx context.Context, key string, body io.ReadSeeker) error {
+func (f *failingPutStorage) PutStream(ctx context.Context, key string, body io.Reader) error {
 	if f.failOn != "" && contains(key, f.failOn) {
 		return errors.New("forced put failure")
 	}

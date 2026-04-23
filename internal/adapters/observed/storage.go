@@ -100,21 +100,35 @@ func (o *observedStorage) GetStream(ctx context.Context, key string) (io.ReadClo
 	}, nil
 }
 
-// PutStream discovers body size via Seek before handing off to the inner call,
-// then publishes StoragePutStreamInfo with that size on completion.
-func (o *observedStorage) PutStream(ctx context.Context, key string, body io.ReadSeeker) error {
+// PutStream publishes StoragePutStreamInfo with the intended object size.
+// When body is seekable the size is discovered via Seek(0,End) before the
+// inner call (preserving prior behaviour so event consumers still see the
+// "intended" size on failure). When body is a plain Reader — pull's rc
+// from a non-seekable remote — a byte-counting tap records bytes actually
+// consumed and the event reports that instead.
+func (o *observedStorage) PutStream(ctx context.Context, key string, body io.Reader) error {
 	start := time.Now()
-	size, seekErr := body.Seek(0, io.SeekEnd)
-	if seekErr == nil {
-		_, seekErr = body.Seek(0, io.SeekStart)
+	if seeker, ok := body.(io.Seeker); ok {
+		size, sizeErr := seekableSize(seeker)
+		if sizeErr == nil {
+			putErr := o.inner.PutStream(ctx, key, body)
+			o.publish(StoragePutStreamInfo{Store: o.label, Key: key, Bytes: size, DurationMs: sinceMs(start), Err: putErr})
+			return putErr
+		}
 	}
-	if seekErr != nil {
-		o.publish(StoragePutStreamInfo{Store: o.label, Key: key, DurationMs: sinceMs(start), Err: seekErr})
-		return seekErr
+	tap := &countingReader{inner: body}
+	putErr := o.inner.PutStream(ctx, key, tap)
+	o.publish(StoragePutStreamInfo{Store: o.label, Key: key, Bytes: tap.Count(), DurationMs: sinceMs(start), Err: putErr})
+	return putErr
+}
+
+func seekableSize(s io.Seeker) (int64, error) {
+	end, err := s.Seek(0, io.SeekEnd)
+	if err != nil {
+		return 0, err
 	}
-	err := o.inner.PutStream(ctx, key, body)
-	o.publish(StoragePutStreamInfo{Store: o.label, Key: key, Bytes: size, DurationMs: sinceMs(start), Err: err})
-	return err
+	_, err = s.Seek(0, io.SeekStart)
+	return end, err
 }
 
 // Exists wraps the inner call and publishes StorageExistsInfo with hit/miss.
@@ -149,6 +163,23 @@ func (c *countingReadCloser) Close() error {
 	c.onClose(c.n, err)
 	return err
 }
+
+// countingReader is the fallback tap for non-seekable bodies: records
+// bytes delivered to the inner adapter so the completion event can still
+// report an accurate Bytes value when pre-discovery via Seek is not
+// available.
+type countingReader struct {
+	inner io.Reader
+	n     int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	read, err := c.inner.Read(p)
+	c.n += int64(read)
+	return read, err
+}
+
+func (c *countingReader) Count() int64 { return c.n }
 
 func (o *observedStorage) List(ctx context.Context, prefix string) ([]string, error) {
 	start := time.Now()
