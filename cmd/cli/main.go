@@ -117,18 +117,15 @@ func run(ctx context.Context) error {
 	defer stopHeartbeat()
 	sysInfo := adapters.NewSystemInfo()
 	javaInfo := adapters.NewJavaInfo()
-	conds, err := conditions.Build(remoteManifest, remoteManifests, sysInfo, javaInfo)
-	if err != nil {
-		return fmt.Errorf("conditions: %w", err)
-	}
 	rets, err := retention.Build(localStorage, remoteStorage, bus, remoteManifest)
 	if err != nil {
 		return fmt.Errorf("retention: %w", err)
 	}
-	settings, err := services.PromptSettings(ctx, bus, prompter, remoteManifest.GetMinRAMMB())
+	settings, err := services.PromptSettings(ctx, bus, prompter)
 	if err != nil {
 		return fmt.Errorf("settings: %w", err)
 	}
+	preflightChecks := conditions.Build(settings, sysInfo, javaInfo, bus)
 	cmdBuilder, err := adapters.NewServerCmdBuilder(workRoot, remoteManifest.Server.StartScript, settings.ToServerRuntime)
 	if err != nil {
 		return fmt.Errorf("cmd builder: %w", err)
@@ -140,7 +137,7 @@ func run(ctx context.Context) error {
 		bus,
 		localStorage, remoteStorage,
 		localManifests, remoteManifests,
-		conds, sk.Updaters, sk.ExitUpdaters, rets,
+		preflightChecks, sk.Updaters, sk.ExitUpdaters, rets,
 		cmdBuilder,
 		readiness,
 	)

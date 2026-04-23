@@ -46,6 +46,7 @@ import (
 	"ritual/internal/adapters/observed"
 	"ritual/internal/app"
 	"ritual/internal/config"
+	"ritual/internal/core/checks"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/services"
@@ -292,13 +293,13 @@ func (r *testRitual) startRitual(t *testing.T) *fakeServer {
 	return r.startRitualWithConditions(t)
 }
 
-func (r *testRitual) startRitualWithConditions(t *testing.T, conds ...ports.ConditionService) *fakeServer {
+func (r *testRitual) startRitualWithConditions(t *testing.T, cs ...checks.Check) *fakeServer {
 	t.Helper()
 	server := r.fakerun()
-	return r.startRitualFull(t, conds, server)
+	return r.startRitualFull(t, cs, server)
 }
 
-func (r *testRitual) startRitualFull(t *testing.T, conditions []ports.ConditionService, server *fakeServer) *fakeServer {
+func (r *testRitual) startRitualFull(t *testing.T, preflightChecks []checks.Check, server *fakeServer) *fakeServer {
 	t.Helper()
 
 	worldsPath := filepath.Join(r.localDir, config.WorldsDir)
@@ -325,7 +326,7 @@ func (r *testRitual) startRitualFull(t *testing.T, conditions []ports.ConditionS
 		r.bus,
 		r.local, r.remote,
 		r.localManifests, r.remoteManifests,
-		conditions,
+		preflightChecks,
 		[]ports.UpdaterService{downloader},
 		[]ports.UpdaterService{uploader},
 		nil,
@@ -628,23 +629,10 @@ func (r *testRitual) assertNoStagingFiles(t *testing.T, msg string) {
 
 // ---------- condition helpers ----------
 
-type alwaysFailCondition struct {
-	reason string
-}
-
-func (c alwaysFailCondition) Check(_ context.Context) error {
-	return fmt.Errorf("%s", c.reason)
-}
-
-func failCondition(reason string) alwaysFailCondition {
-	return alwaysFailCondition{reason: reason}
-}
-
-func manifestLockCondition(t *testing.T, r *testRitual) ports.ConditionService {
-	t.Helper()
-	cond, err := services.NewManifestLockCondition(r.remoteManifests)
-	require.NoError(t, err, "create manifest lock condition")
-	return cond
+func failCheck(reason string) checks.Check {
+	return func(_ context.Context) error {
+		return fmt.Errorf("%s", reason)
+	}
 }
 
 // ---------- failOnceUpdater ----------
@@ -923,24 +911,13 @@ func TestIntegration_ConditionFails_NothingTouched(t *testing.T) {
 		file("world/level.dat", []byte("level")),
 	)
 
-	ritual.startRitualWithConditions(t, failCondition("insufficient disk space"))
+	ritual.startRitualWithConditions(t, failCheck("insufficient disk space"))
 	ritual.waitFailed(t)
 
 	ritual.assertLocalFileMissing(t, "world/level.dat",
 		"condition failed at checking — no files should be downloaded")
 	ritual.assertManifestUnlocked(t,
 		"condition failed before lock — both manifests should remain unlocked")
-}
-
-func TestIntegration_ManifestLocked_RejectStart(t *testing.T) {
-	ritual := newRitual(t)
-
-	seedRemoteManifest(t, ritual, &domain.Manifest{LockedBy: "other-host"})
-	ritual.startRitualWithConditions(t, manifestLockCondition(t, ritual))
-	ritual.waitFailed(t)
-
-	ritual.assertManifestLockedBy(t, "other-host",
-		"remote manifest should still be locked by original host — we should not touch it")
 }
 
 func TestIntegration_LeaseExpired_TakesOverAndCompletes(t *testing.T) {

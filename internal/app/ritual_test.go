@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"ritual/internal/adapters"
 	"ritual/internal/app"
+	"ritual/internal/core/checks"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/stages/retaining"
@@ -42,9 +43,7 @@ func (fakeManifestStore) Get(_ context.Context) (*domain.Manifest, error) {
 }
 func (fakeManifestStore) Save(_ context.Context, _ *domain.Manifest) error { return nil }
 
-type noopCondition struct{}
-
-func (noopCondition) Check(_ context.Context) error { return nil }
+func noopCheck(_ context.Context) error { return nil }
 
 type noopUpdater struct{}
 
@@ -85,7 +84,7 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 		bus,
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
-		[]ports.ConditionService{noopCondition{}},
+		[]checks.Check{noopCheck},
 		[]ports.UpdaterService{noopUpdater{}},
 		[]ports.UpdaterService{noopUpdater{}},
 		[]retaining.Job{noopJob},
@@ -126,7 +125,7 @@ func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 		bus,
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
-		[]ports.ConditionService{noopCondition{}},
+		[]checks.Check{noopCheck},
 		[]ports.UpdaterService{flaky},
 		[]ports.UpdaterService{noopUpdater{}},
 		[]retaining.Job{noopJob},
@@ -197,7 +196,7 @@ func TestRitual_Start_AfterDone_StartsAgain(t *testing.T) {
 		bus,
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
-		[]ports.ConditionService{noopCondition{}},
+		[]checks.Check{noopCheck},
 		[]ports.UpdaterService{noopUpdater{}},
 		[]ports.UpdaterService{noopUpdater{}},
 		[]retaining.Job{noopJob},

@@ -119,14 +119,6 @@ type UpdaterService interface {
 	Run(ctx context.Context) error
 }
 
-// ConditionService defines the interface for pre-flight condition checks
-// Conditions validate system prerequisites before updaters can run
-type ConditionService interface {
-	// Check validates the condition
-	// Returns nil if condition passes, error with descriptive message if fails
-	Check(ctx context.Context) error
-}
-
 // DirectoryScanner produces a file map keyed by relative path with content
 // hash + size for every file in the worlds directory. Implementations
 // determine scanning strategy (full walk vs mtime-filtered).

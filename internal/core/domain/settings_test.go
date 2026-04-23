@@ -2,67 +2,79 @@ package domain
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"ritual/internal/config"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDefaultSettings(t *testing.T) {
 	settings := DefaultSettings()
 
-	if settings.Port != 25565 {
-		t.Errorf("expected Port 25565, got %d", settings.Port)
-	}
-	if settings.Memory != 4096 {
-		t.Errorf("expected Memory 4096, got %d", settings.Memory)
+	assert.Equal(t, 25565, settings.Port, "default Port must match documented value")
+	assert.Equal(t, 4096, settings.Memory, "default Memory must match documented value")
+	assert.Equal(t, config.DefaultMinRAMMB, settings.MinRAMMB, "default MinRAMMB must come from config defaults so manifest fallback parity holds")
+	assert.Equal(t, config.DefaultMinDiskMB, settings.MinDiskMB, "default MinDiskMB must come from config defaults so manifest fallback parity holds")
+	assert.Equal(t, config.DefaultMinJavaVersion, settings.MinJavaVersion, "default MinJavaVersion must come from config defaults so manifest fallback parity holds")
+}
+
+func validSettings() *Settings {
+	return &Settings{
+		Port:           25565,
+		Memory:         4096,
+		MinRAMMB:       config.DefaultMinRAMMB,
+		MinDiskMB:      config.DefaultMinDiskMB,
+		MinJavaVersion: config.DefaultMinJavaVersion,
 	}
 }
 
-func TestSettingsValidate(t *testing.T) {
+func TestSettingsValidate_AcceptsFullyPopulatedSettings(t *testing.T) {
+	require.NoError(t, validSettings().Validate(), "fully populated defaults must pass Validate")
+}
+
+func TestSettingsValidate_RejectsInvalidPortAndMemory(t *testing.T) {
 	tests := []struct {
 		name     string
-		settings *Settings
-		wantErr  bool
+		mutate   func(*Settings)
 	}{
-		{
-			name:     "valid settings",
-			settings: &Settings{Port: 25565, Memory: 4096},
-			wantErr:  false,
-		},
-		{
-			name:     "zero port",
-			settings: &Settings{Port: 0, Memory: 4096},
-			wantErr:  true,
-		},
-		{
-			name:     "negative port",
-			settings: &Settings{Port: -1, Memory: 4096},
-			wantErr:  true,
-		},
-		{
-			name:     "port too high",
-			settings: &Settings{Port: 65536, Memory: 4096},
-			wantErr:  true,
-		},
-		{
-			name:     "zero memory",
-			settings: &Settings{Port: 25565, Memory: 0},
-			wantErr:  true,
-		},
-		{
-			name:     "negative memory",
-			settings: &Settings{Port: 25565, Memory: -1},
-			wantErr:  true,
-		},
+		{"zero port", func(s *Settings) { s.Port = 0 }},
+		{"negative port", func(s *Settings) { s.Port = -1 }},
+		{"port too high", func(s *Settings) { s.Port = 65536 }},
+		{"zero memory", func(s *Settings) { s.Memory = 0 }},
+		{"negative memory", func(s *Settings) { s.Memory = -1 }},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.settings.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
+			s := validSettings()
+			tt.mutate(s)
+			assert.Error(t, s.Validate(), "%s must fail Validate", tt.name)
+		})
+	}
+}
+
+func TestSettingsValidate_RejectsZeroOrNegativeThresholds(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Settings)
+	}{
+		{"zero MinRAMMB", func(s *Settings) { s.MinRAMMB = 0 }},
+		{"negative MinRAMMB", func(s *Settings) { s.MinRAMMB = -1 }},
+		{"zero MinDiskMB", func(s *Settings) { s.MinDiskMB = 0 }},
+		{"negative MinDiskMB", func(s *Settings) { s.MinDiskMB = -1 }},
+		{"zero MinJavaVersion", func(s *Settings) { s.MinJavaVersion = 0 }},
+		{"negative MinJavaVersion", func(s *Settings) { s.MinJavaVersion = -1 }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := validSettings()
+			tt.mutate(s)
+			assert.Error(t, s.Validate(), "%s must fail Validate so misconfigured pre-flight thresholds cannot start a session", tt.name)
 		})
 	}
 }
@@ -136,7 +148,13 @@ func TestSettingsSavePrettyPrints(t *testing.T) {
 	config.RootPath = tempDir
 	defer func() { config.RootPath = originalRootPath }()
 
-	settings := &Settings{Port: 25565, Memory: 4096}
+	settings := &Settings{
+		Port:           25565,
+		Memory:         4096,
+		MinRAMMB:       config.DefaultMinRAMMB,
+		MinDiskMB:      config.DefaultMinDiskMB,
+		MinJavaVersion: config.DefaultMinJavaVersion,
+	}
 	err := settings.Save()
 	if err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -147,16 +165,19 @@ func TestSettingsSavePrettyPrints(t *testing.T) {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 
-	expected := `{
+	expected := fmt.Sprintf(`{
   "port": 25565,
   "memory": 4096,
+  "min_ram_mb": %d,
+  "min_disk_mb": %d,
+  "min_java_version": %d,
   "local_retention": {
     "keep_last": 0,
     "keep_daily": 0,
     "keep_weekly": 0,
     "keep_monthly": 0
   }
-}`
+}`, config.DefaultMinRAMMB, config.DefaultMinDiskMB, config.DefaultMinJavaVersion)
 	if string(content) != expected {
 		t.Errorf("expected pretty printed JSON:\n%s\n\ngot:\n%s", expected, string(content))
 	}
@@ -175,4 +196,25 @@ func TestLoadSettings_MissingRetention_UsesZeroValue(t *testing.T) {
 	if s.LocalRetention != (RetentionRules{}) {
 		t.Errorf("LocalRetention = %+v, want zero (missing field)", s.LocalRetention)
 	}
+}
+
+func TestLoadSettings_BackfillsMissingThresholds(t *testing.T) {
+	tempDir := t.TempDir()
+	originalRootPath := config.RootPath
+	config.RootPath = tempDir
+	defer func() { config.RootPath = originalRootPath }()
+
+	v1 := []byte(`{"port":25570,"memory":8192}`)
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, SettingsFilename), v1, 0o644),
+		"seed a v1 settings.json (no min_* fields) so the loader can be exercised")
+
+	loaded, err := LoadSettings()
+	require.NoError(t, err, "LoadSettings must succeed against a v1 settings.json after a binary upgrade")
+
+	assert.Equal(t, 25570, loaded.Port, "explicit fields from disk must survive backfill")
+	assert.Equal(t, 8192, loaded.Memory, "explicit fields from disk must survive backfill")
+	assert.Equal(t, config.DefaultMinRAMMB, loaded.MinRAMMB, "missing MinRAMMB must be backfilled to the documented default")
+	assert.Equal(t, config.DefaultMinDiskMB, loaded.MinDiskMB, "missing MinDiskMB must be backfilled to the documented default")
+	assert.Equal(t, config.DefaultMinJavaVersion, loaded.MinJavaVersion, "missing MinJavaVersion must be backfilled to the documented default")
+	assert.NoError(t, loaded.Validate(), "backfilled settings must pass Validate so users do not see errors after upgrade")
 }

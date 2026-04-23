@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"ritual/internal/config"
+	"ritual/internal/core/checks"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
@@ -31,7 +32,7 @@ type Ritual struct {
 	remoteStorage   ports.StorageRepository
 	localManifests  ports.ManifestStore
 	remoteManifests ports.ManifestStore
-	conds           []ports.ConditionService
+	checks          []checks.Check
 	updaters        []ports.UpdaterService
 	exitUpdaters    []ports.UpdaterService
 	retentions      []retaining.Job
@@ -52,7 +53,7 @@ func New(
 	remoteStorage ports.StorageRepository,
 	localManifests ports.ManifestStore,
 	remoteManifests ports.ManifestStore,
-	conditions []ports.ConditionService,
+	preflightChecks []checks.Check,
 	updaters []ports.UpdaterService,
 	exitUpdaters []ports.UpdaterService,
 	retentions []retaining.Job,
@@ -65,7 +66,7 @@ func New(
 		remoteStorage:   remoteStorage,
 		localManifests:  localManifests,
 		remoteManifests: remoteManifests,
-		conds:           conditions,
+		checks:          preflightChecks,
 		updaters:        updaters,
 		exitUpdaters:    exitUpdaters,
 		retentions:      retentions,
@@ -192,7 +193,7 @@ func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
 	rollback := unlocking.New(r.localManifests, r.remoteManifests, failAcq)
 	acquire := acquiring.New(r.localManifests, r.remoteManifests, run, failAcq, rollback)
 	fetch := fetching.New(r.updaters, acquire, failFetch)
-	check := checking.New(r.conds, fetch, failCheck)
+	check := checking.New(r.checks, fetch, failCheck)
 
 	failCheck.SetRetry(check)
 	failFetch.SetRetry(fetch)

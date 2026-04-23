@@ -19,11 +19,10 @@ func publishEvt(bus ports.EventBus, evt ports.Event) {
 
 // PromptSettings loads existing settings and prompts the user via the
 // Prompter port for each configurable value. Validation feedback is
-// published to the event bus.
-//
-// minRAMMB is the minimum RAM requirement from the remote manifest (MB).
-// Returns validated and saved settings.
-func PromptSettings(ctx context.Context, bus ports.EventBus, prompter ports.Prompter, minRAMMB int) (*domain.Settings, error) {
+// published to the event bus. The minimum RAM threshold used to gate the
+// memory prompt comes from the loaded settings (MinRAMMB), not a remote
+// manifest. Returns validated and saved settings.
+func PromptSettings(ctx context.Context, bus ports.EventBus, prompter ports.Prompter) (*domain.Settings, error) {
 	if prompter == nil {
 		return nil, errors.New("prompter cannot be nil")
 	}
@@ -32,7 +31,7 @@ func PromptSettings(ctx context.Context, bus ports.EventBus, prompter ports.Prom
 		return nil, fmt.Errorf("failed to load existing settings: %w", err)
 	}
 
-	minRAMGB := minRAMMB / 1024
+	minRAMGB := settings.MinRAMMB / 1024
 	if minRAMGB < 1 {
 		minRAMGB = 1
 	}
