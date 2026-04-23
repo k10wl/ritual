@@ -113,7 +113,7 @@ func main() {
 	})
 
 	ctx := wailsApp.Context()
-	go runtime.ritual.Listen(ctx)
+	runtime.ritual.Listen(ctx)
 	go runtime.projection.Run(ctx)
 	go runtime.logsink.Run(ctx)
 	runtime.bus.Publish(app.StatusChanged{Status: app.Idle})

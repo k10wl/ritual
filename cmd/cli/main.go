@@ -166,7 +166,7 @@ func run(ctx context.Context) error {
 		}
 	}()
 
-	go r.Listen(ctx)
+	r.Listen(ctx)
 	bus.Publish(app.StartRequested{})
 	return <-done
 }

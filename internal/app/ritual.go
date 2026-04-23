@@ -77,10 +77,18 @@ func New(
 	return r
 }
 
-// Listen subscribes to the bus and dispatches command events until ctx
-// is cancelled or the channel closes.
+// Listen subscribes to the bus and spawns a goroutine that dispatches
+// command events until ctx is cancelled or the channel closes. Subscription
+// happens synchronously before Listen returns — callers that Publish on the
+// bus immediately after Listen returns are guaranteed delivery. Wrapping
+// Listen in `go` is a race: the goroutine may not have subscribed by the
+// time Publish fans out, silently dropping the event.
 func (r *Ritual) Listen(ctx context.Context) {
 	ch, unsub := r.bus.Subscribe()
+	go r.consume(ctx, ch, unsub)
+}
+
+func (r *Ritual) consume(ctx context.Context, ch <-chan ports.Event, unsub func()) {
 	defer unsub()
 	for {
 		select {

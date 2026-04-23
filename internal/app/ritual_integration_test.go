@@ -333,9 +333,7 @@ func (r *testRitual) startRitualFull(t *testing.T, conditions []ports.ConditionS
 		immediateReady{},
 	)
 
-	go ritual.Listen(r.ctx)
-	time.Sleep(20 * time.Millisecond)
-
+	ritual.Listen(r.ctx)
 	r.bus.Publish(app.StartRequested{})
 	return server
 }
@@ -1003,8 +1001,7 @@ func (r *testRitual) startRitualWithFlakyUpdater(t *testing.T, flaky ports.Updat
 		immediateReady{},
 	)
 
-	go rit.Listen(r.ctx)
-	time.Sleep(20 * time.Millisecond)
+	rit.Listen(r.ctx)
 	r.bus.Publish(app.StartRequested{})
 	return server
 }
@@ -1360,8 +1357,7 @@ func (r *testRitual) startRitualWithLiveSync(t *testing.T) {
 		immediateReady{},
 	)
 
-	go rit.Listen(r.ctx)
-	time.Sleep(20 * time.Millisecond)
+	rit.Listen(r.ctx)
 	r.bus.Publish(app.StartRequested{})
 }
 

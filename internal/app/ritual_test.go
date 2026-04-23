@@ -95,10 +95,7 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go r.Listen(ctx)
-
-	// Yield so Listen goroutine subscribes before we publish.
-	time.Sleep(20 * time.Millisecond)
+	r.Listen(ctx)
 	bus.Publish(app.StartRequested{})
 	waitForStatus(t, ch, app.Done, 5*time.Second)
 
@@ -139,8 +136,7 @@ func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go r.Listen(ctx)
-	time.Sleep(20 * time.Millisecond)
+	r.Listen(ctx)
 
 	bus.Publish(app.StartRequested{})
 	waitForStatus(t, ch, app.Failed, 5*time.Second)
@@ -180,8 +176,7 @@ func TestRitual_Stop_CancelsRunning(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go r.Listen(ctx)
-	time.Sleep(20 * time.Millisecond)
+	r.Listen(ctx)
 
 	bus.Publish(app.StartRequested{})
 	<-blocker.ready
@@ -212,8 +207,7 @@ func TestRitual_Start_AfterDone_StartsAgain(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go r.Listen(ctx)
-	time.Sleep(20 * time.Millisecond)
+	r.Listen(ctx)
 
 	bus.Publish(app.StartRequested{})
 	waitForStatus(t, ch, app.Done, 5*time.Second)
@@ -239,8 +233,7 @@ func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go r.Listen(ctx)
-	time.Sleep(20 * time.Millisecond)
+	r.Listen(ctx)
 
 	bus.Publish(app.RetryRequested{})
 

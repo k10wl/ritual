@@ -87,3 +87,40 @@ func TestEventBus_DeliversAllEventsToAllSubscribers(t *testing.T) {
 		t.Fatalf("sub2 got %d, want 2", n)
 	}
 }
+
+func TestBlockingEventBus_DropsNothingUnderBackpressure(t *testing.T) {
+	bus := adapters.NewBlockingEventBus(2)
+	ch, cancel := bus.Subscribe()
+	defer cancel()
+
+	const n = 50
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < n; i++ {
+			bus.Publish(ritual.StartInfo{Operation: "x"})
+		}
+	}()
+
+	got := 0
+	timeout := time.After(time.Second)
+	for got < n {
+		select {
+		case <-ch:
+			got++
+		case <-timeout:
+			t.Fatalf("blocking bus lost events under backpressure: got %d/%d before 1s timeout — Publish must wait for the slow subscriber, never silently drop", got, n)
+		}
+	}
+	<-done
+}
+
+func TestEventBus_DropsEventsWhenSubscriberBufferFull(t *testing.T) {
+	bus := adapters.NewEventBus(2)
+	_, cancel := bus.Subscribe()
+	defer cancel()
+
+	for i := 0; i < 50; i++ {
+		bus.Publish(ritual.StartInfo{Operation: "x"})
+	}
+}
