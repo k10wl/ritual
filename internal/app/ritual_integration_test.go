@@ -1252,14 +1252,6 @@ func (r *testRitual) startRitualWithLiveSync(t *testing.T) {
 	require.NoError(t, os.MkdirAll(worldsPath, 0o755), "create worlds dir")
 
 	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
-	staging := t.TempDir()
-
-	syncSvc := services.NewSyncService(
-		scanner, r.local, r.remote, r.bus,
-		services.SyncConfig{Prefix: config.WorldsDir, LocalDir: worldsPath},
-		filepath.Join(staging, "local"),
-		"sync/integration/worlds",
-	)
 
 	cmdBuilder := &liveSyncCmdBuilder{binary: fakerunBin, root: r.localDir}
 
@@ -1279,7 +1271,7 @@ func (r *testRitual) startRitualWithLiveSync(t *testing.T) {
 	)
 	rit.SetHeartbeatInterval(20 * time.Millisecond)
 
-	_, stopHeartbeat := heartbeat.Attach(r.bus, rit.Heartbeat, r.localManifests, r.remoteManifests, syncSvc)
+	_, stopHeartbeat := heartbeat.Attach(r.bus, rit.Heartbeat)
 	t.Cleanup(stopHeartbeat)
 
 	rit.Listen(r.ctx)
