@@ -317,24 +317,11 @@ func (r *testRitual) startRitualFull(t *testing.T, preflightChecks []checks.Chec
 	require.NoError(t, os.MkdirAll(worldsPath, 0o755), "create worlds dir")
 
 	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
-	staging := t.TempDir()
-
-	syncSvc := services.NewSyncService(
-		scanner, r.local, r.remote, r.bus,
-		services.SyncConfig{Prefix: config.WorldsDir, LocalDir: worldsPath},
-		filepath.Join(staging, "local"),
-		"sync/integration/worlds",
-	)
-
-	getState := func(m *domain.Manifest) *domain.SyncState { return &m.Worlds.SyncState }
-
-	downloader := services.NewSyncDownloadUpdater(syncSvc, r.localManifests, r.remoteManifests, getState)
-	uploader := services.NewSyncUploader(syncSvc, r.localManifests, r.remoteManifests, getState)
-	_ = downloader
 
 	cmdBuilder := &fakeServerCmdBuilder{server: server}
 
 	puller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
+	committer, pusher, commitTargets := r.buildCommittingVerbs(t, worldsPath, scanner)
 
 	ritual := app.New(
 		r.bus,
@@ -342,7 +329,7 @@ func (r *testRitual) startRitualFull(t *testing.T, preflightChecks []checks.Chec
 		r.localManifests, r.remoteManifests,
 		preflightChecks,
 		puller, applier, headResolver,
-		[]ports.UpdaterService{uploader},
+		committer, pusher, commitTargets,
 		r.localRetentions, r.remoteRetentions,
 		cmdBuilder,
 		immediateReady{},
@@ -443,6 +430,24 @@ func (r *testRitual) buildPullingVerbs(worldsPath string, scanner ports.Director
 		return domain.RefID(head), nil
 	}
 	return puller, applier, resolver
+}
+
+// buildCommittingVerbs constructs committer + pusher wired against the
+// testRitual's local/remote storage. Workdir targets the worlds directory
+// so the committer scans server-mutated files. Targets default to "**" so
+// every file produced by a test scenario is captured without bespoke
+// glob plumbing.
+func (r *testRitual) buildCommittingVerbs(t *testing.T, worldsPath string, scanner ports.DirectoryScanner) (ports.Committer, ports.Pusher, []string) {
+	t.Helper()
+	worldsRoot, err := os.OpenRoot(worldsPath)
+	require.NoError(t, err, "open worlds root for committer")
+	t.Cleanup(func() { worldsRoot.Close() })
+	workdirStorage, err := adapters.NewFSRepository(worldsRoot, "workdir-commit")
+	require.NoError(t, err, "workdir storage for committer")
+	runner := adapters.NewSerialRunner()
+	committer := refs.NewCommitter(scanner, workdirStorage, r.local, runner)
+	pusher := refs.NewPusher(r.local, r.remote, runner)
+	return committer, pusher, []string{"**"}
 }
 
 // ---------- seed helpers ----------
@@ -1069,6 +1074,7 @@ func (r *testRitual) startRitualWithFlakyPuller(t *testing.T, flaky *failOnceInt
 	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
 	realPuller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
 	flaky.inner = realPuller
+	committer, pusher, commitTargets := r.buildCommittingVerbs(t, worldsPath, scanner)
 
 	rit := app.New(
 		r.bus,
@@ -1076,7 +1082,8 @@ func (r *testRitual) startRitualWithFlakyPuller(t *testing.T, flaky *failOnceInt
 		r.localManifests, r.remoteManifests,
 		nil,
 		flaky, applier, headResolver,
-		nil, nil, nil,
+		committer, pusher, commitTargets,
+		nil, nil,
 		cmdBuilder,
 		immediateReady{},
 	)
@@ -1462,15 +1469,10 @@ func (r *testRitual) startRitualWithLiveSync(t *testing.T) {
 		"sync/integration/worlds",
 	)
 
-	getState := func(m *domain.Manifest) *domain.SyncState { return &m.Worlds.SyncState }
-
-	downloader := services.NewSyncDownloadUpdater(syncSvc, r.localManifests, r.remoteManifests, getState)
-	uploader := services.NewSyncUploader(syncSvc, r.localManifests, r.remoteManifests, getState)
-	_ = downloader
-
 	cmdBuilder := &liveSyncCmdBuilder{binary: fakerunBin, root: r.localDir}
 
 	puller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
+	committer, pusher, commitTargets := r.buildCommittingVerbs(t, worldsPath, scanner)
 
 	rit := app.New(
 		r.bus,
@@ -1478,7 +1480,7 @@ func (r *testRitual) startRitualWithLiveSync(t *testing.T) {
 		r.localManifests, r.remoteManifests,
 		nil,
 		puller, applier, headResolver,
-		[]ports.UpdaterService{uploader},
+		committer, pusher, commitTargets,
 		nil, nil,
 		cmdBuilder,
 		immediateReady{},
