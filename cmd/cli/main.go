@@ -31,10 +31,6 @@ var (
 )
 
 func main() {
-	if services.HandleUpdateProcess() {
-		return
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

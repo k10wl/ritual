@@ -111,14 +111,6 @@ type ReadinessCheck interface {
 	Wait(ctx context.Context) error
 }
 
-// UpdaterService defines the interface for update operations
-// Updaters handle downloading and extracting content from remote storage
-type UpdaterService interface {
-	// Run executes the update process
-	// Returns nil if no update needed or update succeeded, error if update failed
-	Run(ctx context.Context) error
-}
-
 // DirectoryScanner produces a file map keyed by relative path with content
 // hash + size for every file in the worlds directory. Implementations
 // determine scanning strategy (full walk vs mtime-filtered).

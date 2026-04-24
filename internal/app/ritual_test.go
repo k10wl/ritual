@@ -46,10 +46,6 @@ func (fakeManifestStore) Save(_ context.Context, _ *domain.Manifest) error { ret
 
 func noopCheck(_ context.Context) error { return nil }
 
-type noopUpdater struct{}
-
-func (noopUpdater) Run(_ context.Context) error { return nil }
-
 type noopPuller struct{}
 
 func (noopPuller) Pull(_ context.Context, _ domain.RefID) error { return nil }
@@ -207,7 +203,7 @@ func TestRitual_Stop_CancelsRunning(t *testing.T) {
 
 // Story #7 — Start is only rejected while Running. After terminal states
 // (Done, Failed), a fresh Start must begin a new pipeline — users retry by
-// starting again. Uses noopUpdater so pipelines complete instantly.
+// starting again. Uses noop fakes so pipelines complete instantly.
 func TestRitual_Start_AfterDone_StartsAgain(t *testing.T) {
 	bus := adapters.NewEventBus(128)
 	ch, unsub := bus.Subscribe()
