@@ -26,7 +26,6 @@ import (
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/refs"
-	"ritual/internal/core/services"
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/subsystems/retention"
 	"strings"
@@ -229,16 +228,9 @@ func buildRuntime() (*guiRuntime, error) {
 	puller := refs.NewPuller(remoteStorage, localStorage, runner)
 	applier := refs.NewApplier(localStorage, workdirStorage, scanner, runner)
 	headResolver := newRemoteHeadResolver(remoteStorage)
-
-	stagingDir := filepath.Join(config.RootPath, "staging")
-	syncSvc := services.NewSyncService(
-		scanner, localStorage, remoteStorage, bus,
-		services.SyncConfig{Prefix: config.WorldsDir, LocalDir: worldsPath},
-		filepath.Join(stagingDir, "local"),
-		"sync/gui/worlds",
-	)
-	getWorldsState := func(m *domain.Manifest) *domain.SyncState { return &m.Worlds.SyncState }
-	uploader := services.NewSyncUploader(syncSvc, localManifests, remoteManifests, getWorldsState)
+	committer := refs.NewCommitter(scanner, workdirStorage, localStorage, runner)
+	pusher := refs.NewPusher(localStorage, remoteStorage, runner)
+	commitTargets := []string{"**"}
 
 	// TODO(ritual-gui-poc): fakerun stands in for the Minecraft server so
 	// the GUI loop can be exercised without a JRE. Replace with
@@ -269,7 +261,7 @@ func buildRuntime() (*guiRuntime, error) {
 		localManifests, remoteManifests,
 		nil, // no conditions for POC
 		puller, applier, headResolver,
-		[]ports.UpdaterService{uploader},
+		committer, pusher, commitTargets,
 		localRets, remoteRets,
 		cmdBuilder,
 		readiness,
