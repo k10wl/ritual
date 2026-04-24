@@ -121,7 +121,7 @@ func run(ctx context.Context) error {
 	}()
 	sysInfo := adapters.NewSystemInfo()
 	javaInfo := adapters.NewJavaInfo()
-	rets, err := retention.Build(localStorage, remoteStorage, bus, remoteManifest)
+	localRets, remoteRets, err := retention.Build(localStorage, remoteStorage, bus, remoteManifest)
 	if err != nil {
 		return fmt.Errorf("retention: %w", err)
 	}
@@ -141,7 +141,7 @@ func run(ctx context.Context) error {
 		bus,
 		localStorage, remoteStorage,
 		localManifests, remoteManifests,
-		preflightChecks, sk.Puller, sk.Applier, sk.HeadResolver, sk.ExitUpdaters, rets,
+		preflightChecks, sk.Puller, sk.Applier, sk.HeadResolver, sk.ExitUpdaters, localRets, remoteRets,
 		cmdBuilder,
 		readiness,
 	)

@@ -28,6 +28,7 @@ import (
 	"ritual/internal/core/refs"
 	"ritual/internal/core/services"
 	"ritual/internal/core/stages/pulling"
+	"ritual/internal/subsystems/retention"
 	"strings"
 	guisvc "ritual/internal/gui/services"
 	"ritual/internal/gui/logsink"
@@ -253,6 +254,15 @@ func buildRuntime() (*guiRuntime, error) {
 	// to 127.0.0.1:<settings.Port> when the real server wires in.
 	readiness := immediateReady{}
 
+	remoteManifest, err := remoteManifests.Get(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("load remote manifest for retention: %w", err)
+	}
+	localRets, remoteRets, err := retention.Build(localStorage, remoteStorage, bus, remoteManifest)
+	if err != nil {
+		return nil, fmt.Errorf("retention: %w", err)
+	}
+
 	r := app.New(
 		bus,
 		localStorage, remoteStorage,
@@ -260,7 +270,7 @@ func buildRuntime() (*guiRuntime, error) {
 		nil, // no conditions for POC
 		puller, applier, headResolver,
 		[]ports.UpdaterService{uploader},
-		nil, // no retention for POC
+		localRets, remoteRets,
 		cmdBuilder,
 		readiness,
 	)

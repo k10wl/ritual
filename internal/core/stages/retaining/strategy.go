@@ -13,16 +13,19 @@ import (
 	"ritual/internal/core/ritual"
 )
 
-// Strategy implements the retaining stage.
+// Strategy implements the retaining stage. Chainable: on success, advances to
+// onOK so the stage can be wired twice (local + remote) back-to-back per spec
+// §2285. A nil onOK terminates the machine.
 type Strategy struct {
 	jobs   []Job
 	bus    ports.EventBus
+	onOK   machine.Strategy[ritual.RunState]
 	onFail machine.Strategy[ritual.RunState]
 }
 
-// New builds a retaining Strategy.
-func New(jobs []Job, bus ports.EventBus, onFail machine.Strategy[ritual.RunState]) *Strategy {
-	return &Strategy{jobs: jobs, bus: bus, onFail: onFail}
+// New builds a retaining Strategy. Pass nil onOK for a terminal stage.
+func New(jobs []Job, bus ports.EventBus, onFail, onOK machine.Strategy[ritual.RunState]) *Strategy {
+	return &Strategy{jobs: jobs, bus: bus, onOK: onOK, onFail: onFail}
 }
 
 // Name returns the stage name for logging.
@@ -49,7 +52,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 	if rs.Err != nil {
 		return s.onFail, nil //nolint:nilnil // rs.Err came from upstream stage; onFail routes it
 	}
-	return nil, nil //nolint:nilnil // terminal stage: nil next + nil err signals machine exit
+	return s.onOK, nil //nolint:nilnil // onOK==nil is intentional terminal signal for the last prune instance
 }
 
 func publish(bus ports.EventBus, e ports.Event) {

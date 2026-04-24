@@ -39,8 +39,9 @@ type Ritual struct {
 	applier         ports.Applier
 	headResolver    pulling.HeadResolver
 	exitUpdaters    []ports.UpdaterService
-	retentions      []retaining.Job
-	cmdBuilder      ports.CmdBuilder
+	localRetentions  []retaining.Job
+	remoteRetentions []retaining.Job
+	cmdBuilder       ports.CmdBuilder
 	readiness       ports.ReadinessCheck
 	locker          *observed.Locker
 
@@ -63,7 +64,7 @@ func New(
 	applier ports.Applier,
 	headResolver pulling.HeadResolver,
 	exitUpdaters []ports.UpdaterService,
-	retentions []retaining.Job,
+	localRetentions, remoteRetentions []retaining.Job,
 	cmdBuilder ports.CmdBuilder,
 	readiness ports.ReadinessCheck,
 ) *Ritual {
@@ -78,9 +79,10 @@ func New(
 		puller:          puller,
 		applier:         applier,
 		headResolver:    headResolver,
-		exitUpdaters:    exitUpdaters,
-		retentions:      retentions,
-		cmdBuilder:      cmdBuilder,
+		exitUpdaters:     exitUpdaters,
+		localRetentions:  localRetentions,
+		remoteRetentions: remoteRetentions,
+		cmdBuilder:       cmdBuilder,
 		readiness:       readiness,
 		locker:          observed.NewLocker(lock.New(remoteStorage, host), bus),
 		status:          Idle,
@@ -211,8 +213,12 @@ func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
 	failAcq := failed.New(ritual.StageAcquiring)
 	failRet := failed.New(ritual.StageRetaining)
 
-	retain := retaining.New(r.retentions, r.bus, failRet)
-	unlock := unlocking.New(r.locker.Release, retain)
+	// Prune runs post-unlock today as two instances — local then remote —
+	// back-to-back. Spec §2303-2309 pairs prune with commit/push; that
+	// rewire follows once committing + pushing are wired into the chain.
+	pruneRemote := retaining.New(r.remoteRetentions, r.bus, failRet, nil)
+	pruneLocal := retaining.New(r.localRetentions, r.bus, failRet, pruneRemote)
+	unlock := unlocking.New(r.locker.Release, pruneLocal)
 	backupStage := backup.New(r.localStorage, r.remoteStorage, r.localManifests, unlock)
 	publish := publishing.New(r.exitUpdaters, backupStage)
 	run := running.New(r.cmdBuilder, r.readiness, publish, unlock)
@@ -223,7 +229,7 @@ func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
 	failCheck.SetRetry(check)
 	failPull.SetRetry(pull)
 	failAcq.SetRetry(acquire)
-	failRet.SetRetry(retain)
+	failRet.SetRetry(pruneLocal)
 
 	return check
 }

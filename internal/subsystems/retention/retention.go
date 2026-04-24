@@ -13,18 +13,18 @@ import (
 	"ritual/internal/core/stages/retaining"
 )
 
-// Build wires the retention Jobs: refs-local, refs-remote, logs-local.
-// remoteManifest supplies the remote retention rules; local rules come from
-// the host settings file. Each refs Job runs Select → DeleteBatch → Collect;
-// the logs Job runs Select → DeleteBatch.
+// Build wires the retention Jobs split per side, matching the spec's
+// commit→pruneLocal→push→pruneRemote pairing (§2297-2309). Local jobs cover
+// refs-local + logs-local; remote jobs cover refs-remote. remoteManifest
+// supplies the remote rules; local rules come from the host settings file.
 func Build(
 	localStorage, remoteStorage ports.StorageRepository,
 	bus ports.EventBus,
 	remoteManifest *domain.Manifest,
-) ([]retaining.Job, error) {
+) (local, remote []retaining.Job, err error) {
 	settings, err := domain.LoadSettings()
 	if err != nil {
-		return nil, fmt.Errorf("load settings: %w", err)
+		return nil, nil, fmt.Errorf("load settings: %w", err)
 	}
 
 	localRules := settings.LocalRetention
@@ -37,20 +37,23 @@ func Build(
 	}
 	logRules := domain.RetentionRules{KeepLast: config.MaxLogFiles}
 
-	return []retaining.Job{
+	local = []retaining.Job{
 		retaining.NewRefsJob(
 			services.NewObservedRetention(services.NewRefsRetention(localStorage, localRules), bus, "refs-local"),
 			localStorage,
 			refs.NewCollector(localStorage),
 		),
+		retaining.NewLogsJob(
+			services.NewObservedRetention(services.NewLogsRetention(localStorage, logRules), bus, "logs"),
+			localStorage,
+		),
+	}
+	remote = []retaining.Job{
 		retaining.NewRefsJob(
 			services.NewObservedRetention(services.NewRefsRetention(remoteStorage, remoteRules), bus, "refs-remote"),
 			remoteStorage,
 			refs.NewCollector(remoteStorage),
 		),
-		retaining.NewLogsJob(
-			services.NewObservedRetention(services.NewLogsRetention(localStorage, logRules), bus, "logs"),
-			localStorage,
-		),
-	}, nil
+	}
+	return local, remote, nil
 }

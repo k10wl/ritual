@@ -54,6 +54,7 @@ import (
 	"ritual/internal/core/refs"
 	"ritual/internal/core/services"
 	"ritual/internal/core/stages/pulling"
+	"ritual/internal/core/stages/retaining"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/subsystems/heartbeat"
 	"strings"
@@ -118,6 +119,12 @@ type testRitual struct {
 	ch              <-chan ports.Event
 	ctx             context.Context
 	cancel          context.CancelFunc
+
+	// Optional prune jobs per stage instance. Integration tests simulate
+	// the remote slot by pointing its jobs at localStorage — cheaper than
+	// standing up a second remote fixture and proves both instances wire.
+	localRetentions  []retaining.Job
+	remoteRetentions []retaining.Job
 }
 
 func newRitual(t *testing.T) *testRitual {
@@ -336,7 +343,7 @@ func (r *testRitual) startRitualFull(t *testing.T, preflightChecks []checks.Chec
 		preflightChecks,
 		puller, applier, headResolver,
 		[]ports.UpdaterService{uploader},
-		nil,
+		r.localRetentions, r.remoteRetentions,
 		cmdBuilder,
 		immediateReady{},
 	)
@@ -1069,7 +1076,7 @@ func (r *testRitual) startRitualWithFlakyPuller(t *testing.T, flaky *failOnceInt
 		r.localManifests, r.remoteManifests,
 		nil,
 		flaky, applier, headResolver,
-		nil, nil,
+		nil, nil, nil,
 		cmdBuilder,
 		immediateReady{},
 	)
@@ -1293,6 +1300,45 @@ func TestIntegration_PipelineOrder_MatchesCheckFetchAcquireRunPublishBackupUnloc
 		"pipeline order is load-bearing — Publish writes remote, Backup snapshots post-publish canonical state; swapping them means backing up pre-run content instead")
 }
 
+func TestIntegration_Prune_BothInstancesExecute(t *testing.T) {
+	r := newRitual(t)
+
+	// Side-agnostic wiring: point the remote prune slot at local storage.
+	// Each slot uses a real retention.Job so a regression in wiring (single
+	// instance, swapped slots, missing onOK) manifests as missing bus events.
+	keepAll := domain.RetentionRules{KeepLast: 999}
+	r.localRetentions = []retaining.Job{
+		retaining.NewRefsJob(services.NewRefsRetention(r.local, keepAll), r.local, refs.NewCollector(r.local)),
+	}
+	r.remoteRetentions = []retaining.Job{
+		retaining.NewRefsJob(services.NewRefsRetention(r.local, keepAll), r.local, refs.NewCollector(r.local)),
+	}
+
+	drain := collectBusEvents(r.bus)
+	seedRemoteWorld(t, r, file("world/level.dat", []byte("x")))
+
+	server := r.startRitual(t)
+	server.waitReady(t)
+	server.exit(0)
+	server.stdin.Close()
+	r.waitDone(t)
+
+	starts := countRetainStarts(drain())
+	assert.Equal(t, 2, starts,
+		"retain StartInfo must fire twice per run — once for pruneLocal, once for pruneRemote. starts!=2 means one Strategy instance was dropped from buildChain")
+}
+
+func countRetainStarts(events []ports.Event) int {
+	n := 0
+	for _, e := range events {
+		s, ok := e.(stagenames.StartInfo)
+		if ok && s.Operation == "retain" {
+			n++
+		}
+	}
+	return n
+}
+
 func TestIntegration_ServerLifecycleEventsEmitted_StartingReadyStoppingStopped(t *testing.T) {
 	ritual := newRitual(t)
 
@@ -1429,7 +1475,7 @@ func (r *testRitual) startRitualWithLiveSync(t *testing.T) {
 		nil,
 		puller, applier, headResolver,
 		[]ports.UpdaterService{uploader},
-		nil,
+		nil, nil,
 		cmdBuilder,
 		immediateReady{},
 	)

@@ -112,7 +112,7 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 		[]checks.Check{noopCheck},
 		noopPuller{}, noopApplier{}, noopHead,
 		[]ports.UpdaterService{noopUpdater{}},
-		[]retaining.Job{noopJob},
+		[]retaining.Job{noopJob}, []retaining.Job{noopJob},
 		fakeCmdBuilder{},
 		immediateReady{},
 	)
@@ -139,7 +139,7 @@ func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 		[]checks.Check{noopCheck},
 		flaky, noopApplier{}, noopHead,
 		[]ports.UpdaterService{noopUpdater{}},
-		[]retaining.Job{noopJob},
+		[]retaining.Job{noopJob}, []retaining.Job{noopJob},
 		fakeCmdBuilder{},
 		immediateReady{},
 	)
@@ -179,7 +179,7 @@ func TestRitual_Stop_CancelsRunning(t *testing.T) {
 		bus,
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
-		nil, noopPuller{}, noopApplier{}, noopHead, nil, nil,
+		nil, noopPuller{}, noopApplier{}, noopHead, nil, nil, nil,
 		blocker,
 		immediateReady{},
 	)
@@ -210,7 +210,7 @@ func TestRitual_Start_AfterDone_StartsAgain(t *testing.T) {
 		[]checks.Check{noopCheck},
 		noopPuller{}, noopApplier{}, noopHead,
 		[]ports.UpdaterService{noopUpdater{}},
-		[]retaining.Job{noopJob},
+		[]retaining.Job{noopJob}, []retaining.Job{noopJob},
 		fakeCmdBuilder{},
 		immediateReady{},
 	)
@@ -236,7 +236,7 @@ func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
 		bus,
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
-		nil, noopPuller{}, noopApplier{}, noopHead, nil, nil,
+		nil, noopPuller{}, noopApplier{}, noopHead, nil, nil, nil,
 		fakeCmdBuilder{},
 		immediateReady{},
 	)
