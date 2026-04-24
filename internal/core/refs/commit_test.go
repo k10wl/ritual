@@ -29,6 +29,7 @@ package refs_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -347,7 +348,7 @@ func TestCommitter_DoesNotWriteRefWhenBlobPutFails(t *testing.T) {
 
 	blobs := newFaultyStorage(newFSBundle(t))
 	failingBlobKey := "objects/" + commitXXHashHex(t, []byte("AAAA"))
-	blobs.putFail[failingBlobKey] = errors.New("simulated R2 503")
+	blobs.putFail[failingBlobKey] = errors.New("simulated blob put failure")
 
 	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs, serialRunner).
 		WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z"))
@@ -425,6 +426,115 @@ func TestCommitter_AmendWritesNewRefBeforeDeletingOldDraft(t *testing.T) {
 	_, oldPresent := blobs.decodeRef(t, firstID)
 	assert.True(t, oldPresent,
 		"§Commit crash row 'Between manifest write and old-draft delete': both drafts exist briefly; max(timestamp) picks the new one on recovery")
+}
+
+func TestCommitter_AmendRetryAfterInterruptedFinalizeSweepsOrphanSiblingRef(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	workdir := newFSBundle(t)
+	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
+
+	blobs := newFaultyStorage(newFSBundle(t))
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs, serialRunner).
+		WithClock(commitFixedClock(t, "2026-04-22T09:00:00.000Z"))
+	draft1, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
+	require.NoError(t, err, "fixture: initial commit must land the first draft so an amend has something to replace")
+
+	blobs.deleteFail["refs/"+string(draft1)+".json"] = errors.New("simulated transient delete failure between write-new and delete-old")
+	committer.WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z"))
+	draft2 := domain.RefID("2026-04-22T10-00-00.000Z")
+	_, firstAmendErr := committer.Commit(ctx, ports.CommitOpts{Amend: draft1, Targets: []string{"worlds/**"}})
+	require.Error(t, firstAmendErr, "fixture: first amend must fail at old-draft delete so draft2 is written but draft1 is not deleted — interrupted finalize")
+	_, draft2Present := blobs.decodeRef(t, draft2)
+	require.True(t, draft2Present, "fixture precondition: draft2 must be on disk after the interrupted finalize so the retry scenario is meaningful")
+
+	delete(blobs.deleteFail, "refs/"+string(draft1)+".json")
+	committer.WithClock(commitFixedClock(t, "2026-04-22T11:00:00.000Z"))
+	draft3, err := committer.Commit(ctx, ports.CommitOpts{Amend: draft1, Targets: []string{"worlds/**"}})
+	require.NoError(t, err, "retry amend with the same Amend target (draft1 still present) must succeed once the transient delete fault clears")
+
+	refKeys := keysWithPrefix(blobs.bundle, "refs/")
+	assert.Equal(t, []string{"refs/" + string(draft3) + ".json"}, refKeys,
+		"amend-retry hanging-ref invariant: after the retry lands only the newest draft must remain under refs/ — draft1 is the explicit amend target (deleted), draft2 is the orphan sibling left behind by the interrupted first attempt; user accepts orphan OBJECTS (localGC sweeps them) but orphan REFS accumulate into a hanging-ref graveyard across retries and must be swept. A same-Parent sibling with a strictly smaller Timestamp than the just-written ref is the signature of a superseded amend attempt and is safe to delete.")
+}
+
+func TestCommitter_ErrorsOnAmendOfNonexistentDraft(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	workdir := newFSBundle(t)
+	blobs := newFSBundle(t)
+	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
+
+	missingDraft := domain.RefID("2026-04-22T08-00-00.000Z")
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).
+		WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z"))
+	_, err := committer.Commit(ctx, ports.CommitOpts{
+		Amend:   missingDraft,
+		Targets: []string{"worlds/**"},
+	})
+
+	require.Error(t, err,
+		"amend of a RefID that is absent from the blob store MUST surface an error — silently converting the amend into a fresh commit discards the caller's intent and may produce a chain-lengthening ref the caller expected to be inherited-parent")
+	refKeys := keysWithPrefix(blobs, "refs/")
+	assert.Empty(t, refKeys,
+		"amend-missing-draft ref barrier: no new ref must land when the amend target cannot be resolved — the caller's lineage contract cannot be honoured; content-addressed blobs written before the failure are harmless (reaped by the next GC) but a ref pointing at the wrong parent is not")
+}
+
+func TestCommitter_SurfacesContextCanceledBeforeAnyWrite(t *testing.T) {
+	parentCtx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	workdir := newFSBundle(t)
+	blobs := newFSBundle(t)
+	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
+
+	cancelledCtx, cancelNow := context.WithCancel(parentCtx)
+	cancelNow()
+
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).
+		WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z"))
+	_, err := committer.Commit(cancelledCtx, ports.CommitOpts{Targets: []string{"worlds/**"}})
+
+	require.Error(t, err,
+		"commit under a cancelled context MUST surface an error — silently producing a ref from a cancelled caller would commit work the caller explicitly abandoned")
+	assert.ErrorIs(t, err, context.Canceled,
+		"cancellation error chain must preserve context.Canceled — callers that retry vs. abort branch on this sentinel")
+	assert.Empty(t, blobs.keys(),
+		"commit atomicity under cancellation: no refs, no blobs — the store must be byte-identical to the pre-call state so a retry starts fresh with no orphan writes")
+}
+
+func TestCommitter_RejectsClockCollisionWithExistingRef(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	workdir := newFSBundle(t)
+	blobs := newFSBundle(t)
+	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
+
+	stuckClock := commitFixedClock(t, "2026-04-22T10:00:00.000Z")
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).WithClock(stuckClock)
+	firstID, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
+	require.NoError(t, err, "fixture: first commit at the fixed clock tick must succeed to plant the ref that a same-ms retry would overwrite")
+
+	firstRef, ok := blobs.decodeRef(t, firstID)
+	require.True(t, ok, "fixture: first ref must be readable before the collision attempt so the 'byte-identical after reject' assertion is meaningful")
+	firstBody, err := json.Marshal(firstRef)
+	require.NoError(t, err, "fixture: first ref must remarshal deterministically so the post-attempt comparison is exact")
+
+	workdir.put(t, "worlds/level.dat", []byte("ZZZZ"))
+	_, secondErr := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
+
+	require.Error(t, secondErr,
+		"single-writer invariant: two commits that mint the SAME RefID (clock stuck at the same millisecond) MUST be refused — silent overwrite replaces refs/{id}.json with a ref whose Objects differ from the one retention already observed, destroying lineage. User classified this as a critical-bug class, not a future-feature gap")
+
+	survivingRef, stillOk := blobs.decodeRef(t, firstID)
+	require.True(t, stillOk, "post-collision: the original refs/{id}.json must remain readable — rejection means the second commit performed no writes at the ref key")
+	survivingBody, err := json.Marshal(survivingRef)
+	require.NoError(t, err, "post-collision: surviving ref must remarshal deterministically for the byte-for-byte comparison")
+	assert.Equal(t, firstBody, survivingBody,
+		"collision rejection must be byte-preserving: the ref on disk is still the first commit's ref, not a mutated hybrid — the collision path must not write ANYTHING at refs/{id}.json")
 }
 
 // --- commit test fixtures ---

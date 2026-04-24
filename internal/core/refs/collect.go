@@ -71,8 +71,13 @@ func (c *Collector) buildLiveSet(ctx context.Context) (map[string]struct{}, erro
 	}
 	live := map[string]struct{}{}
 	for _, key := range refKeys {
-		ref, err := c.readRef(ctx, key)
+		rc, err := c.store.GetStream(ctx, key)
 		if err != nil {
+			return nil, fmt.Errorf("refs.Collector.Collect: read ref %s: %w", key, err)
+		}
+		ref, parseErr := decodeRefBody(rc)
+		_ = rc.Close()
+		if parseErr != nil {
 			continue
 		}
 		for _, obj := range ref.Objects {
@@ -80,15 +85,6 @@ func (c *Collector) buildLiveSet(ctx context.Context) (map[string]struct{}, erro
 		}
 	}
 	return live, nil
-}
-
-func (c *Collector) readRef(ctx context.Context, key string) (*domain.Ref, error) {
-	rc, err := c.store.GetStream(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	defer rc.Close()
-	return decodeRefBody(rc)
 }
 
 var _ ports.Collector = (*Collector)(nil)

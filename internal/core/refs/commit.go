@@ -124,25 +124,34 @@ func (c *Committer) Commit(ctx context.Context, opts ports.CommitOpts) (domain.R
 		return "", err
 	}
 
-	err = c.finalizeAmend(ctx, opts.Amend, id)
+	err = c.finalizeAmend(ctx, ref, opts.Amend)
 	if err != nil {
 		return "", err
 	}
 	return id, nil
 }
 
-// finalizeAmend deletes the superseded draft ref and sweeps its
-// now-orphan blobs via the injected local GC closure — per
-// §Retention and GC trigger `amend → localGC`. Fresh commits short-
-// circuit; amend with unset localGC still deletes the draft (GC-as-
-// no-op).
-func (c *Committer) finalizeAmend(ctx context.Context, amend, current domain.RefID) error {
-	if amend == "" || amend == current {
+// finalizeAmend sweeps every superseded same-Parent sibling of the newly
+// written ref, then runs the injected local GC closure — per §Retention
+// and GC trigger `amend → localGC`. Fresh commits short-circuit.
+//
+// The sweep targets any refs/*.json whose Parent matches the new ref AND
+// whose Timestamp is strictly older — the signature of both the explicit
+// amend target AND any orphan-sibling refs left on disk by a previously
+// interrupted amend's finalize (written-then-not-deleted). Deleting all
+// superseded siblings in one pass closes the hanging-ref graveyard that a
+// delete-only-opts.Amend strategy accumulates across retries.
+//
+// Spec-ordering unchanged: the new ref is written BEFORE this sweep, so a
+// sweep failure surfaces as a commit error with the new ref already on
+// disk — max(Timestamp) recovery still selects the new ref.
+func (c *Committer) finalizeAmend(ctx context.Context, newRef *domain.Ref, amend domain.RefID) error {
+	if amend == "" || amend == newRef.Timestamp {
 		return nil
 	}
-	err := c.blobs.Delete(ctx, refKey(amend))
+	err := c.sweepSupersededSiblings(ctx, newRef)
 	if err != nil {
-		return fmt.Errorf("refs.Committer.Commit: delete amended draft %s: %w", amend, err)
+		return err
 	}
 	if c.localGC == nil {
 		return nil
@@ -152,6 +161,55 @@ func (c *Committer) finalizeAmend(ctx context.Context, amend, current domain.Ref
 		return fmt.Errorf("refs.Committer.Commit: local GC after amend %s: %w", amend, err)
 	}
 	return nil
+}
+
+// sweepSupersededSiblings deletes every refs/*.json whose Parent matches
+// newRef.Parent and whose Timestamp is strictly older than newRef. Unparseable
+// refs are skipped — the object-GC pass handles their orphan blobs.
+func (c *Committer) sweepSupersededSiblings(ctx context.Context, newRef *domain.Ref) error {
+	keys, err := c.blobs.List(ctx, "refs/")
+	if err != nil {
+		return fmt.Errorf("refs.Committer.Commit: list refs for amend sweep: %w", err)
+	}
+	newKey := refKey(newRef.Timestamp)
+	for _, key := range keys {
+		if key == newKey {
+			continue
+		}
+		sibling, err := c.readRefAt(ctx, key)
+		if err != nil {
+			continue
+		}
+		if sibling.Parent != newRef.Parent {
+			continue
+		}
+		if sibling.Timestamp >= newRef.Timestamp {
+			continue
+		}
+		err = c.blobs.Delete(ctx, key)
+		if err != nil {
+			return fmt.Errorf("refs.Committer.Commit: delete superseded sibling %s: %w", sibling.Timestamp, err)
+		}
+	}
+	return nil
+}
+
+func (c *Committer) readRefAt(ctx context.Context, key string) (*domain.Ref, error) {
+	rc, err := c.blobs.GetStream(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	raw, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, err
+	}
+	ref := &domain.Ref{}
+	err = json.Unmarshal(raw, ref)
+	if err != nil {
+		return nil, err
+	}
+	return ref, nil
 }
 
 // walkMatches delegates the workdir walk to the injected DirectoryScanner —
@@ -249,11 +307,19 @@ func (c *Committer) resolveParent(ctx context.Context, opts ports.CommitOpts) (d
 // writeRef marshals and streams the new ref JSON into the blob store under
 // refs/{id}.json.
 func (c *Committer) writeRef(ctx context.Context, ref *domain.Ref) error {
+	key := refKey(ref.Timestamp)
+	present, err := c.blobs.Exists(ctx, key)
+	if err != nil {
+		return fmt.Errorf("refs.Committer.Commit: probe ref %s: %w", ref.Timestamp, err)
+	}
+	if present {
+		return fmt.Errorf("refs.Committer.Commit: RefID %s collision — refs/{id}.json already exists; clock produced a duplicate millisecond RefID and silent overwrite would destroy the prior ref's lineage", ref.Timestamp)
+	}
 	body, err := json.Marshal(ref)
 	if err != nil {
 		return fmt.Errorf("refs.Committer.Commit: marshal ref %s: %w", ref.Timestamp, err)
 	}
-	err = c.blobs.PutStream(ctx, refKey(ref.Timestamp), bytes.NewReader(body))
+	err = c.blobs.PutStream(ctx, key, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("refs.Committer.Commit: write ref %s: %w", ref.Timestamp, err)
 	}

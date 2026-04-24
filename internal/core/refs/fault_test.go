@@ -21,6 +21,8 @@ type faultyStorage struct {
 	bundle     *fsBundle
 	putFail    map[string]error
 	deleteFail map[string]error
+	listFail   map[string]error
+	getFail    map[string]error
 }
 
 func newFaultyStorage(b *fsBundle) *faultyStorage {
@@ -28,6 +30,8 @@ func newFaultyStorage(b *fsBundle) *faultyStorage {
 		bundle:     b,
 		putFail:    map[string]error{},
 		deleteFail: map[string]error{},
+		listFail:   map[string]error{},
+		getFail:    map[string]error{},
 	}
 }
 
@@ -62,6 +66,10 @@ func (f *faultyStorage) putHits(key string) int { return f.bundle.putHits(key) }
 func (f *faultyStorage) getHits(key string) int { return f.bundle.getHits(key) }
 
 func (f *faultyStorage) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
+	err, shouldFail := f.getFail[key]
+	if shouldFail {
+		return nil, err
+	}
 	return f.bundle.storage.GetStream(ctx, key)
 }
 
@@ -90,6 +98,10 @@ func (f *faultyStorage) DeleteBatch(ctx context.Context, keys []string) error {
 }
 
 func (f *faultyStorage) List(ctx context.Context, prefix string) ([]string, error) {
+	err, shouldFail := f.listFail[prefix]
+	if shouldFail {
+		return nil, err
+	}
 	return f.bundle.storage.List(ctx, prefix)
 }
 

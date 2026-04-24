@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path"
-	"strings"
 
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/cespare/xxhash/v2"
 )
 
@@ -176,33 +175,18 @@ func (a *Applier) prune(ctx context.Context, ref *domain.Ref) error {
 }
 
 // matchesAnyTarget returns true when candidate is inside any of the glob
-// patterns in targets. MVP recognises two shapes:
-//
-//   - `<prefix>/**` — match everything under prefix/.
-//   - literal path or `path.Match`-compatible single-segment wildcards.
-//
-// The spec calls for bmatcuk/doublestar/v4 to handle full doublestar syntax;
-// adopting that dep is a post-MVP task. For `worlds/**` (the only pattern
-// exercised today) this matcher is equivalent.
+// patterns in targets. Uses bmatcuk/doublestar/v4 — the same globbing
+// Commit uses to select files into Objects — so Apply's prune-in-scope
+// decision agrees with Commit's inclusion decision across every Targets
+// shape, including multi-segment `**`.
 func matchesAnyTarget(targets []string, candidate string) bool {
 	for _, pattern := range targets {
-		if matchesTarget(pattern, candidate) {
+		matched, _ := doublestar.Match(pattern, candidate)
+		if matched {
 			return true
 		}
 	}
 	return false
-}
-
-func matchesTarget(pattern, candidate string) bool {
-	prefix, ok := strings.CutSuffix(pattern, "/**")
-	if ok {
-		return candidate == prefix || strings.HasPrefix(candidate, prefix+"/")
-	}
-	if pattern == "**" {
-		return true
-	}
-	matched, _ := path.Match(pattern, candidate)
-	return matched
 }
 
 var _ ports.Applier = (*Applier)(nil)

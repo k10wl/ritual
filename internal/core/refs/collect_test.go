@@ -210,6 +210,58 @@ func TestCollector_SkipsMalformedRefsAndSweepsFromSurvivingRefsLiveSet(t *testin
 		"fail-continue sweep: an orphan blob must still be swept when some refs are malformed — the sweep proceeds with the parseable refs' live set")
 }
 
+func TestCollector_SurfacesErrorWhenListingRefsFails(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	inner := newFSBundle(t)
+	store := newFaultyStorage(inner)
+	liveRef := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat": []byte("AAAA"),
+	})
+	seedRemote(t, inner, liveRef, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
+	orphanKey := "objects/" + hashHex("ORPHAN")
+	store.put(t, orphanKey, []byte("ORPHAN"))
+	store.listFail["refs/"] = errors.New("simulated transient refs list failure")
+
+	collector := refs.NewCollector(store)
+	err := collector.Collect(ctx)
+
+	require.Error(t, err,
+		"safety: a transient failure to list refs/ MUST surface as Collect's error — silent continue would produce an empty live set and sweep every live blob, a catastrophic data-loss path")
+	livePresent, existsErr := inner.storage.Exists(ctx, "objects/"+hashHex("AAAA"))
+	require.NoError(t, existsErr, "Exists probe against the on-disk store must not fail")
+	assert.True(t, livePresent,
+		"safety: on refs/ list failure Collect must abort BEFORE any delete — live blobs must be byte-identical to pre-call state; a mis-built empty live set on a partially-listed store would wipe everything a surviving ref references")
+	orphanPresent, existsErr := inner.storage.Exists(ctx, orphanKey)
+	require.NoError(t, existsErr, "Exists probe against the on-disk store must not fail")
+	assert.True(t, orphanPresent,
+		"abort-before-sweep: even orphan blobs must remain untouched when the live-set build fails — Collect is all-or-nothing at the list boundary; the next successful GC cycle reaps them")
+}
+
+func TestCollector_SurfacesErrorWhenListingObjectsFails(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	inner := newFSBundle(t)
+	store := newFaultyStorage(inner)
+	liveRef := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat": []byte("AAAA"),
+	})
+	seedRemote(t, inner, liveRef, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
+	store.listFail["objects/"] = errors.New("simulated transient objects list failure")
+
+	collector := refs.NewCollector(store)
+	err := collector.Collect(ctx)
+
+	require.Error(t, err,
+		"safety: a failure to list objects/ MUST surface — Collect cannot know which blobs exist, so the sweep cannot be proven correct; silent success would falsely advertise a completed GC cycle")
+	livePresent, existsErr := inner.storage.Exists(ctx, "objects/"+hashHex("AAAA"))
+	require.NoError(t, existsErr, "Exists probe against the on-disk store must not fail")
+	assert.True(t, livePresent,
+		"objects/ list failure: live blobs must remain byte-identical to pre-call state — no deletes can fire before the object enumeration succeeds")
+}
+
 func TestCollector_ContinuesSweepWhenAnIndividualDeleteFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
@@ -224,7 +276,7 @@ func TestCollector_ContinuesSweepWhenAnIndividualDeleteFails(t *testing.T) {
 	store.put(t, stuckOrphanKey, []byte("STUCK"))
 	reapableOrphanKey := "objects/" + hashHex("REAPABLE")
 	store.put(t, reapableOrphanKey, []byte("REAPABLE"))
-	store.deleteFail[stuckOrphanKey] = errors.New("simulated R2 503 on DELETE")
+	store.deleteFail[stuckOrphanKey] = errors.New("simulated delete failure")
 
 	collector := refs.NewCollector(store)
 	require.NoError(t, collector.Collect(ctx),
@@ -239,4 +291,27 @@ func TestCollector_ContinuesSweepWhenAnIndividualDeleteFails(t *testing.T) {
 	require.NoError(t, err, "Exists probe must not fail")
 	assert.False(t, reapablePresent,
 		"fail-continue delete: orphans after the failing key must still be swept — one flaky delete cannot block the rest of the sweep")
+}
+
+func TestCollector_PreservesLiveBlobsWhenReadingARefTransientlyFails(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	inner := newFSBundle(t)
+	store := newFaultyStorage(inner)
+	liveRef := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat": []byte("AAAA"),
+	})
+	seedRemote(t, inner, liveRef, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
+	store.getFail["refs/"+string(liveRef.Timestamp)+".json"] = errors.New("simulated transient ref read failure")
+
+	collector := refs.NewCollector(store)
+	err := collector.Collect(ctx)
+
+	require.Error(t, err,
+		"durability: a transient GetStream failure on a valid on-disk ref MUST surface — buildLiveSet currently skips unreadable refs (parse fail AND IO fail) under one branch, but only parse fail has an upstream recovery (Pull's delete-on-parse-fail); a transient IO fault has no upstream handler, so silent skip hands live hashes to the sweep and causes data loss. Fail-stop on IO error, fail-continue only on parse error")
+	livePresent, existsErr := inner.storage.Exists(ctx, "objects/"+hashHex("AAAA"))
+	require.NoError(t, existsErr, "Exists probe against the on-disk store must not fail")
+	assert.True(t, livePresent,
+		"mark-sweep correctness: a blob referenced by a present-but-transiently-unreadable ref must NOT be swept — the live set is unknown, so the sweep must abort rather than assume the unread ref referenced nothing. Silent classification as orphan is the data-loss path user classified as critical")
 }

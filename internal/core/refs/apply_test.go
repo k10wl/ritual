@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"ritual/internal/core/domain"
 	"ritual/internal/core/refs"
 
 	"github.com/stretchr/testify/assert"
@@ -251,4 +252,42 @@ func TestApplier_ReturnsErrorWhenReferencedBlobMissing(t *testing.T) {
 		"§Apply step 3: a referenced blob absent from the blob store must surface an error — silent skip would leave the workdir structurally incomplete")
 	assert.Empty(t, workdir.keys(),
 		"apply must abort before mutating workdir when the first referenced blob it reaches is absent — spec requires monotone forward progress, and pre-any-write abort is the cheap base case; a retry after the blob is restored is what completes the ref (covered by IsIdempotentAcrossReruns)")
+}
+
+func TestApplier_PrunesStaleFileInsideDeeplyNestedDoublestarTarget(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	blobs := newFSBundle(t)
+	workdir := newFSBundle(t)
+
+	liveContent := []byte("LIVE")
+	ref := &domain.Ref{
+		Timestamp:     "2026-04-22T10-00-00.000Z",
+		RitualVersion: "2.1.0",
+		Targets:       []string{"worlds/**/*.dat"},
+		Objects: map[string]domain.Object{
+			"worlds/a/b/live.dat": {Hash: hashHexBytes(liveContent), Size: int64(len(liveContent))},
+		},
+	}
+	refBody, err := json.Marshal(ref)
+	require.NoError(t, err, "test fixture: ref with doublestar target must marshal to JSON")
+	blobs.put(t, "refs/"+string(ref.Timestamp)+".json", refBody)
+	blobs.put(t, "objects/"+hashHexBytes(liveContent), liveContent)
+	workdir.put(t, "worlds/a/b/stale.dat", []byte("STALE"))
+
+	applier := refs.NewApplier(blobs.storage, workdir.storage, workdir.scanner(), serialRunner)
+	err = applier.Apply(ctx, ref.Timestamp)
+
+	require.NoError(t, err,
+		"apply with a multi-segment doublestar target (worlds/**/*.dat) and a deeply-nested live Object must succeed — the ref IS internally consistent, Apply cannot reject it")
+
+	stalePresent, existsErr := workdir.storage.Exists(ctx, "worlds/a/b/stale.dat")
+	require.NoError(t, existsErr, "workdir Exists probe on the pruned path must not fail")
+	assert.False(t, stalePresent,
+		"§Apply scope invariant 'walk(workdir) ∩ Targets ⊆ ref.Objects': a stale workdir path MATCHING the ref's doublestar target glob but ABSENT from ref.Objects must be pruned. Commit selects files into Objects using bmatcuk/doublestar — the same globbing must govern Apply's prune-in-scope decision. If Apply's matcher disagrees with Commit's (e.g. hand-rolled path.Match that does not handle multi-segment `**`), stale files at depth >1 accumulate under the target tree and silently re-appear in the next commit's Objects, inflating snapshots and breaking the scope invariant")
+	livePresent, existsErr := workdir.storage.Exists(ctx, "worlds/a/b/live.dat")
+	require.NoError(t, existsErr, "workdir Exists probe on the live path must not fail")
+	assert.True(t, livePresent,
+		"apply step 3 placement: the live Object at a deeply-nested path must land in the workdir regardless of target-glob matching — Objects enumerate paths explicitly and are not filtered by Targets on Apply")
 }
