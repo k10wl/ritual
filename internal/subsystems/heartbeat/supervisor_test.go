@@ -1,9 +1,15 @@
 package heartbeat_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"ritual/internal/adapters"
 	"ritual/internal/core/domain"
+	"ritual/internal/core/lock"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ports/mocks"
 	"ritual/internal/core/ritual"
@@ -17,7 +23,6 @@ import (
 
 // safeStore is a concurrency-safe ManifestStore for tests where both
 // tick and syncTick access the same store from separate goroutines.
-// Unlike mocks.MockManifestStore it does not have unsynchronized counters.
 type safeStore struct {
 	mu       sync.Mutex
 	getFunc  func(context.Context) (*domain.Manifest, error)
@@ -42,7 +47,6 @@ func (s *safeStore) Save(ctx context.Context, m *domain.Manifest) error {
 	return nil
 }
 
-// mockSyncService is a handwritten mock for ports.SyncService.
 type mockSyncService struct {
 	uploadFunc func(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error)
 }
@@ -58,14 +62,10 @@ func (m *mockSyncService) Upload(ctx context.Context, local, remote domain.SyncS
 	return local, nil
 }
 
-// noopSyncer returns a SyncService that does nothing.
 func noopSyncer() *mockSyncService { return &mockSyncService{} }
 
-// emptyStore returns a ManifestStore that always returns (nil, nil).
 func emptyStore() *mocks.MockManifestStore { return &mocks.MockManifestStore{} }
 
-// autoRespondSaveRequested subscribes to bus and auto-responds to
-// SaveRequested with SaveCompleted so syncTick can proceed.
 func autoRespondSaveRequested(bus ports.EventBus) func() {
 	ch, unsub := bus.Subscribe()
 	go func() {
@@ -78,55 +78,50 @@ func autoRespondSaveRequested(bus ports.EventBus) func() {
 	return unsub
 }
 
-func TestSupervisorBeatsAfterAcquire(t *testing.T) {
-	var mu sync.Mutex
-	current := &domain.Manifest{LockedBy: "run-1"}
-
-	remoteStore := &mocks.MockManifestStore{
-		GetFunc: func(context.Context) (*domain.Manifest, error) {
-			mu.Lock()
-			defer mu.Unlock()
-			return cloneForTest(current), nil
-		},
-		SaveFunc: func(_ context.Context, m *domain.Manifest) error {
-			mu.Lock()
-			defer mu.Unlock()
-			current = cloneForTest(m)
-			return nil
-		},
+func acquireFor(t *testing.T, store *leaseStore) (*lock.Locker, string) {
+	t.Helper()
+	locker := lock.New(store, "hostA")
+	sessionID, err := locker.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("setup Acquire: %v", err)
 	}
+	return locker, sessionID
+}
+
+func TestSupervisorBeatsAfterAcquire(t *testing.T) {
+	store := newLeaseStore()
+	locker, sessionID := acquireFor(t, store)
+	initial := store.heartbeatAt(t)
+
 	bus := adapters.NewEventBus(16)
-	_, stop := heartbeat.Attach(bus, emptyStore(), remoteStore, noopSyncer())
+	_, stop := heartbeat.Attach(bus, locker.Heartbeat, emptyStore(), emptyStore(), noopSyncer())
 	defer stop()
 
-	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", LockID: "run-1", Interval: 50 * time.Millisecond})
+	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", SessionID: sessionID, Interval: 50 * time.Millisecond})
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		mu.Lock()
-		beat := current.HeartbeatAt
-		mu.Unlock()
-		if !beat.IsZero() {
+		if store.heartbeatAt(t).After(initial) {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("heartbeat never beat")
+	t.Fatal("heartbeat never refreshed remote lease payload")
 }
 
-func TestSupervisorPublishesLostOnOwnerMismatch(t *testing.T) {
-	current := &domain.Manifest{LockedBy: "someone-else"}
-	remoteStore := &mocks.MockManifestStore{
-		GetFunc: func(context.Context) (*domain.Manifest, error) { return current, nil },
-	}
+func TestSupervisorPublishesLostOnSessionMismatch(t *testing.T) {
+	store := newLeaseStore()
+	locker, sessionID := acquireFor(t, store)
+	store.seedLive(t, "hostB", "sess-bob", time.Hour)
+
 	bus := adapters.NewEventBus(16)
 	ch, cancel := bus.Subscribe()
 	defer cancel()
 
-	_, stop := heartbeat.Attach(bus, emptyStore(), remoteStore, noopSyncer())
+	_, stop := heartbeat.Attach(bus, locker.Heartbeat, emptyStore(), emptyStore(), noopSyncer())
 	defer stop()
 
-	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", LockID: "run-1", Interval: 30 * time.Millisecond})
+	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", SessionID: sessionID, Interval: 30 * time.Millisecond})
 
 	deadline := time.After(time.Second)
 	for {
@@ -135,7 +130,7 @@ func TestSupervisorPublishesLostOnOwnerMismatch(t *testing.T) {
 			t.Fatal("did not observe LockLostInfo")
 		case e := <-ch:
 			if lost, ok := e.(ritual.LockLostInfo); ok && lost.RunID == "run-1" {
-				if lost.Reason != "owner_mismatch" {
+				if lost.Reason != "taken_over" {
 					t.Fatalf("reason: %s", lost.Reason)
 				}
 				return
@@ -145,56 +140,36 @@ func TestSupervisorPublishesLostOnOwnerMismatch(t *testing.T) {
 }
 
 func TestSupervisorStopsOnReleased(t *testing.T) {
-	var saveCount int
-	var mu sync.Mutex
-	remoteStore := &mocks.MockManifestStore{
-		GetFunc: func(context.Context) (*domain.Manifest, error) {
-			return &domain.Manifest{LockedBy: "run-1"}, nil
-		},
-		SaveFunc: func(_ context.Context, _ *domain.Manifest) error {
-			mu.Lock()
-			saveCount++
-			mu.Unlock()
-			return nil
-		},
-	}
+	store := newLeaseStore()
+	locker, sessionID := acquireFor(t, store)
+
 	bus := adapters.NewEventBus(16)
-	_, stop := heartbeat.Attach(bus, emptyStore(), remoteStore, noopSyncer())
+	_, stop := heartbeat.Attach(bus, locker.Heartbeat, emptyStore(), emptyStore(), noopSyncer())
 	defer stop()
 
-	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", LockID: "run-1", Interval: 20 * time.Millisecond})
+	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", SessionID: sessionID, Interval: 20 * time.Millisecond})
 	time.Sleep(80 * time.Millisecond)
 	bus.Publish(ritual.LockReleasedInfo{RunID: "run-1"})
 	time.Sleep(30 * time.Millisecond)
 
-	mu.Lock()
-	before := saveCount
-	mu.Unlock()
+	before := store.putCount()
 	time.Sleep(150 * time.Millisecond)
-	mu.Lock()
-	after := saveCount
-	mu.Unlock()
+	after := store.putCount()
 	if after != before {
 		t.Fatalf("beats continued after release: before=%d after=%d", before, after)
 	}
 }
 
 func TestPlayerPlaying_WorldsSyncEveryTick(t *testing.T) {
-	manifest := &domain.Manifest{LockedBy: "run-1"}
+	store := newLeaseStore()
+	locker, sessionID := acquireFor(t, store)
 
 	remoteStore := &safeStore{
-		getFunc: func(context.Context) (*domain.Manifest, error) {
-			return cloneForTest(manifest), nil
-		},
-		saveFunc: func(_ context.Context, m *domain.Manifest) error {
-			manifest = cloneForTest(m)
-			return nil
-		},
+		getFunc:  func(context.Context) (*domain.Manifest, error) { return &domain.Manifest{}, nil },
+		saveFunc: func(_ context.Context, _ *domain.Manifest) error { return nil },
 	}
 	localStore := &safeStore{
-		getFunc: func(context.Context) (*domain.Manifest, error) {
-			return &domain.Manifest{}, nil
-		},
+		getFunc:  func(context.Context) (*domain.Manifest, error) { return &domain.Manifest{}, nil },
 		saveFunc: func(_ context.Context, _ *domain.Manifest) error { return nil },
 	}
 
@@ -210,22 +185,16 @@ func TestPlayerPlaying_WorldsSyncEveryTick(t *testing.T) {
 	saveUnsub := autoRespondSaveRequested(bus)
 	defer saveUnsub()
 
-	_, stop := heartbeat.Attach(bus, localStore, remoteStore, syncer)
+	_, stop := heartbeat.Attach(bus, locker.Heartbeat, localStore, remoteStore, syncer)
 	defer stop()
 
-	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", LockID: "run-1", Interval: 20 * time.Millisecond})
+	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", SessionID: sessionID, Interval: 20 * time.Millisecond})
 	bus.Publish(running.ServerReadyInfo{})
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if uploadCount.Load() >= 2 {
-			// also verify heartbeat refreshed
-			remoteStore.mu.Lock()
-			beat := manifest.HeartbeatAt
-			remoteStore.mu.Unlock()
-			if !beat.IsZero() {
-				return
-			}
+			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -233,18 +202,15 @@ func TestPlayerPlaying_WorldsSyncEveryTick(t *testing.T) {
 }
 
 func TestPreviousSyncStillRunning_NextSyncWaits(t *testing.T) {
-	manifest := &domain.Manifest{LockedBy: "run-1"}
+	store := newLeaseStore()
+	locker, sessionID := acquireFor(t, store)
 
 	remoteStore := &safeStore{
-		getFunc: func(context.Context) (*domain.Manifest, error) {
-			return cloneForTest(manifest), nil
-		},
+		getFunc:  func(context.Context) (*domain.Manifest, error) { return &domain.Manifest{}, nil },
 		saveFunc: func(_ context.Context, _ *domain.Manifest) error { return nil },
 	}
 	localStore := &safeStore{
-		getFunc: func(context.Context) (*domain.Manifest, error) {
-			return &domain.Manifest{}, nil
-		},
+		getFunc:  func(context.Context) (*domain.Manifest, error) { return &domain.Manifest{}, nil },
 		saveFunc: func(_ context.Context, _ *domain.Manifest) error { return nil },
 	}
 
@@ -270,13 +236,12 @@ func TestPreviousSyncStillRunning_NextSyncWaits(t *testing.T) {
 	saveUnsub := autoRespondSaveRequested(bus)
 	defer saveUnsub()
 
-	_, stop := heartbeat.Attach(bus, localStore, remoteStore, syncer)
+	_, stop := heartbeat.Attach(bus, locker.Heartbeat, localStore, remoteStore, syncer)
 	defer stop()
 
-	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", LockID: "run-1", Interval: 20 * time.Millisecond})
+	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", SessionID: sessionID, Interval: 20 * time.Millisecond})
 	bus.Publish(running.ServerReadyInfo{})
 
-	// let several ticks fire while upload is slow
 	time.Sleep(120 * time.Millisecond)
 
 	if mc := maxConcurrent.Load(); mc > 1 {
@@ -285,18 +250,15 @@ func TestPreviousSyncStillRunning_NextSyncWaits(t *testing.T) {
 }
 
 func TestPlayerStopsServer_SyncStops(t *testing.T) {
-	manifest := &domain.Manifest{LockedBy: "run-1"}
+	store := newLeaseStore()
+	locker, sessionID := acquireFor(t, store)
 
 	remoteStore := &safeStore{
-		getFunc: func(context.Context) (*domain.Manifest, error) {
-			return cloneForTest(manifest), nil
-		},
+		getFunc:  func(context.Context) (*domain.Manifest, error) { return &domain.Manifest{}, nil },
 		saveFunc: func(_ context.Context, _ *domain.Manifest) error { return nil },
 	}
 	localStore := &safeStore{
-		getFunc: func(context.Context) (*domain.Manifest, error) {
-			return &domain.Manifest{}, nil
-		},
+		getFunc:  func(context.Context) (*domain.Manifest, error) { return &domain.Manifest{}, nil },
 		saveFunc: func(_ context.Context, _ *domain.Manifest) error { return nil },
 	}
 
@@ -312,13 +274,12 @@ func TestPlayerStopsServer_SyncStops(t *testing.T) {
 	saveUnsub := autoRespondSaveRequested(bus)
 	defer saveUnsub()
 
-	_, stop := heartbeat.Attach(bus, localStore, remoteStore, syncer)
+	_, stop := heartbeat.Attach(bus, locker.Heartbeat, localStore, remoteStore, syncer)
 	defer stop()
 
-	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", LockID: "run-1", Interval: 20 * time.Millisecond})
+	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", SessionID: sessionID, Interval: 20 * time.Millisecond})
 	bus.Publish(running.ServerReadyInfo{})
 
-	// wait for at least one sync
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if uploadCount.Load() >= 1 {
@@ -342,10 +303,137 @@ func TestPlayerStopsServer_SyncStops(t *testing.T) {
 	}
 }
 
-func cloneForTest(m *domain.Manifest) *domain.Manifest {
-	if m == nil {
-		return nil
+// --- leaseStore — in-memory ports.StorageRepository that also counts puts ---
+
+type leaseStore struct {
+	mu    sync.Mutex
+	items map[string][]byte
+	puts  int
+}
+
+func newLeaseStore() *leaseStore {
+	return &leaseStore{items: map[string][]byte{}}
+}
+
+func (s *leaseStore) String() string { return "mem::lease" }
+
+func (s *leaseStore) putCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.puts
+}
+
+func (s *leaseStore) heartbeatAt(t *testing.T) time.Time {
+	t.Helper()
+	s.mu.Lock()
+	data, ok := s.items[lock.Key]
+	s.mu.Unlock()
+	if !ok {
+		return time.Time{}
 	}
-	c := *m
-	return &c
+	var p decodedPayload
+	if err := json.Unmarshal(data, &p); err != nil {
+		t.Fatalf("decode lease payload: %v", err)
+	}
+	return p.HeartbeatAt
+}
+
+func (s *leaseStore) seedLive(t *testing.T, owner, sessionID string, ttl time.Duration) {
+	t.Helper()
+	now := time.Now()
+	p := decodedPayload{
+		Owner:       owner,
+		SessionID:   sessionID,
+		AcquiredAt:  now,
+		HeartbeatAt: now,
+		ExpiresAt:   now.Add(ttl),
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("marshal seed payload: %v", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.items[lock.Key] = data
+}
+
+func (s *leaseStore) GetStream(_ context.Context, key string) (io.ReadCloser, error) {
+	s.mu.Lock()
+	data, ok := s.items[key]
+	s.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("leaseStore: key %q not found", key)
+	}
+	return io.NopCloser(bytes.NewReader(append([]byte(nil), data...))), nil
+}
+
+func (s *leaseStore) PutStream(_ context.Context, key string, body io.Reader) error {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.items[key] = data
+	s.puts++
+	return nil
+}
+
+func (s *leaseStore) Exists(_ context.Context, key string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.items[key]
+	return ok, nil
+}
+
+func (s *leaseStore) Delete(_ context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.items, key)
+	return nil
+}
+
+func (s *leaseStore) Get(_ context.Context, _ string) ([]byte, error) {
+	return nil, errors.New("leaseStore: Get deprecated")
+}
+
+func (s *leaseStore) Put(_ context.Context, _ string, _ []byte) error {
+	return errors.New("leaseStore: Put deprecated")
+}
+
+func (s *leaseStore) DeleteBatch(ctx context.Context, keys []string) error {
+	for _, k := range keys {
+		if err := s.Delete(ctx, k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *leaseStore) List(_ context.Context, prefix string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []string{}
+	for k := range s.items {
+		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
+
+func (s *leaseStore) Copy(_ context.Context, _ string, _ string) error {
+	return errors.New("leaseStore: Copy unused")
+}
+
+func (s *leaseStore) Rename(_ context.Context, _ string, _ string) error {
+	return errors.New("leaseStore: Rename unused")
+}
+
+type decodedPayload struct {
+	Owner       string    `json:"owner"`
+	SessionID   string    `json:"sessionId"`
+	AcquiredAt  time.Time `json:"acquiredAt"`
+	HeartbeatAt time.Time `json:"heartbeatAt"`
+	ExpiresAt   time.Time `json:"expiresAt"`
 }

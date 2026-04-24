@@ -12,15 +12,16 @@ import (
 // RunState is the per-run value shared by every stage. It carries:
 //   - services whose scope is the run (Bus, RunID)
 //   - data produced by one stage and consumed by later stages
-//     (LockID, LocalBefore, RemoteBefore)
+//     (SessionID, LocalBefore, RemoteBefore)
 //   - the last error, for Failed to report
 //
 // Lease state lives outside this struct; the heartbeat supervisor owns it
-// via bus events.
+// via bus events. SessionID is the UUIDv4 fencing token minted by
+// lock.Locker.Acquire and carried through the run.
 type RunState struct {
 	RunID        string
 	Bus          ports.EventBus
-	LockID       string
+	SessionID    string
 	LocalBefore  *domain.Manifest
 	RemoteBefore *domain.Manifest
 	Err          error

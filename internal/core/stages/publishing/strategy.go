@@ -31,7 +31,7 @@ func (*Strategy) Name() string { return ritual.StagePublishing }
 func (s *Strategy) Run(parentCtx context.Context, rs *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
 	publish(rs.Bus, ritual.StartInfo{Operation: "publish"})
 
-	if rs.LockID == "" {
+	if rs.SessionID == "" {
 		publish(rs.Bus, ritual.FinishInfo{Operation: "publish"})
 		return s.onNext, nil
 	}

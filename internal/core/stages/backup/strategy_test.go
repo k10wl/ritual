@@ -21,7 +21,7 @@ func TestStrategy_Name_IsBackup(t *testing.T) {
 	assert.Equal(t, "Backup", s.Name(), "stage name must be Backup — appears in StateChangedInfo and logs")
 }
 
-func TestStrategy_NoLockID_Skips(t *testing.T) {
+func TestStrategy_NoSessionID_Skips(t *testing.T) {
 	local, remote := countingStore(), countingStore()
 	s := backup.New(local, remote, nilManifestStore(), nil)
 
@@ -44,7 +44,7 @@ func TestStrategy_NoMutation_Skips(t *testing.T) {
 		GetFunc: func(context.Context) (*domain.Manifest, error) { return post, nil },
 	}, nil)
 
-	rs := &ritual.RunState{Bus: adapters.NewEventBus(8), LockID: "lock-1", LocalBefore: pre}
+	rs := &ritual.RunState{Bus: adapters.NewEventBus(8), SessionID: "lock-1", LocalBefore: pre}
 	_, err := s.Run(t.Context(), rs)
 
 	require.NoError(t, err)
@@ -64,7 +64,7 @@ func TestStrategy_Mutated_CopiesOnBothSides(t *testing.T) {
 		GetFunc: func(context.Context) (*domain.Manifest, error) { return post, nil },
 	}, nil)
 
-	rs := &ritual.RunState{Bus: adapters.NewEventBus(8), LockID: "lock-1", LocalBefore: pre}
+	rs := &ritual.RunState{Bus: adapters.NewEventBus(8), SessionID: "lock-1", LocalBefore: pre}
 	_, err := s.Run(t.Context(), rs)
 
 	require.NoError(t, err)
@@ -92,7 +92,7 @@ func TestStrategy_CopyError_EmitsErrorInfo_ContinuesToOnNext(t *testing.T) {
 		GetFunc: func(context.Context) (*domain.Manifest, error) { return post, nil },
 	}, nil)
 
-	rs := &ritual.RunState{Bus: bus, LockID: "lock-1", LocalBefore: pre}
+	rs := &ritual.RunState{Bus: bus, SessionID: "lock-1", LocalBefore: pre}
 	_, err := s.Run(t.Context(), rs)
 
 	require.NoError(t, err, "backup failure must not bubble up — lock release depends on pipeline continuing past this stage")

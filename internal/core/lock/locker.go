@@ -75,8 +75,11 @@ func (l *Locker) Heartbeat(ctx context.Context, sessionID string) error {
 	if err != nil {
 		return err
 	}
-	if !found || current.SessionID != sessionID {
-		return ErrLeaseLost
+	if !found {
+		return ErrLeaseVanished
+	}
+	if current.SessionID != sessionID {
+		return ErrLeaseTakenOver
 	}
 	now := time.Now()
 	current.HeartbeatAt = now
@@ -104,8 +107,11 @@ func (l *Locker) Verify(ctx context.Context, sessionID string) error {
 	if err != nil {
 		return err
 	}
-	if !found || current.SessionID != sessionID {
-		return ErrLeaseLost
+	if !found {
+		return ErrLeaseVanished
+	}
+	if current.SessionID != sessionID {
+		return ErrLeaseTakenOver
 	}
 	return nil
 }

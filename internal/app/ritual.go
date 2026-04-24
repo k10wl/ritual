@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"ritual/internal/adapters/observed"
 	"ritual/internal/config"
 	"ritual/internal/core/checks"
+	"ritual/internal/core/lock"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
@@ -40,6 +42,7 @@ type Ritual struct {
 	retentions      []retaining.Job
 	cmdBuilder      ports.CmdBuilder
 	readiness       ports.ReadinessCheck
+	locker          *observed.Locker
 
 	entry    machine.Strategy[ritual.RunState]
 	runner   *ritual.Runner
@@ -64,6 +67,7 @@ func New(
 	cmdBuilder ports.CmdBuilder,
 	readiness ports.ReadinessCheck,
 ) *Ritual {
+	host, _ := os.Hostname()
 	r := &Ritual{
 		bus:             bus,
 		localStorage:    localStorage,
@@ -78,10 +82,26 @@ func New(
 		retentions:      retentions,
 		cmdBuilder:      cmdBuilder,
 		readiness:       readiness,
+		locker:          observed.NewLocker(lock.New(remoteStorage, host), bus),
 		status:          Idle,
 	}
 	r.entry = r.buildChain()
 	return r
+}
+
+// Heartbeat returns the heartbeat callback bound to this Ritual's Locker.
+// Composition root passes it to heartbeat.Attach so the supervisor
+// refreshes the same lease that Acquiring claimed.
+func (r *Ritual) Heartbeat(ctx context.Context, sessionID string) error {
+	return r.locker.Heartbeat(ctx, sessionID)
+}
+
+// SetHeartbeatInterval overrides the lease heartbeat cadence on the
+// internal Locker. Integration tests use this to drive sub-second sync
+// ticks; production keeps the 1-minute default.
+func (r *Ritual) SetHeartbeatInterval(d time.Duration) {
+	r.locker.SetHeartbeatInterval(d)
+	r.entry = r.buildChain()
 }
 
 // Listen subscribes to the bus and spawns a goroutine that dispatches
@@ -192,12 +212,11 @@ func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
 	failRet := failed.New(ritual.StageRetaining)
 
 	retain := retaining.New(r.retentions, r.bus, failRet)
-	unlock := unlocking.New(r.localManifests, r.remoteManifests, retain)
+	unlock := unlocking.New(r.locker.Release, retain)
 	backupStage := backup.New(r.localStorage, r.remoteStorage, r.localManifests, unlock)
 	publish := publishing.New(r.exitUpdaters, backupStage)
 	run := running.New(r.cmdBuilder, r.readiness, publish, unlock)
-	rollback := unlocking.New(r.localManifests, r.remoteManifests, failAcq)
-	acquire := acquiring.New(r.localManifests, r.remoteManifests, run, failAcq, rollback)
+	acquire := acquiring.New(r.locker.Acquire, r.locker.Inspect, r.localManifests.Get, r.locker.HeartbeatInterval(), run, failAcq)
 	pull := pulling.New(r.puller, r.applier, r.headResolver, acquire, failPull)
 	check := checking.New(r.checks, pull, failCheck)
 

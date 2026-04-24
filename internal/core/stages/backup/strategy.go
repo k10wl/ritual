@@ -50,7 +50,7 @@ func (s *Strategy) Run(parentCtx context.Context, rs *ritual.RunState) (machine.
 	publish(rs.Bus, ritual.StartInfo{Operation: "backup"})
 	defer publish(rs.Bus, ritual.FinishInfo{Operation: "backup"})
 
-	if rs.LockID == "" || rs.LocalBefore == nil {
+	if rs.SessionID == "" || rs.LocalBefore == nil {
 		return s.onNext, nil
 	}
 

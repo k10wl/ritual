@@ -51,11 +51,11 @@ func (s StateFailedInfo) String() string { return fmt.Sprintf("failed in %s: %v"
 
 // LockAcquiredInfo is published by Acquiring once the remote lock is
 // taken. The heartbeat supervisor subscribes, starts a beat goroutine
-// for the run, and writes HeartbeatAt on Interval.
+// for the run, and calls lock.Locker.Heartbeat on Interval.
 type LockAcquiredInfo struct {
-	RunID    string
-	LockID   string
-	Interval time.Duration
+	RunID     string
+	SessionID string
+	Interval  time.Duration
 }
 
 func (l LockAcquiredInfo) String() string {

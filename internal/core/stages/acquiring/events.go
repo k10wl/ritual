@@ -1,11 +1,32 @@
 package acquiring
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
-// LockHeldInfo fires when the remote manifest's lease is still active and
-// the run must abort. Holder is the current LockedBy value. Consumers
-// (e.g. the GUI projection) surface the holder so the user knows who is
-// playing.
-type LockHeldInfo struct{ Holder string }
+// LockHeldInfo fires when the remote lease is still live under a foreign
+// holder and this run must abort. Carries the full Inspect snapshot so
+// consumers (GUI projection, logs) can render "locked by {Holder} since
+// {AcquiredAt}, expires {ExpiresAt}" without a second round-trip to the
+// lock store.
+type LockHeldInfo struct {
+	Holder      string
+	SessionID   string
+	AcquiredAt  time.Time
+	HeartbeatAt time.Time
+	ExpiresAt   time.Time
+	Stale       bool
+}
 
-func (l LockHeldInfo) String() string { return fmt.Sprintf("lock held by %s", l.Holder) }
+func (l LockHeldInfo) String() string {
+	return fmt.Sprintf("lock held by %s (session %s) until %s",
+		l.Holder, shortSession(l.SessionID), l.ExpiresAt.Format(time.RFC3339))
+}
+
+func shortSession(s string) string {
+	if len(s) <= 8 {
+		return s
+	}
+	return s[:8]
+}

@@ -33,6 +33,7 @@
 package app_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -48,6 +49,7 @@ import (
 	"ritual/internal/config"
 	"ritual/internal/core/checks"
 	"ritual/internal/core/domain"
+	"ritual/internal/core/lock"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/refs"
 	"ritual/internal/core/services"
@@ -505,6 +507,28 @@ func seedRemoteManifest(t *testing.T, r *testRitual, manifest *domain.Manifest) 
 func seedLocalManifest(t *testing.T, r *testRitual, manifest *domain.Manifest) {
 	t.Helper()
 	require.NoError(t, r.localManifests.Save(r.ctx, manifest), "seed local manifest")
+}
+
+func seedExpiredRemoteLock(t *testing.T, r *testRitual, owner, sessionID string) {
+	t.Helper()
+	past := time.Now().Add(-time.Hour)
+	payload := map[string]any{
+		"owner":       owner,
+		"sessionId":   sessionID,
+		"acquiredAt":  past.Format(time.RFC3339Nano),
+		"heartbeatAt": past.Format(time.RFC3339Nano),
+		"expiresAt":   past.Add(time.Minute).Format(time.RFC3339Nano),
+	}
+	data, err := json.Marshal(payload)
+	require.NoError(t, err, "marshal expired lock payload")
+	require.NoError(t, r.remote.PutStream(r.ctx, lock.Key, bytes.NewReader(data)), "seed expired lock object")
+}
+
+func (r *testRitual) assertRemoteLockAbsent(t *testing.T, msg string) {
+	t.Helper()
+	exists, err := r.remote.Exists(r.ctx, lock.Key)
+	require.NoError(t, err, msg)
+	assert.False(t, exists, msg)
 }
 
 func seedFiles(t *testing.T, rootDir string, files []testFile) {
@@ -995,10 +1019,7 @@ func TestIntegration_LeaseExpired_TakesOverAndCompletes(t *testing.T) {
 	seedRemoteWorld(t, ritual,
 		file("world/level.dat", []byte("level")),
 	)
-	seedRemoteManifest(t, ritual, &domain.Manifest{
-		LockedBy:    "crashed-host",
-		HeartbeatAt: time.Now().Add(-time.Hour),
-	})
+	seedExpiredRemoteLock(t, ritual, "crashed-host", "crashed-session")
 
 	server := ritual.startRitual(t)
 	server.waitReady(t)
@@ -1006,8 +1027,8 @@ func TestIntegration_LeaseExpired_TakesOverAndCompletes(t *testing.T) {
 	server.stdin.Close()
 	ritual.waitDone(t)
 
-	ritual.assertManifestUnlocked(t,
-		"stale lock should be taken over and released — crashed host is gone")
+	ritual.assertRemoteLockAbsent(t,
+		"stale lease should be taken over and released — crashed host's lock object is gone")
 }
 
 func TestIntegration_ServerCrash_NoUploadLockReleased(t *testing.T) {
@@ -1399,9 +1420,6 @@ func (r *testRitual) startRitualWithLiveSync(t *testing.T) {
 
 	cmdBuilder := &liveSyncCmdBuilder{binary: fakerunBin, root: r.localDir}
 
-	_, stopHeartbeat := heartbeat.Attach(r.bus, r.localManifests, r.remoteManifests, syncSvc)
-	t.Cleanup(stopHeartbeat)
-
 	puller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
 
 	rit := app.New(
@@ -1415,6 +1433,10 @@ func (r *testRitual) startRitualWithLiveSync(t *testing.T) {
 		cmdBuilder,
 		immediateReady{},
 	)
+	rit.SetHeartbeatInterval(20 * time.Millisecond)
+
+	_, stopHeartbeat := heartbeat.Attach(r.bus, rit.Heartbeat, r.localManifests, r.remoteManifests, syncSvc)
+	t.Cleanup(stopHeartbeat)
 
 	rit.Listen(r.ctx)
 	r.bus.Publish(app.StartRequested{})
