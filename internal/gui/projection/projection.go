@@ -117,7 +117,7 @@ func (p *Projection) fold(evt ports.Event) bool {
 
 func (p *Projection) onStateChanged(to string) {
 	switch to {
-	case ritual.StageChecking, ritual.StageFetching, ritual.StageAcquiring:
+	case ritual.StageChecking, ritual.StagePulling, ritual.StageAcquiring:
 		p.state.Stage = StageDownloading
 		p.state.Label = downloadLabel(to)
 	case ritual.StageRunning:
@@ -155,7 +155,7 @@ func downloadLabel(stage string) string {
 	switch stage {
 	case ritual.StageChecking:
 		return "Checking…"
-	case ritual.StageFetching:
+	case ritual.StagePulling:
 		return "Downloading…"
 	case ritual.StageAcquiring:
 		return "Acquiring lock…"

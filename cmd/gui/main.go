@@ -20,11 +20,15 @@ import (
 	"ritual"
 	"ritual/internal/adapters"
 	"ritual/internal/adapters/observed"
+	"ritual/internal/adapters/progress"
 	"ritual/internal/app"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/refs"
 	"ritual/internal/core/services"
+	"ritual/internal/core/stages/pulling"
+	"strings"
 	guisvc "ritual/internal/gui/services"
 	"ritual/internal/gui/logsink"
 	"ritual/internal/gui/projection"
@@ -116,6 +120,7 @@ func main() {
 	runtime.ritual.Listen(ctx)
 	go runtime.projection.Run(ctx)
 	go runtime.logsink.Run(ctx)
+	go runtime.ticker.Run(ctx)
 	runtime.bus.Publish(app.StatusChanged{Status: app.Idle})
 
 	if err := wailsApp.Run(); err != nil {
@@ -132,6 +137,7 @@ type guiRuntime struct {
 	logsink     *logsink.Sink
 	viewEmitter *wailsViewEmitter
 	logEmitter  *wailsLogEmitter
+	ticker      *progress.Ticker
 }
 
 func buildRuntime() (*guiRuntime, error) {
@@ -165,8 +171,23 @@ func buildRuntime() (*guiRuntime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mock remote storage: %w", err)
 	}
-	localStorage := observed.NewStorage(rawLocal, bus)
-	remoteStorage := observed.NewStorage(rawRemote, bus)
+
+	// Blob-store decorator stack: raw FS → compressing (silent, integrity
+	// verified) → counter (byte/op tap for the progress ticker) → observed
+	// (per-op lifecycle events). Observed is outermost so GUI events carry
+	// raw byte sizes; the ticker reads counter atomics to emit live Mbps.
+	localCompressed, err := adapters.NewCompressingStorage(rawLocal)
+	if err != nil {
+		return nil, fmt.Errorf("local compressing storage: %w", err)
+	}
+	remoteCompressed, err := adapters.NewCompressingStorage(rawRemote)
+	if err != nil {
+		return nil, fmt.Errorf("remote compressing storage: %w", err)
+	}
+	localCounters := &adapters.StorageCounters{}
+	remoteCounters := &adapters.StorageCounters{}
+	localStorage := observed.NewStorage(adapters.NewCounterStorage(localCompressed, localCounters), bus)
+	remoteStorage := observed.NewStorage(adapters.NewCounterStorage(remoteCompressed, remoteCounters), bus)
 
 	localManifests := adapters.NewManifestStore(localStorage)
 	remoteManifests := adapters.NewManifestStore(remoteStorage)
@@ -187,7 +208,27 @@ func buildRuntime() (*guiRuntime, error) {
 	if err := os.MkdirAll(worldsPath, config.DirPermission); err != nil {
 		return nil, fmt.Errorf("create worlds dir: %w", err)
 	}
+	worldsRoot, err := os.OpenRoot(worldsPath)
+	if err != nil {
+		return nil, fmt.Errorf("open worlds dir: %w", err)
+	}
+	rawWorkdir, err := adapters.NewFSRepository(worldsRoot, "workdir")
+	if err != nil {
+		return nil, fmt.Errorf("workdir storage: %w", err)
+	}
+	workdirStorage := observed.NewStorage(rawWorkdir, bus)
 	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
+
+	// Refs V2 pipeline: ParallelRunner(10) shared by Pull (remote → local
+	// blob download concurrency) and Apply (local blob → workdir placement).
+	// Weight-desc dispatch: heaviest blobs start first so ETA stabilises and
+	// the tail-blob straggler shrinks (spec §2695).
+	const pullConcurrency = 10
+	runner := adapters.NewParallelRunner(pullConcurrency)
+	puller := refs.NewPuller(remoteStorage, localStorage, runner)
+	applier := refs.NewApplier(localStorage, workdirStorage, scanner, runner)
+	headResolver := newRemoteHeadResolver(remoteStorage)
+
 	stagingDir := filepath.Join(config.RootPath, "staging")
 	syncSvc := services.NewSyncService(
 		scanner, localStorage, remoteStorage, bus,
@@ -196,7 +237,6 @@ func buildRuntime() (*guiRuntime, error) {
 		"sync/gui/worlds",
 	)
 	getWorldsState := func(m *domain.Manifest) *domain.SyncState { return &m.Worlds.SyncState }
-	downloader := services.NewSyncDownloadUpdater(syncSvc, localManifests, remoteManifests, getWorldsState)
 	uploader := services.NewSyncUploader(syncSvc, localManifests, remoteManifests, getWorldsState)
 
 	// TODO(ritual-gui-poc): fakerun stands in for the Minecraft server so
@@ -218,12 +258,18 @@ func buildRuntime() (*guiRuntime, error) {
 		localStorage, remoteStorage,
 		localManifests, remoteManifests,
 		nil, // no conditions for POC
-		[]ports.UpdaterService{downloader},
+		puller, applier, headResolver,
 		[]ports.UpdaterService{uploader},
 		nil, // no retention for POC
 		cmdBuilder,
 		readiness,
 	)
+
+	// Progress ticker over remote counters — downloads dominate user-visible
+	// throughput during Pull. Local counters stay wired for a future ticker
+	// when Apply/Commit traffic surfacing is added.
+	_ = localCounters
+	remoteTicker := progress.NewTicker(remoteCounters, bus, time.Second)
 
 	viewEmitter := newWailsViewEmitter()
 	logEmitter := &wailsLogEmitter{}
@@ -239,7 +285,36 @@ func buildRuntime() (*guiRuntime, error) {
 		logsink:     sink,
 		viewEmitter: viewEmitter,
 		logEmitter:  logEmitter,
+		ticker:      remoteTicker,
 	}, nil
+}
+
+// newRemoteHeadResolver builds a pulling.HeadResolver closure over remote.
+// List("refs/") → strip "refs/" prefix + ".json" suffix → lexicographic max
+// (timestamps sort as strings). Empty list → error; the chain routes to
+// onFail and the operator surfaces "no refs on remote".
+func newRemoteHeadResolver(remote ports.StorageRepository) pulling.HeadResolver {
+	return func(ctx context.Context) (domain.RefID, error) {
+		keys, err := remote.List(ctx, "refs/")
+		if err != nil {
+			return "", fmt.Errorf("list refs: %w", err)
+		}
+		var head string
+		for _, key := range keys {
+			name := strings.TrimPrefix(key, "refs/")
+			name = strings.TrimSuffix(name, ".json")
+			if name == "" {
+				continue
+			}
+			if name > head {
+				head = name
+			}
+		}
+		if head == "" {
+			return "", errors.New("no refs on remote")
+		}
+		return domain.RefID(head), nil
+	}
 }
 
 func ensureManifest(ctx context.Context, store ports.ManifestStore) error {

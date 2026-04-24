@@ -47,9 +47,9 @@ func TestRunner_RunCurrent_ReentersAtFailedStage(t *testing.T) {
 	checkCount := 0
 	fetchCount := 0
 
-	fetch := &countingStrategy{name: "Fetching", count: &fetchCount}
+	fetch := &countingStrategy{name: "Pulling", count: &fetchCount}
 	check := &countingStrategy{name: "Checking", count: &checkCount, next: fetch}
-	fail := &failThenRetry{from: ritual.StageFetching, onRetry: fetch}
+	fail := &failThenRetry{from: ritual.StagePulling, onRetry: fetch}
 	fetch.next = fail
 
 	rs := &ritual.RunState{Bus: nil, Err: errors.New("network error")}

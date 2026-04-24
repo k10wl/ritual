@@ -123,7 +123,7 @@ func TestProjection_ServerReady_FlipsReadyLight(t *testing.T) {
 
 func TestProjection_SyncStageProgress_UpdatesBytesAndPercent(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
-		bus.Publish(ritual.StateChangedInfo{To: ritual.StageFetching})
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
 		bus.Publish(sync.SyncStageProgressInfo{
 			File: "world.dat", FilesDone: 5, FilesTotal: 10,
 			BytesDone: 50 * 1024 * 1024, BytesTotal: 100 * 1024 * 1024,

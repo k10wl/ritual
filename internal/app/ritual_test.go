@@ -10,6 +10,7 @@ import (
 	"ritual/internal/core/checks"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/retaining"
 	"strings"
 	"testing"
@@ -49,6 +50,30 @@ type noopUpdater struct{}
 
 func (noopUpdater) Run(_ context.Context) error { return nil }
 
+type noopPuller struct{}
+
+func (noopPuller) Pull(_ context.Context, _ domain.RefID) error { return nil }
+
+type noopApplier struct{}
+
+func (noopApplier) Apply(_ context.Context, _ domain.RefID) error { return nil }
+
+func noopHead(_ context.Context) (domain.RefID, error) { return domain.RefID("noop"), nil }
+
+type failOncePuller struct {
+	calls int
+}
+
+func (f *failOncePuller) Pull(_ context.Context, _ domain.RefID) error {
+	f.calls++
+	if f.calls == 1 {
+		return errors.New("network timeout")
+	}
+	return nil
+}
+
+var _ pulling.HeadResolver = noopHead
+
 func noopJob(_ context.Context) error { return nil }
 
 type fakeCmdBuilder struct{}
@@ -85,7 +110,7 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
 		[]checks.Check{noopCheck},
-		[]ports.UpdaterService{noopUpdater{}},
+		noopPuller{}, noopApplier{}, noopHead,
 		[]ports.UpdaterService{noopUpdater{}},
 		[]retaining.Job{noopJob},
 		fakeCmdBuilder{},
@@ -101,32 +126,18 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 	assert.True(t, true, "pipeline reached Done")
 }
 
-// --- failOnceUpdater ---
-
-type failOnceUpdater struct {
-	calls int
-}
-
-func (f *failOnceUpdater) Run(_ context.Context) error {
-	f.calls++
-	if f.calls == 1 {
-		return errors.New("network timeout")
-	}
-	return nil
-}
-
 func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 	bus := adapters.NewEventBus(128)
 	ch, unsub := bus.Subscribe()
 	defer unsub()
 
-	flaky := &failOnceUpdater{}
+	flaky := &failOncePuller{}
 	r := app.New(
 		bus,
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
 		[]checks.Check{noopCheck},
-		[]ports.UpdaterService{flaky},
+		flaky, noopApplier{}, noopHead,
 		[]ports.UpdaterService{noopUpdater{}},
 		[]retaining.Job{noopJob},
 		fakeCmdBuilder{},
@@ -143,7 +154,7 @@ func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 	bus.Publish(app.RetryRequested{})
 	waitForStatus(t, ch, app.Done, 5*time.Second)
 
-	assert.Equal(t, 2, flaky.calls, "updater called twice: fail + retry")
+	assert.Equal(t, 2, flaky.calls, "puller called twice: fail + retry")
 }
 
 // --- blockingCmdBuilder ---
@@ -168,7 +179,7 @@ func TestRitual_Stop_CancelsRunning(t *testing.T) {
 		bus,
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
-		nil, nil, nil, nil,
+		nil, noopPuller{}, noopApplier{}, noopHead, nil, nil,
 		blocker,
 		immediateReady{},
 	)
@@ -197,7 +208,7 @@ func TestRitual_Start_AfterDone_StartsAgain(t *testing.T) {
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
 		[]checks.Check{noopCheck},
-		[]ports.UpdaterService{noopUpdater{}},
+		noopPuller{}, noopApplier{}, noopHead,
 		[]ports.UpdaterService{noopUpdater{}},
 		[]retaining.Job{noopJob},
 		fakeCmdBuilder{},
@@ -225,7 +236,7 @@ func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
 		bus,
 		fakeStorage{}, fakeStorage{},
 		fakeManifestStore{}, fakeManifestStore{},
-		nil, nil, nil, nil,
+		nil, noopPuller{}, noopApplier{}, noopHead, nil, nil,
 		fakeCmdBuilder{},
 		immediateReady{},
 	)

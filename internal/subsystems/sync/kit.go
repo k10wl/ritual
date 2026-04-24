@@ -5,6 +5,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -13,16 +14,21 @@ import (
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/refs"
 	"ritual/internal/core/services"
+	"ritual/internal/core/stages/pulling"
+	"strings"
 	"time"
 )
 
 // Kit is the result of Build — holds everything the stage chain needs
 // from the sync subsystem.
 type Kit struct {
-	Updaters     []ports.UpdaterService // check → fetch uses these
+	Puller       ports.Puller          // pulling stage: download refs + blobs
+	Applier      ports.Applier         // pulling stage: materialise ref into workdir
+	HeadResolver pulling.HeadResolver  // pulling stage: pick HEAD ref id from remote
 	ExitUpdaters []ports.UpdaterService // serve → publish uses these
-	WorldSync    ports.SyncService      // heartbeat uses this for live sync during server running
+	WorldSync    ports.SyncService     // heartbeat uses this for live sync during server running
 }
 
 // Build wires scanners, filters, sync services, and updaters. It reads
@@ -36,11 +42,6 @@ func Build(
 	localManifests, remoteManifests ports.ManifestStore,
 	bus ports.EventBus,
 ) (Kit, error) {
-	ritualUpdater, err := services.NewRitualUpdater(localManifests, remoteManifests, remoteStorage, config.AppVersion)
-	if err != nil {
-		return Kit{}, fmt.Errorf("ritual updater: %w", err)
-	}
-
 	hostname, _ := os.Hostname()
 	sessionID := fmt.Sprintf("%s%s%d", hostname, config.LockIDSeparator, time.Now().UnixNano())
 	localStaging := filepath.Join(config.TempRitualPath(), fmt.Sprintf(config.SyncStagingPattern, time.Now().UnixNano()))
@@ -79,22 +80,63 @@ func Build(
 		remoteStaging+"/"+config.ServerDir,
 	)
 
-	worldDown := services.NewSyncDownloadUpdater(worldSync, localManifests, remoteManifests, func(m *domain.Manifest) *domain.SyncState {
-		return &m.Worlds.SyncState
-	})
-	serverDown := services.NewSyncDownloadUpdater(serverSync, localManifests, remoteManifests, func(m *domain.Manifest) *domain.SyncState {
-		return &m.Server.SyncState
-	})
 	worldUp := services.NewSyncUploader(worldSync, localManifests, remoteManifests, func(m *domain.Manifest) *domain.SyncState {
 		return &m.Worlds.SyncState
 	})
 
+	// Refs V2 pipeline: ParallelRunner(10) weight-desc dispatch shared by
+	// Pull (remote → local) and Apply (local blobs → workdir). Workdir
+	// storage targets the worlds directory — Apply materialises there.
+	const pullConcurrency = 10
+	runner := adapters.NewParallelRunner(pullConcurrency)
+	worldsRoot, err := os.OpenRoot(worldsPath)
+	if err != nil {
+		return Kit{}, fmt.Errorf("open worlds root: %w", err)
+	}
+	workdirStorage, err := adapters.NewFSRepository(worldsRoot, "workdir")
+	if err != nil {
+		return Kit{}, fmt.Errorf("workdir storage: %w", err)
+	}
+	puller := refs.NewPuller(remoteStorage, localStorage, runner)
+	applier := refs.NewApplier(localStorage, workdirStorage, worldScanner, runner)
+	headResolver := newRemoteHeadResolver(remoteStorage)
+
 	_ = serverScanner
+	_ = serverSync
 	return Kit{
-		Updaters:     []ports.UpdaterService{ritualUpdater, serverDown, worldDown},
+		Puller:       puller,
+		Applier:      applier,
+		HeadResolver: headResolver,
 		ExitUpdaters: []ports.UpdaterService{worldUp},
 		WorldSync:    worldSync,
 	}, nil
+}
+
+// newRemoteHeadResolver lists remote refs/ and returns the lexicographic
+// max timestamp as the HEAD ref id. Empty list → explicit error so the
+// stage chain routes to onFail with a human-readable cause.
+func newRemoteHeadResolver(remote ports.StorageRepository) pulling.HeadResolver {
+	return func(ctx context.Context) (domain.RefID, error) {
+		keys, err := remote.List(ctx, "refs/")
+		if err != nil {
+			return "", fmt.Errorf("list refs: %w", err)
+		}
+		var head string
+		for _, key := range keys {
+			name := strings.TrimPrefix(key, "refs/")
+			name = strings.TrimSuffix(name, ".json")
+			if name == "" {
+				continue
+			}
+			if name > head {
+				head = name
+			}
+		}
+		if head == "" {
+			return "", errors.New("no refs on remote")
+		}
+		return domain.RefID(head), nil
+	}
 }
 
 func worldInnerScanner(ctx context.Context, worldsPath string, localManifests ports.ManifestStore, worldsFS fs.FS) ports.DirectoryScanner {

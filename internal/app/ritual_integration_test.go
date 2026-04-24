@@ -49,7 +49,9 @@ import (
 	"ritual/internal/core/checks"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/refs"
 	"ritual/internal/core/services"
+	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/subsystems/heartbeat"
 	"strings"
@@ -319,15 +321,18 @@ func (r *testRitual) startRitualFull(t *testing.T, preflightChecks []checks.Chec
 
 	downloader := services.NewSyncDownloadUpdater(syncSvc, r.localManifests, r.remoteManifests, getState)
 	uploader := services.NewSyncUploader(syncSvc, r.localManifests, r.remoteManifests, getState)
+	_ = downloader
 
 	cmdBuilder := &fakeServerCmdBuilder{server: server}
+
+	puller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
 
 	ritual := app.New(
 		r.bus,
 		r.local, r.remote,
 		r.localManifests, r.remoteManifests,
 		preflightChecks,
-		[]ports.UpdaterService{downloader},
+		puller, applier, headResolver,
 		[]ports.UpdaterService{uploader},
 		nil,
 		cmdBuilder,
@@ -390,6 +395,47 @@ func file(path string, content []byte) testFile {
 	return testFile{path: path, content: content}
 }
 
+// ---------- pulling verbs (V2 refs pipeline) ----------
+
+// buildPullingVerbs constructs puller, applier, and head resolver wired
+// against the testRitual's local/remote storage. Workdir targets the
+// worlds directory; the applier materialises refs into it. The head
+// resolver returns an explicit "no refs" error when the remote has none,
+// matching production semantics — tests that don't seed a ref will see
+// the pulling stage route to onFail.
+func (r *testRitual) buildPullingVerbs(worldsPath string, scanner ports.DirectoryScanner) (ports.Puller, ports.Applier, pulling.HeadResolver) {
+	worldsRoot, err := os.OpenRoot(worldsPath)
+	if err != nil {
+		panic(fmt.Sprintf("open worlds root: %v", err))
+	}
+	workdirStorage, err := adapters.NewFSRepository(worldsRoot, "workdir")
+	if err != nil {
+		panic(fmt.Sprintf("workdir storage: %v", err))
+	}
+	runner := adapters.NewSerialRunner()
+	puller := refs.NewPuller(r.remote, r.local, runner)
+	applier := refs.NewApplier(r.local, workdirStorage, scanner, runner)
+	resolver := func(ctx context.Context) (domain.RefID, error) {
+		keys, err := r.remote.List(ctx, "refs/")
+		if err != nil {
+			return "", fmt.Errorf("list refs: %w", err)
+		}
+		var head string
+		for _, key := range keys {
+			name := strings.TrimPrefix(key, "refs/")
+			name = strings.TrimSuffix(name, ".json")
+			if name == "" {
+				continue
+			}
+			if name > head {
+				head = name
+			}
+		}
+		return domain.RefID(head), nil
+	}
+	return puller, applier, resolver
+}
+
 // ---------- seed helpers ----------
 
 func seedRemoteWorld(t *testing.T, r *testRitual, files ...testFile) {
@@ -397,6 +443,28 @@ func seedRemoteWorld(t *testing.T, r *testRitual, files ...testFile) {
 	seedFiles(t, r.remoteDir, files)
 	updateManifestXXHash(t, r.ctx, r.remoteDir, r.remoteManifests, config.WorldsDir,
 		func(m *domain.Manifest) *domain.SyncState { return &m.Worlds.SyncState })
+	seedRemoteRef(t, r)
+}
+
+// seedRemoteRef commits a ref on remote storage reflecting the current
+// contents of remoteDir/worlds. Pulling stage resolves this as HEAD and
+// materialises it into the local workdir. Targets: "**" so the walk
+// captures every seeded file without a caller-specified glob.
+func seedRemoteRef(t *testing.T, r *testRitual) {
+	t.Helper()
+	remoteWorldsDir := filepath.Join(r.remoteDir, config.WorldsDir)
+	if _, err := os.Stat(remoteWorldsDir); os.IsNotExist(err) {
+		return
+	}
+	worldsRoot, err := os.OpenRoot(remoteWorldsDir)
+	require.NoError(t, err, "open remote worlds root for seed commit")
+	t.Cleanup(func() { worldsRoot.Close() })
+	workdirStorage, err := adapters.NewFSRepository(worldsRoot, "seed-workdir")
+	require.NoError(t, err, "seed workdir storage")
+	scanner := adapters.NewFullScanner(os.DirFS(remoteWorldsDir))
+	committer := refs.NewCommitter(scanner, workdirStorage, r.remote, adapters.NewSerialRunner())
+	_, err = committer.Commit(r.ctx, ports.CommitOpts{Targets: []string{"**"}})
+	require.NoError(t, err, "seed remote ref commit")
 }
 
 func seedLocalWorld(t *testing.T, r *testRitual, files ...testFile) {
@@ -635,18 +703,19 @@ func failCheck(reason string) checks.Check {
 	}
 }
 
-// ---------- failOnceUpdater ----------
+// ---------- failOncePuller ----------
 
-type failOnceIntegrationUpdater struct {
+type failOnceIntegrationPuller struct {
+	inner ports.Puller
 	calls int
 }
 
-func (f *failOnceIntegrationUpdater) Run(_ context.Context) error {
+func (f *failOnceIntegrationPuller) Pull(ctx context.Context, id domain.RefID) error {
 	f.calls++
 	if f.calls == 1 {
 		return errors.New("simulated transient failure")
 	}
-	return nil
+	return f.inner.Pull(ctx, id)
 }
 
 // ---------- bus event collection + filters ----------
@@ -962,17 +1031,23 @@ func TestIntegration_ServerCrash_NoUploadLockReleased(t *testing.T) {
 
 // ---------- integration tests: stop, retry, multi-host ----------
 
-func (r *testRitual) startRitualWithFlakyUpdater(t *testing.T, flaky ports.UpdaterService) *fakeServer {
+func (r *testRitual) startRitualWithFlakyPuller(t *testing.T, flaky *failOnceIntegrationPuller) *fakeServer {
 	t.Helper()
 	server := r.fakerun()
 	cmdBuilder := &fakeServerCmdBuilder{server: server}
+
+	worldsPath := filepath.Join(r.localDir, config.WorldsDir)
+	_ = os.MkdirAll(worldsPath, 0o755)
+	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
+	realPuller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
+	flaky.inner = realPuller
 
 	rit := app.New(
 		r.bus,
 		r.local, r.remote,
 		r.localManifests, r.remoteManifests,
 		nil,
-		[]ports.UpdaterService{flaky},
+		flaky, applier, headResolver,
 		nil, nil,
 		cmdBuilder,
 		immediateReady{},
@@ -1007,8 +1082,12 @@ func TestIntegration_StopMidGame_LockReleased(t *testing.T) {
 func TestIntegration_FetchFails_RetrySucceeds(t *testing.T) {
 	ritual := newRitual(t)
 
-	flaky := &failOnceIntegrationUpdater{}
-	server := ritual.startRitualWithFlakyUpdater(t, flaky)
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("level data")),
+	)
+
+	flaky := &failOnceIntegrationPuller{}
+	server := ritual.startRitualWithFlakyPuller(t, flaky)
 	ritual.waitFailed(t)
 
 	ritual.sendRetry()
@@ -1017,7 +1096,7 @@ func TestIntegration_FetchFails_RetrySucceeds(t *testing.T) {
 	ritual.waitDone(t)
 
 	assert.Equal(t, 2, flaky.calls,
-		"updater should be called twice — fail on first, succeed on retry")
+		"puller should be called twice — fail on first, succeed on retry")
 }
 
 func TestIntegration_MultiHost_AUploads_BDownloadsPlaysUploads(t *testing.T) {
@@ -1181,7 +1260,7 @@ func TestIntegration_PipelineOrder_MatchesCheckFetchAcquireRunPublishBackupUnloc
 
 	want := []string{
 		stagenames.StageChecking,
-		stagenames.StageFetching,
+		stagenames.StagePulling,
 		stagenames.StageAcquiring,
 		stagenames.StageRunning,
 		stagenames.StagePublishing,
@@ -1316,18 +1395,21 @@ func (r *testRitual) startRitualWithLiveSync(t *testing.T) {
 
 	downloader := services.NewSyncDownloadUpdater(syncSvc, r.localManifests, r.remoteManifests, getState)
 	uploader := services.NewSyncUploader(syncSvc, r.localManifests, r.remoteManifests, getState)
+	_ = downloader
 
 	cmdBuilder := &liveSyncCmdBuilder{binary: fakerunBin, root: r.localDir}
 
 	_, stopHeartbeat := heartbeat.Attach(r.bus, r.localManifests, r.remoteManifests, syncSvc)
 	t.Cleanup(stopHeartbeat)
 
+	puller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
+
 	rit := app.New(
 		r.bus,
 		r.local, r.remote,
 		r.localManifests, r.remoteManifests,
 		nil,
-		[]ports.UpdaterService{downloader},
+		puller, applier, headResolver,
 		[]ports.UpdaterService{uploader},
 		nil,
 		cmdBuilder,
@@ -1421,6 +1503,7 @@ func seedRemoteWorldWithShortHeartbeat(t *testing.T, r *testRitual, files ...tes
 	remoteManifest.Worlds.XXHashSyncAt = time.Now()
 
 	require.NoError(t, r.remoteManifests.Save(r.ctx, remoteManifest), "save remote manifest with short heartbeat")
+	seedRemoteRef(t, r)
 }
 
 // ---------- integration tests: live sync ----------

@@ -14,7 +14,7 @@ import (
 	"ritual/internal/core/stages/backup"
 	"ritual/internal/core/stages/checking"
 	"ritual/internal/core/stages/failed"
-	"ritual/internal/core/stages/fetching"
+	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/publishing"
 	"ritual/internal/core/stages/retaining"
 	"ritual/internal/core/stages/running"
@@ -33,7 +33,9 @@ type Ritual struct {
 	localManifests  ports.ManifestStore
 	remoteManifests ports.ManifestStore
 	checks          []checks.Check
-	updaters        []ports.UpdaterService
+	puller          ports.Puller
+	applier         ports.Applier
+	headResolver    pulling.HeadResolver
 	exitUpdaters    []ports.UpdaterService
 	retentions      []retaining.Job
 	cmdBuilder      ports.CmdBuilder
@@ -54,7 +56,9 @@ func New(
 	localManifests ports.ManifestStore,
 	remoteManifests ports.ManifestStore,
 	preflightChecks []checks.Check,
-	updaters []ports.UpdaterService,
+	puller ports.Puller,
+	applier ports.Applier,
+	headResolver pulling.HeadResolver,
 	exitUpdaters []ports.UpdaterService,
 	retentions []retaining.Job,
 	cmdBuilder ports.CmdBuilder,
@@ -67,7 +71,9 @@ func New(
 		localManifests:  localManifests,
 		remoteManifests: remoteManifests,
 		checks:          preflightChecks,
-		updaters:        updaters,
+		puller:          puller,
+		applier:         applier,
+		headResolver:    headResolver,
 		exitUpdaters:    exitUpdaters,
 		retentions:      retentions,
 		cmdBuilder:      cmdBuilder,
@@ -181,7 +187,7 @@ func (r *Ritual) setStatus(status Outcome) {
 
 func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
 	failCheck := failed.New(ritual.StageChecking)
-	failFetch := failed.New(ritual.StageFetching)
+	failPull := failed.New(ritual.StagePulling)
 	failAcq := failed.New(ritual.StageAcquiring)
 	failRet := failed.New(ritual.StageRetaining)
 
@@ -192,11 +198,11 @@ func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
 	run := running.New(r.cmdBuilder, r.readiness, publish, unlock)
 	rollback := unlocking.New(r.localManifests, r.remoteManifests, failAcq)
 	acquire := acquiring.New(r.localManifests, r.remoteManifests, run, failAcq, rollback)
-	fetch := fetching.New(r.updaters, acquire, failFetch)
-	check := checking.New(r.checks, fetch, failCheck)
+	pull := pulling.New(r.puller, r.applier, r.headResolver, acquire, failPull)
+	check := checking.New(r.checks, pull, failCheck)
 
 	failCheck.SetRetry(check)
-	failFetch.SetRetry(fetch)
+	failPull.SetRetry(pull)
 	failAcq.SetRetry(acquire)
 	failRet.SetRetry(retain)
 

@@ -4,7 +4,7 @@ package ritual
 // survive JSON round-trip without type noise.
 const (
 	StageChecking   = "Checking"
-	StageFetching   = "Fetching"
+	StagePulling    = "Pulling"
 	StageAcquiring  = "Acquiring"
 	StageRunning    = "Running"
 	StagePublishing = "Publishing"
