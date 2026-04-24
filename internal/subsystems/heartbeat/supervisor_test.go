@@ -8,75 +8,14 @@ import (
 	"fmt"
 	"io"
 	"ritual/internal/adapters"
-	"ritual/internal/core/domain"
 	"ritual/internal/core/lock"
-	"ritual/internal/core/ports"
-	"ritual/internal/core/ports/mocks"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/subsystems/heartbeat"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
-
-// safeStore is a concurrency-safe ManifestStore for tests where both
-// tick and syncTick access the same store from separate goroutines.
-type safeStore struct {
-	mu       sync.Mutex
-	getFunc  func(context.Context) (*domain.Manifest, error)
-	saveFunc func(context.Context, *domain.Manifest) error
-}
-
-func (s *safeStore) Get(ctx context.Context) (*domain.Manifest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.getFunc != nil {
-		return s.getFunc(ctx)
-	}
-	return nil, nil //nolint:nilnil // test stub default
-}
-
-func (s *safeStore) Save(ctx context.Context, m *domain.Manifest) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.saveFunc != nil {
-		return s.saveFunc(ctx, m)
-	}
-	return nil
-}
-
-type mockSyncService struct {
-	uploadFunc func(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error)
-}
-
-func (m *mockSyncService) Download(_ context.Context, local, _ domain.SyncState) (domain.SyncState, error) {
-	return local, nil
-}
-
-func (m *mockSyncService) Upload(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error) {
-	if m.uploadFunc != nil {
-		return m.uploadFunc(ctx, local, remote)
-	}
-	return local, nil
-}
-
-func noopSyncer() *mockSyncService { return &mockSyncService{} }
-
-func emptyStore() *mocks.MockManifestStore { return &mocks.MockManifestStore{} }
-
-func autoRespondSaveRequested(bus ports.EventBus) func() {
-	ch, unsub := bus.Subscribe()
-	go func() {
-		for e := range ch {
-			if _, ok := e.(running.SaveRequested); ok {
-				bus.Publish(running.SaveCompleted{})
-			}
-		}
-	}()
-	return unsub
-}
 
 func acquireFor(t *testing.T, store *leaseStore) (*lock.Locker, string) {
 	t.Helper()
@@ -94,7 +33,7 @@ func TestSupervisorBeatsAfterAcquire(t *testing.T) {
 	initial := store.heartbeatAt(t)
 
 	bus := adapters.NewEventBus(16)
-	_, stop := heartbeat.Attach(bus, locker.Heartbeat, emptyStore(), emptyStore(), noopSyncer())
+	_, stop := heartbeat.Attach(bus, locker.Heartbeat)
 	defer stop()
 
 	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", SessionID: sessionID, Interval: 50 * time.Millisecond})
@@ -118,7 +57,7 @@ func TestSupervisorPublishesLostOnSessionMismatch(t *testing.T) {
 	ch, cancel := bus.Subscribe()
 	defer cancel()
 
-	_, stop := heartbeat.Attach(bus, locker.Heartbeat, emptyStore(), emptyStore(), noopSyncer())
+	_, stop := heartbeat.Attach(bus, locker.Heartbeat)
 	defer stop()
 
 	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", SessionID: sessionID, Interval: 30 * time.Millisecond})
@@ -144,7 +83,7 @@ func TestSupervisorStopsOnReleased(t *testing.T) {
 	locker, sessionID := acquireFor(t, store)
 
 	bus := adapters.NewEventBus(16)
-	_, stop := heartbeat.Attach(bus, locker.Heartbeat, emptyStore(), emptyStore(), noopSyncer())
+	_, stop := heartbeat.Attach(bus, locker.Heartbeat)
 	defer stop()
 
 	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", SessionID: sessionID, Interval: 20 * time.Millisecond})
@@ -160,147 +99,120 @@ func TestSupervisorStopsOnReleased(t *testing.T) {
 	}
 }
 
-func TestPlayerPlaying_WorldsSyncEveryTick(t *testing.T) {
+func TestSupervisorStopsAllOnServerStopped(t *testing.T) {
 	store := newLeaseStore()
 	locker, sessionID := acquireFor(t, store)
 
-	remoteStore := &safeStore{
-		getFunc:  func(context.Context) (*domain.Manifest, error) { return &domain.Manifest{}, nil },
-		saveFunc: func(_ context.Context, _ *domain.Manifest) error { return nil },
-	}
-	localStore := &safeStore{
-		getFunc:  func(context.Context) (*domain.Manifest, error) { return &domain.Manifest{}, nil },
-		saveFunc: func(_ context.Context, _ *domain.Manifest) error { return nil },
-	}
-
-	var uploadCount atomic.Int32
-	syncer := &mockSyncService{
-		uploadFunc: func(_ context.Context, local, _ domain.SyncState) (domain.SyncState, error) {
-			uploadCount.Add(1)
-			return local, nil
-		},
-	}
-
-	bus := adapters.NewEventBus(64)
-	saveUnsub := autoRespondSaveRequested(bus)
-	defer saveUnsub()
-
-	_, stop := heartbeat.Attach(bus, locker.Heartbeat, localStore, remoteStore, syncer)
+	bus := adapters.NewEventBus(16)
+	_, stop := heartbeat.Attach(bus, locker.Heartbeat)
 	defer stop()
 
 	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", SessionID: sessionID, Interval: 20 * time.Millisecond})
-	bus.Publish(running.ServerReadyInfo{})
+	time.Sleep(60 * time.Millisecond)
+	bus.Publish(running.ServerStoppedInfo{})
+	time.Sleep(30 * time.Millisecond)
 
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if uploadCount.Load() >= 2 {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
+	before := store.putCount()
+	time.Sleep(120 * time.Millisecond)
+	after := store.putCount()
+	if after != before {
+		t.Fatalf("beats continued after ServerStoppedInfo: before=%d after=%d", before, after)
 	}
-	t.Fatalf("expected >=2 uploads, got %d", uploadCount.Load())
 }
 
-func TestPreviousSyncStillRunning_NextSyncWaits(t *testing.T) {
+func TestSupervisorStopsAllOnServerCrashed(t *testing.T) {
 	store := newLeaseStore()
 	locker, sessionID := acquireFor(t, store)
 
-	remoteStore := &safeStore{
-		getFunc:  func(context.Context) (*domain.Manifest, error) { return &domain.Manifest{}, nil },
-		saveFunc: func(_ context.Context, _ *domain.Manifest) error { return nil },
-	}
-	localStore := &safeStore{
-		getFunc:  func(context.Context) (*domain.Manifest, error) { return &domain.Manifest{}, nil },
-		saveFunc: func(_ context.Context, _ *domain.Manifest) error { return nil },
-	}
+	bus := adapters.NewEventBus(16)
+	_, stop := heartbeat.Attach(bus, locker.Heartbeat)
+	defer stop()
 
-	var concurrent atomic.Int32
-	var maxConcurrent atomic.Int32
+	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", SessionID: sessionID, Interval: 20 * time.Millisecond})
+	time.Sleep(60 * time.Millisecond)
+	bus.Publish(running.ServerCrashedInfo{})
+	time.Sleep(30 * time.Millisecond)
 
-	syncer := &mockSyncService{
-		uploadFunc: func(_ context.Context, local, _ domain.SyncState) (domain.SyncState, error) {
-			cur := concurrent.Add(1)
+	before := store.putCount()
+	time.Sleep(120 * time.Millisecond)
+	after := store.putCount()
+	if after != before {
+		t.Fatalf("beats continued after ServerCrashedInfo: before=%d after=%d", before, after)
+	}
+}
+
+func TestSupervisorRoutesLeaseLostErrors(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		reason string
+	}{
+		{"taken_over", lock.ErrLeaseTakenOver, "taken_over"},
+		{"vanished", lock.ErrLeaseVanished, "vanished"},
+		{"lease_lost", lock.ErrLeaseLost, "lease_lost"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hb := func(_ context.Context, _ string) error { return tc.err }
+
+			bus := adapters.NewEventBus(16)
+			ch, cancel := bus.Subscribe()
+			defer cancel()
+
+			_, stop := heartbeat.Attach(bus, hb)
+			defer stop()
+
+			bus.Publish(ritual.LockAcquiredInfo{RunID: "run-x", SessionID: "sess-x", Interval: 20 * time.Millisecond})
+
+			deadline := time.After(time.Second)
 			for {
-				old := maxConcurrent.Load()
-				if cur <= old || maxConcurrent.CompareAndSwap(old, cur) {
-					break
+				select {
+				case <-deadline:
+					t.Fatalf("%s: did not observe LockLostInfo", tc.name)
+				case e := <-ch:
+					if lost, ok := e.(ritual.LockLostInfo); ok && lost.RunID == "run-x" {
+						if lost.Reason != tc.reason {
+							t.Fatalf("reason: got %s, want %s", lost.Reason, tc.reason)
+						}
+						return
+					}
 				}
 			}
-			time.Sleep(40 * time.Millisecond)
-			concurrent.Add(-1)
-			return local, nil
-		},
-	}
-
-	bus := adapters.NewEventBus(64)
-	saveUnsub := autoRespondSaveRequested(bus)
-	defer saveUnsub()
-
-	_, stop := heartbeat.Attach(bus, locker.Heartbeat, localStore, remoteStore, syncer)
-	defer stop()
-
-	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", SessionID: sessionID, Interval: 20 * time.Millisecond})
-	bus.Publish(running.ServerReadyInfo{})
-
-	time.Sleep(120 * time.Millisecond)
-
-	if mc := maxConcurrent.Load(); mc > 1 {
-		t.Fatalf("concurrent uploads: %d, expected max 1", mc)
+		})
 	}
 }
 
-func TestPlayerStopsServer_SyncStops(t *testing.T) {
-	store := newLeaseStore()
-	locker, sessionID := acquireFor(t, store)
+func TestSupervisorRoutesUnknownErrorAsErrorInfo(t *testing.T) {
+	hb := func(_ context.Context, _ string) error { return errors.New("network down") }
 
-	remoteStore := &safeStore{
-		getFunc:  func(context.Context) (*domain.Manifest, error) { return &domain.Manifest{}, nil },
-		saveFunc: func(_ context.Context, _ *domain.Manifest) error { return nil },
-	}
-	localStore := &safeStore{
-		getFunc:  func(context.Context) (*domain.Manifest, error) { return &domain.Manifest{}, nil },
-		saveFunc: func(_ context.Context, _ *domain.Manifest) error { return nil },
-	}
+	bus := adapters.NewEventBus(16)
+	ch, cancel := bus.Subscribe()
+	defer cancel()
 
-	var uploadCount atomic.Int32
-	syncer := &mockSyncService{
-		uploadFunc: func(_ context.Context, local, _ domain.SyncState) (domain.SyncState, error) {
-			uploadCount.Add(1)
-			return local, nil
-		},
-	}
-
-	bus := adapters.NewEventBus(64)
-	saveUnsub := autoRespondSaveRequested(bus)
-	defer saveUnsub()
-
-	_, stop := heartbeat.Attach(bus, locker.Heartbeat, localStore, remoteStore, syncer)
+	_, stop := heartbeat.Attach(bus, hb)
 	defer stop()
 
-	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-1", SessionID: sessionID, Interval: 20 * time.Millisecond})
-	bus.Publish(running.ServerReadyInfo{})
+	bus.Publish(ritual.LockAcquiredInfo{RunID: "run-x", SessionID: "sess-x", Interval: 20 * time.Millisecond})
 
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if uploadCount.Load() >= 1 {
-			break
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("did not observe ErrorInfo")
+		case e := <-ch:
+			if ei, ok := e.(ritual.ErrorInfo); ok && ei.Operation == "heartbeat" {
+				return
+			}
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
-	if uploadCount.Load() < 1 {
-		t.Fatal("no uploads before stop")
-	}
+}
 
-	bus.Publish(running.ServerStoppedInfo{})
-	time.Sleep(20 * time.Millisecond)
+func TestSupervisorAttachCancelStopsConsumer(t *testing.T) {
+	bus := adapters.NewEventBus(16)
+	hb := func(_ context.Context, _ string) error { return nil }
 
-	countAtStop := uploadCount.Load()
-	time.Sleep(80 * time.Millisecond)
-	countAfter := uploadCount.Load()
-
-	if countAfter > countAtStop {
-		t.Fatalf("uploads continued after server stop: atStop=%d after=%d", countAtStop, countAfter)
-	}
+	_, stop := heartbeat.Attach(bus, hb)
+	stop() // must return promptly without deadlock
 }
 
 // --- leaseStore — in-memory ports.StorageRepository that also counts puts ---

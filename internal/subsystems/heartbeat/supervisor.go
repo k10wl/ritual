@@ -17,10 +17,7 @@ import (
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/running"
-	"strings"
 	"sync"
-	"sync/atomic"
-	"testing"
 	"time"
 )
 
@@ -30,49 +27,26 @@ import (
 // type.
 type HeartbeatFn func(ctx context.Context, sessionID string) error
 
-var saveWaitTimeout = 30 * time.Second
-
-func init() {
-	if testing.Testing() {
-		saveWaitTimeout = 10 * time.Millisecond
-	}
-}
-
-// Supervisor owns the per-run heartbeat and sync-tick goroutines.
+// Supervisor owns the per-run heartbeat goroutines.
 type Supervisor struct {
-	heartbeat   HeartbeatFn
-	localStore  ports.ManifestStore
-	remoteStore ports.ManifestStore
-	syncer      ports.SyncService
-	bus         ports.EventBus
+	heartbeat HeartbeatFn
+	bus       ports.EventBus
 
 	mu         sync.Mutex
 	active     map[string]context.CancelFunc
 	sessionIDs map[string]string
-	syncCtx    context.Context
-	syncCancel context.CancelFunc
-	syncReady  atomic.Bool
 }
 
 // Attach subscribes a new Supervisor to bus and returns it. The consumer
 // goroutine runs until the returned cancel is called. Typically called
 // once at composition root; cancel on program exit.
-func Attach(bus ports.EventBus, heartbeat HeartbeatFn, localStore, remoteStore ports.ManifestStore, syncer ports.SyncService) (*Supervisor, func()) {
-	cancelledCtx, cancelledCancel := context.WithCancel(context.Background())
-	cancelledCancel() // starts cancelled — sync only after ServerReadyInfo
-
+func Attach(bus ports.EventBus, heartbeat HeartbeatFn) (*Supervisor, func()) {
 	s := &Supervisor{
-		heartbeat:   heartbeat,
-		localStore:  localStore,
-		remoteStore: remoteStore,
-		syncer:      syncer,
-		bus:         bus,
-		active:      map[string]context.CancelFunc{},
-		sessionIDs:  map[string]string{},
-		syncCtx:     cancelledCtx,
-		syncCancel:  cancelledCancel,
+		heartbeat:  heartbeat,
+		bus:        bus,
+		active:     map[string]context.CancelFunc{},
+		sessionIDs: map[string]string{},
 	}
-	s.syncReady.Store(true)
 
 	ch, cancelSub := bus.Subscribe()
 	done := make(chan struct{})
@@ -96,30 +70,9 @@ func (s *Supervisor) handle(e ports.Event) {
 		s.start(ev.RunID, ev.SessionID, ev.Interval)
 	case ritual.LockReleasedInfo:
 		s.stop(ev.RunID)
-	case running.ServerReadyInfo:
-		s.mu.Lock()
-		s.syncCtx, s.syncCancel = context.WithCancel(context.Background())
-		s.mu.Unlock()
-	case running.ServerStoppedInfo:
-		s.cancelSync()
+	case running.ServerStoppedInfo, running.ServerCrashedInfo:
 		s.stopAll()
-	case running.ServerCrashedInfo:
-		s.cancelSync()
-		s.stopAll()
-	case running.ServerOutputInfo:
-		if strings.Contains(ev.Line, "Stopping the server") {
-			s.cancelSync()
-			s.stopAll()
-		}
 	}
-}
-
-func (s *Supervisor) cancelSync() {
-	s.mu.Lock()
-	if s.syncCancel != nil {
-		s.syncCancel()
-	}
-	s.mu.Unlock()
 }
 
 func (s *Supervisor) start(runID, sessionID string, interval time.Duration) {
@@ -142,9 +95,6 @@ func (s *Supervisor) stop(runID string) {
 	cancel, ok := s.active[runID]
 	delete(s.active, runID)
 	delete(s.sessionIDs, runID)
-	if s.syncCancel != nil {
-		s.syncCancel()
-	}
 	s.mu.Unlock()
 	if ok {
 		cancel()
@@ -157,9 +107,6 @@ func (s *Supervisor) stopAll() {
 		cancel()
 		delete(s.active, id)
 		delete(s.sessionIDs, id)
-	}
-	if s.syncCancel != nil {
-		s.syncCancel()
 	}
 	s.mu.Unlock()
 }
@@ -199,77 +146,5 @@ func (s *Supervisor) tick(ctx context.Context, runID string) {
 		default:
 			s.bus.Publish(ritual.ErrorInfo{Operation: "heartbeat", Err: err})
 		}
-		return
-	}
-
-	// sync — only when server running and previous sync finished
-	s.mu.Lock()
-	syncCtx := s.syncCtx
-	s.mu.Unlock()
-
-	if syncCtx.Err() != nil {
-		return
-	}
-	if !s.syncReady.CompareAndSwap(true, false) {
-		return
-	}
-	go s.syncTick(syncCtx) //nolint:contextcheck // syncCtx has independent lifetime tied to server lifecycle
-}
-
-func (s *Supervisor) syncTick(ctx context.Context) {
-	defer s.syncReady.Store(true)
-
-	ch, unsub := s.bus.Subscribe()
-	defer unsub()
-	s.bus.Publish(running.SaveRequested{})
-
-	timer := time.NewTimer(saveWaitTimeout)
-	defer timer.Stop()
-	for {
-		select {
-		case <-timer.C:
-			return
-		case <-ctx.Done():
-			return
-		case e, ok := <-ch:
-			if !ok {
-				return
-			}
-			if _, ok := e.(running.SaveCompleted); ok {
-				goto saved
-			}
-		}
-	}
-saved:
-
-	local, err := s.localStore.Get(ctx)
-	if err != nil || local == nil {
-		if err != nil {
-			s.bus.Publish(ritual.ErrorInfo{Operation: "worlds_sync.local_get", Err: err})
-		}
-		return
-	}
-	remote, err := s.remoteStore.Get(ctx)
-	if err != nil || remote == nil {
-		if err != nil {
-			s.bus.Publish(ritual.ErrorInfo{Operation: "worlds_sync.remote_get", Err: err})
-		}
-		return
-	}
-
-	newState, err := s.syncer.Upload(ctx, local.Worlds.SyncState, remote.Worlds.SyncState)
-	if err != nil {
-		s.bus.Publish(ritual.ErrorInfo{Operation: "worlds_sync.upload", Err: err})
-		return
-	}
-
-	local.Worlds.SyncState = newState
-	remote.Worlds.SyncState = newState
-
-	if err := s.localStore.Save(ctx, local); err != nil {
-		s.bus.Publish(ritual.ErrorInfo{Operation: "worlds_sync.local_save", Err: err})
-	}
-	if err := s.remoteStore.Save(ctx, remote); err != nil {
-		s.bus.Publish(ritual.ErrorInfo{Operation: "worlds_sync.remote_save", Err: err})
 	}
 }
