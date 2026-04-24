@@ -67,6 +67,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 	publish(rs.Bus, ritual.StartInfo{Operation: "acquire"})
 	if err := ctx.Err(); err != nil {
 		rs.Err = err
+		publish(rs.Bus, ritual.ErrorInfo{Operation: "acquire", Err: err})
 		return s.onFail, nil //nolint:nilerr // error stored on RunState; onFail stage handles it
 	}
 
@@ -85,12 +86,16 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 			}
 		}
 		rs.Err = err
+		publish(rs.Bus, ritual.ErrorInfo{Operation: "acquire", Err: err})
 		return s.onFail, nil
 	}
 
 	rs.SessionID = sessionID
 	if s.snapshotLocal != nil {
-		if snap, snapErr := s.snapshotLocal(ctx); snapErr == nil {
+		snap, snapErr := s.snapshotLocal(ctx)
+		if snapErr != nil {
+			publish(rs.Bus, ritual.ErrorInfo{Operation: "acquire.snapshot", Err: snapErr})
+		} else {
 			rs.LocalBefore = snap
 		}
 	}

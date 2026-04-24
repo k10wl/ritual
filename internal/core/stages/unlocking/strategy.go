@@ -36,7 +36,9 @@ func (s *Strategy) Run(parentCtx context.Context, rs *ritual.RunState) (machine.
 	ctx := context.WithoutCancel(parentCtx)
 
 	if rs.SessionID != "" {
-		_ = s.release(ctx, rs.SessionID)
+		if err := s.release(ctx, rs.SessionID); err != nil {
+			publish(rs.Bus, ritual.ErrorInfo{Operation: "unlock", Err: err})
+		}
 		publish(rs.Bus, ritual.LockReleasedInfo{RunID: rs.RunID})
 	}
 	publish(rs.Bus, ritual.FinishInfo{Operation: "unlock"})

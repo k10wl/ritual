@@ -196,6 +196,8 @@ func (s *Supervisor) tick(ctx context.Context, runID string) {
 		case errors.Is(err, lock.ErrLeaseLost):
 			s.bus.Publish(ritual.LockLostInfo{RunID: runID, Reason: "lease_lost"})
 			s.stop(runID)
+		default:
+			s.bus.Publish(ritual.ErrorInfo{Operation: "heartbeat", Err: err})
 		}
 		return
 	}
@@ -242,21 +244,32 @@ saved:
 
 	local, err := s.localStore.Get(ctx)
 	if err != nil || local == nil {
+		if err != nil {
+			s.bus.Publish(ritual.ErrorInfo{Operation: "worlds_sync.local_get", Err: err})
+		}
 		return
 	}
 	remote, err := s.remoteStore.Get(ctx)
 	if err != nil || remote == nil {
+		if err != nil {
+			s.bus.Publish(ritual.ErrorInfo{Operation: "worlds_sync.remote_get", Err: err})
+		}
 		return
 	}
 
 	newState, err := s.syncer.Upload(ctx, local.Worlds.SyncState, remote.Worlds.SyncState)
 	if err != nil {
+		s.bus.Publish(ritual.ErrorInfo{Operation: "worlds_sync.upload", Err: err})
 		return
 	}
 
 	local.Worlds.SyncState = newState
 	remote.Worlds.SyncState = newState
 
-	_ = s.localStore.Save(ctx, local)
-	_ = s.remoteStore.Save(ctx, remote)
+	if err := s.localStore.Save(ctx, local); err != nil {
+		s.bus.Publish(ritual.ErrorInfo{Operation: "worlds_sync.local_save", Err: err})
+	}
+	if err := s.remoteStore.Save(ctx, remote); err != nil {
+		s.bus.Publish(ritual.ErrorInfo{Operation: "worlds_sync.remote_save", Err: err})
+	}
 }
