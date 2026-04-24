@@ -84,30 +84,6 @@ func TestMigrateV2_NoInstanceDir(t *testing.T) {
 	assert.Equal(t, "*\n", string(data))
 }
 
-func TestMigrateV2_MovesLegacyTars(t *testing.T) {
-	dir := t.TempDir()
-
-	legacy := filepath.Join(dir, "world_backups")
-	require.NoError(t, os.MkdirAll(legacy, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(legacy, "20260414160000.tar"), []byte("t1"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(legacy, "20260413160000.tar"), []byte("t2"), 0o644))
-
-	root := openRoot(t, dir)
-	require.NoError(t, migrateV2(root))
-
-	target := filepath.Join(dir, config.BackupsDir)
-	for _, name := range []string{"20260414160000.tar", "20260413160000.tar"} {
-		data, err := os.ReadFile(filepath.Join(target, name))
-		require.NoError(t, err, "%s should exist at new location", name)
-		assert.NotEmpty(t, data)
-	}
-
-	assert.NoDirExists(t, legacy)
-
-	// Idempotent
-	require.NoError(t, migrateV2(root))
-}
-
 func TestMigrateV2_NoLegacyDir_NoOp(t *testing.T) {
 	dir := t.TempDir()
 	root := openRoot(t, dir)

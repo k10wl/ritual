@@ -46,7 +46,7 @@ func RunMigrationsWithList(root *os.Root, manifest *domain.Manifest, list []Migr
 	return nil
 }
 
-// migrateV2: delete instance/, create worlds/.ritualsync, move legacy world_backups/ → backups/.
+// migrateV2: delete instance/, create worlds/.ritualsync.
 func migrateV2(root *os.Root) error {
 	if err := root.RemoveAll("instance"); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("remove instance: %w", err)
@@ -62,33 +62,5 @@ func migrateV2(root *os.Root) error {
 		}
 	}
 
-	return migrateLegacyBackups(root)
-}
-
-// migrateLegacyBackups moves entries from world_backups/ into backups/ so
-// unified retention handles them. Idempotent: no-op if world_backups/ is absent.
-func migrateLegacyBackups(root *os.Root) error {
-	const legacy = "world_backups"
-
-	entries, err := fs.ReadDir(root.FS(), legacy)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("read legacy backups: %w", err)
-	}
-
-	if err := root.MkdirAll(config.BackupsDir, 0o755); err != nil {
-		return fmt.Errorf("mkdir backups: %w", err)
-	}
-
-	for _, e := range entries {
-		src := filepath.Join(legacy, e.Name())
-		dst := filepath.Join(config.BackupsDir, e.Name())
-		if err := root.Rename(src, dst); err != nil {
-			return fmt.Errorf("move %s: %w", e.Name(), err)
-		}
-	}
-
-	return root.Remove(legacy)
+	return nil
 }

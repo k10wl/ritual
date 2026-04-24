@@ -30,11 +30,10 @@ var AppVersion string
 
 // Directory names
 const (
-	BackupsDir = "backups" // unified local/R2 backup prefix
-	ServerDir  = "server"
-	WorldsDir  = "worlds"
-	TmpDir     = "temp"
-	LogsDir    = "logs"
+	ServerDir = "server"
+	WorldsDir = "worlds"
+	TmpDir    = "temp"
+	LogsDir   = "logs"
 )
 
 // File names and keys
