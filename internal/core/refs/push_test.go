@@ -1,25 +1,22 @@
 // Package refs_test — Pusher story:
 //
 // Push is ACID per §Push — ACID in docs/superpowers/specs/2026-04-19-fast-
-// sync-v2.1-design.md. It loads a local ref, uploads every referenced blob
-// to the destination (skipping blobs already present via an Exists gate),
-// then uploads the ref as the single commit point. Each test below
+// sync-v2.1-design.md. It loads a ref from `from`, transfers every
+// referenced blob to `to` (skipping blobs already present via an Exists
+// gate), then writes the ref as the single commit point. Each test below
 // exercises one ACID invariant or crash-recovery row from that section.
 //
-// MVP deferrals (not yet tested; require the session-lock port):
-//   - Step 4 pre-PUT fence verify (lock sessionId check).
-//   - Step 5 `If-None-Match: *` conditional PUT on first-ever push.
-//   - Step 6 post-PUT fence verify + zombie self-DELETE rollback.
-//
-// Not in scope for Pusher (delegated elsewhere):
+// Delegated elsewhere:
 //   - Blob compression + hash verification — CompressingStorage decorator.
-//   - FlushFileBuffers durability — FSRepository concern.
-//   - Session lock — orchestrator concern once the lock port lands.
+//   - Isolation and conditional-write semantics — storage decorator or
+//     the composition root.
+//   - Write durability — the storage adapter.
 package refs_test
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -244,6 +241,67 @@ func TestPusher_ResumesAfterBlobsUploadedButRefMissing(t *testing.T) {
 		"resumed push's ref must carry the original object map — byte-identical retry")
 	assert.Equal(t, 0, remote.putHits("objects/"+hashHex("AAAA")),
 		"resumed push must not re-upload blobs already durable on remote")
+}
+
+func TestPusher_SurfacesTransferSentinelAndScrubsPartialOnBlobUploadFailure(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	local := newFSBundle(t)
+	remote := newFaultyStorage(newFSBundle(t))
+
+	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat": []byte("CONTENT"),
+	})
+	seedLocalForPush(t, local, ref, map[string][]byte{"worlds/level.dat": []byte("CONTENT")})
+
+	uplinkBroken := errors.New("simulated uplink failure on remote blob put")
+	remote.putFail["objects/"+hashHex("CONTENT")] = uplinkBroken
+
+	pusher := refs.NewPusher(local.storage, remote, serialRunner)
+	err := pusher.Push(ctx, ref.Timestamp)
+
+	require.Error(t, err,
+		"§Push step 2: blob upload failure MUST surface — silent success would let the ref-last barrier lie about blob presence on remote")
+	assert.ErrorIs(t, err, refs.ErrBlobTransfer,
+		"error chain must classify via the shared blob-transfer sentinel — pull and push both mirror blobs across storages; callers filter on one category")
+	assert.ErrorIs(t, err, uplinkBroken,
+		"error chain must wrap the original PutStream cause — callers reaching for the concrete failure go via errors.Is/As")
+
+	present, existsErr := remote.Exists(ctx, "objects/"+hashHex("CONTENT"))
+	require.NoError(t, existsErr, "post-failure sanity: Exists probe against faulty remote must answer cleanly")
+	assert.False(t, present,
+		"§Push scrub-on-failure: no partial bytes under blob key after a failed upload — the next Push must see Exists == false so it retries the upload cleanly; without scrub a future push would observe Exists == true, skip, and commit a ref pointing at corrupt remote bytes (hanging-ref-via-corrupt-blob)")
+
+	assertNoRefOnRemote(t, remote.bundle, ref.Timestamp)
+}
+
+func TestPusher_SurfacesRefPutFailureAfterBlobsLanded(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	local := newFSBundle(t)
+	remote := newFaultyStorage(newFSBundle(t))
+
+	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat": []byte("AAAA"),
+	})
+	seedLocalForPush(t, local, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
+
+	refKey := "refs/" + string(ref.Timestamp) + ".json"
+	refPutFailure := errors.New("simulated ref PUT failure after all blobs uploaded")
+	remote.putFail[refKey] = refPutFailure
+
+	pusher := refs.NewPusher(local.storage, remote, serialRunner)
+	err := pusher.Push(ctx, ref.Timestamp)
+
+	require.Error(t, err,
+		"§Push step 5 commit point: a failing ref PUT MUST surface — silent success would let the caller believe the remote HEAD was minted when no refs/{id}.json landed")
+	blobPresent, existsErr := remote.Exists(ctx, "objects/"+hashHex("AAAA"))
+	require.NoError(t, existsErr, "Exists probe against the faulty remote must not fail — only the ref key is faulted")
+	assert.True(t, blobPresent,
+		"§Push crash-recovery 'all blobs uploaded, before manifest PUT': blobs already durable on remote must remain — the next Push sees them via Exists-gate and retries only the ref write")
+	assertNoRefOnRemote(t, remote.bundle, ref.Timestamp)
 }
 
 // --- push fixtures (prefix-named to avoid collision with Pull/Commit/Apply helpers) ---

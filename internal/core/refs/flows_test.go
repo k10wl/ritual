@@ -6,10 +6,10 @@
 // distinct fsBundle instances so scanner walks cannot observe foreign
 // keyspaces.
 //
-// Host model (mirrors §On-disk / on-R2 Layout):
+// Host model (mirrors §On-disk Layout):
 //
-//   remote  — remote R2 equivalent; holds refs/{id}.json + objects/{hash}
-//   local   — local user-data root's blob cache; holds refs/{id}.json + objects/{hash}
+//   remote  — shared side; holds refs/{id}.json + objects/{hash}
+//   local   — local blob cache; holds refs/{id}.json + objects/{hash}
 //   workdir — instance tree; holds root-relative paths like `worlds/level.dat`
 //
 // Wiring per verb:

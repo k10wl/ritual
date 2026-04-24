@@ -119,6 +119,24 @@ func TestPuller_ReturnsErrorWhenRemoteRefMissing(t *testing.T) {
 		"failed pull with no remote ref must leave local untouched — ref fetch is the first mutation")
 }
 
+func TestPuller_LeavesLocalUntouchedWhenOriginHasNoRefsAtAll(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
+
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
+	err := puller.Pull(ctx, "2026-04-22T10-00-00.000Z")
+
+	require.Error(t, err,
+		"cold-client pull against a fully empty origin (no refs/, no objects/) must surface an error — there is no HEAD to materialise and silent success would falsely advertise one")
+	assert.Empty(t, remote.keys(),
+		"origin invariant: Pull must not mutate the source side — a failed pull against an empty origin must leave origin still empty")
+	assert.Empty(t, local.keys(),
+		"§Pull ref-last barrier: a failed ref fetch must leave the destination byte-identical to its pre-call state — no refs/, no objects/, nothing under any other prefix that a future run could misinterpret as resumable progress")
+}
+
 func TestPuller_DeletesLocalRefWhenRemoteJSONInvalid(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
@@ -273,14 +291,41 @@ func TestPuller_SurfacesDownloadSentinelAndScrubsPartialOnWriteFailure(t *testin
 
 	require.Error(t, err,
 		"download failure MUST surface — silent success would let the Pull ACID barrier lie about blob presence")
-	assert.ErrorIs(t, err, refs.ErrBlobDownload,
-		"error chain must classify via ErrBlobDownload so callers filter on the failure category")
+	assert.ErrorIs(t, err, refs.ErrBlobTransfer,
+		"error chain must classify via ErrBlobTransfer so callers filter on the failure category")
 	assert.ErrorIs(t, err, uplinkBroken,
 		"error chain must wrap the original PutStream cause; callers that want the concrete failure reach it via errors.Is/As")
 	present, existsErr := local.storage.Exists(ctx, "objects/"+hashHex("CONTENT"))
 	require.NoError(t, existsErr, "post-failure sanity: Exists must answer cleanly")
 	assert.False(t, present,
 		"post-failure invariant: no partial bytes under the blob key — the scrub-on-failure path must leave destination clean so the next Pull sees Exists == false and starts fresh")
+}
+
+func TestPuller_ResumesWhenBlobsAlreadyLocalButRefMissing(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
+
+	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat": []byte("AAAA"),
+	})
+	seedRemote(t, remote, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
+	local.put(t, "objects/"+hashHex("AAAA"), []byte("AAAA"))
+
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
+	err := puller.Pull(ctx, ref.Timestamp)
+
+	require.NoError(t, err,
+		"§Pull crash-recovery row 'all blobs pulled, before ref commit': a retry where blobs already exist locally but ref is absent must succeed on a ref fetch alone — mirror of Push's ResumesAfterBlobsUploadedButRefMissing")
+	pulled, ok := local.decodeRef(t, ref.Timestamp)
+	require.True(t, ok,
+		"resumed pull must land the missing ref JSON locally — ref-last barrier's recovery branch")
+	assert.Equal(t, ref.Objects, pulled.Objects,
+		"resumed pull's ref must carry the remote's object map verbatim — no re-interpretation across the crash boundary")
+	assert.Equal(t, 0, remote.getHits("objects/"+hashHex("AAAA")),
+		"resumed pull must not re-fetch blobs already present locally — Exists-gate holds across the crash-resume boundary, otherwise bandwidth amplifies on every retry")
 }
 
 // --- test fixtures ---

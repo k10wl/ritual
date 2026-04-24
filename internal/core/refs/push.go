@@ -24,30 +24,26 @@ import (
 //     before the ref PUT.
 //   - Step 5: ref PUT is the single commit point for the push.
 //
-// MVP deferrals (follow-up stories once the session-lock port lands):
-//   - Step 4 pre-PUT fence verify (lock sessionId check).
-//   - Step 5 `If-None-Match: *` conditional PUT on first-ever push.
-//   - Step 6 post-PUT fence verify + zombie-writer self-DELETE rollback.
-//   - Parallel blob upload (10 workers) — serial upload is correct, just
-//     slower; parallelism is a performance concern, not a correctness one.
+// Per-blob transfer (Exists gate + stream + scrub-on-failure) is delegated
+// to transferBlob — the same primitive used by Puller. Pusher inherits
+// Pull's scrub contract: a failed PutStream deletes any partial bytes at
+// destination so the next Push sees Exists == false and retries cleanly.
 //
 // Delegated elsewhere:
-//   - Blob compression + hash verification → CompressingStorage.
-//   - Session lock → orchestrator (once the fence story lands).
-//   - FlushFileBuffers durability → FSRepository.
+//   - Blob compression + hash verification → CompressingStorage decorator.
+//   - Isolation and any conditional-write semantics → storage decorator
+//     or the composition root. Pusher works against the storage port alone.
+//   - Write durability → the storage adapter.
 type Pusher struct {
 	from   ports.StorageRepository
 	to     ports.StorageRepository
 	runner ports.BlobRunner
 }
 
-// NewPusher wires a Pusher. Push reads from `from` and writes to `to`.
-// In normal composition `from` is local FS and `to` is remote R2, but
-// Pusher is direction-agnostic — swap them for a local-to-local mirror
-// and the verb still works. The composition root decides whether either
-// side is wrapped with CompressingStorage. runner schedules per-blob
-// upload concurrency; pass a serial runner for deterministic order or a
-// bounded-pool runner to saturate the upload pipe.
+// NewPusher wires a Pusher. Push reads from `from` and writes to `to`,
+// both satisfying ports.StorageRepository. runner schedules per-blob
+// transfer concurrency; a serial runner yields deterministic order, a
+// bounded-pool runner widens the pipe.
 func NewPusher(from, to ports.StorageRepository, runner ports.BlobRunner) *Pusher {
 	return &Pusher{from: from, to: to, runner: runner}
 }
@@ -62,7 +58,7 @@ func (p *Pusher) Push(ctx context.Context, id domain.RefID) error {
 	}
 	items, pathByHash := collectHashes(ref.Objects)
 	err = p.runner.Run(ctx, items, func(ctx context.Context, hash string) error {
-		if err := p.uploadBlob(ctx, hash); err != nil {
+		if err := transferBlob(ctx, p.from, p.to, blobKey(hash)); err != nil {
 			return fmt.Errorf("push %s: blob %s (%s): %w", id, hash, pathByHash[hash], err)
 		}
 		return nil
@@ -96,32 +92,6 @@ func (p *Pusher) loadRef(ctx context.Context, id domain.RefID) ([]byte, *domain.
 		return nil, nil, fmt.Errorf("push %s: parse ref: %w", id, err)
 	}
 	return raw, ref, nil
-}
-
-func (p *Pusher) uploadBlob(ctx context.Context, hash string) error {
-	key := blobKey(hash)
-
-	present, err := p.to.Exists(ctx, key)
-	if err != nil {
-		return fmt.Errorf("exists check: %w", err)
-	}
-	if present {
-		return nil
-	}
-
-	rc, err := p.from.GetStream(ctx, key)
-	if err != nil {
-		return fmt.Errorf("read blob: %w", err)
-	}
-	putErr := p.to.PutStream(ctx, key, rc)
-	closeErr := rc.Close()
-	if putErr != nil {
-		return fmt.Errorf("upload blob: %w", putErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close source blob %s: %w", key, closeErr)
-	}
-	return nil
 }
 
 var _ ports.Pusher = (*Pusher)(nil)
