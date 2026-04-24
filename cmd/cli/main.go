@@ -141,7 +141,7 @@ func run(ctx context.Context) error {
 		bus,
 		localStorage, remoteStorage,
 		localManifests, remoteManifests,
-		preflightChecks, sk.Puller, sk.Applier, sk.HeadResolver, sk.ExitUpdaters, localRets, remoteRets,
+		preflightChecks, sk.Puller, sk.Applier, sk.HeadResolver, sk.Committer, sk.Pusher, sk.CommitTargets, localRets, remoteRets,
 		cmdBuilder,
 		readiness,
 	)

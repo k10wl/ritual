@@ -24,11 +24,13 @@ import (
 // Kit is the result of Build — holds everything the stage chain needs
 // from the sync subsystem.
 type Kit struct {
-	Puller       ports.Puller          // pulling stage: download refs + blobs
-	Applier      ports.Applier         // pulling stage: materialise ref into workdir
-	HeadResolver pulling.HeadResolver  // pulling stage: pick HEAD ref id from remote
-	ExitUpdaters []ports.UpdaterService // serve → publish uses these
-	WorldSync    ports.SyncService     // heartbeat uses this for live sync during server running
+	Puller        ports.Puller         // pulling stage: download refs + blobs
+	Applier       ports.Applier        // pulling stage: materialise ref into workdir
+	HeadResolver  pulling.HeadResolver // pulling stage: pick HEAD ref id from remote
+	Committer     ports.Committer      // committing stage: stage workdir into local refs
+	Pusher        ports.Pusher         // pushing stage: mirror local refs to remote
+	CommitTargets []string             // committing stage: glob targets for ref selection
+	WorldSync     ports.SyncService    // heartbeat uses this for live sync during server running
 }
 
 // Build wires scanners, filters, sync services, and updaters. It reads
@@ -80,10 +82,6 @@ func Build(
 		remoteStaging+"/"+config.ServerDir,
 	)
 
-	worldUp := services.NewSyncUploader(worldSync, localManifests, remoteManifests, func(m *domain.Manifest) *domain.SyncState {
-		return &m.Worlds.SyncState
-	})
-
 	// Refs V2 pipeline: ParallelRunner(10) weight-desc dispatch shared by
 	// Pull (remote → local) and Apply (local blobs → workdir). Workdir
 	// storage targets the worlds directory — Apply materialises there.
@@ -99,16 +97,20 @@ func Build(
 	}
 	puller := refs.NewPuller(remoteStorage, localStorage, runner)
 	applier := refs.NewApplier(localStorage, workdirStorage, worldScanner, runner)
+	committer := refs.NewCommitter(worldScanner, workdirStorage, localStorage, runner)
+	pusher := refs.NewPusher(localStorage, remoteStorage, runner)
 	headResolver := newRemoteHeadResolver(remoteStorage)
 
 	_ = serverScanner
 	_ = serverSync
 	return Kit{
-		Puller:       puller,
-		Applier:      applier,
-		HeadResolver: headResolver,
-		ExitUpdaters: []ports.UpdaterService{worldUp},
-		WorldSync:    worldSync,
+		Puller:        puller,
+		Applier:       applier,
+		HeadResolver:  headResolver,
+		Committer:     committer,
+		Pusher:        pusher,
+		CommitTargets: []string{"**"},
+		WorldSync:     worldSync,
 	}, nil
 }
 
