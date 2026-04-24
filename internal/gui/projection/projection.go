@@ -128,7 +128,7 @@ func (p *Projection) onStateChanged(to string) {
 		if p.addresses != nil {
 			p.state.Addresses = p.addresses.Addresses()
 		}
-	case ritual.StagePublishing, ritual.StageBackup, ritual.StageUnlocking, ritual.StageRetaining:
+	case ritual.StageCommitting, ritual.StagePushing, ritual.StageUnlocking, ritual.StageRetaining:
 		p.state.Stage = StageUploading
 		p.state.Label = uploadLabel(to)
 		p.state.ReadyLight = false
@@ -165,14 +165,14 @@ func downloadLabel(stage string) string {
 
 func uploadLabel(stage string) string {
 	switch stage {
-	case ritual.StagePublishing:
+	case ritual.StageCommitting:
+		return "Snapshotting…"
+	case ritual.StagePushing:
 		return "Uploading…"
-	case ritual.StageBackup:
-		return "Backing up…"
 	case ritual.StageUnlocking:
 		return "Releasing lock…"
 	case ritual.StageRetaining:
-		return "Pruning old backups…"
+		return "Pruning old refs…"
 	}
 	return "Finishing…"
 }

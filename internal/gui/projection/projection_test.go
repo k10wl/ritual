@@ -136,13 +136,26 @@ func TestProjection_SyncStageProgress_UpdatesBytesAndPercent(t *testing.T) {
 	assert.Equal(t, 5, final.FilesDone, "FilesDone must track SyncStageProgressInfo so per-file UI hints can render")
 }
 
-func TestProjection_StateChangedToBackup_FlipsStageToUploading(t *testing.T) {
+func TestProjection_StateChangedToCommitting_FlipsStageToUploadingWithSnapshotLabel(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
-		bus.Publish(ritual.StateChangedInfo{To: ritual.StageBackup})
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StageCommitting})
 	})
 	final := last(vms)
-	assert.Equal(t, projection.StageUploading, final.Stage, "Backup state must map to Uploading UI stage — user sees a single 'uploading' screen for the whole post-game persistence phase")
-	assert.Equal(t, "Backing up…", final.Label, "Backup stage must carry a 'Backing up…' label so the user understands which post-game step is running")
+	assert.Equal(t, projection.StageUploading, final.Stage,
+		"Committing state must map to Uploading UI stage — user sees one 'uploading' screen for the whole post-game persistence phase")
+	assert.Equal(t, "Snapshotting…", final.Label,
+		"Committing stage must carry a 'Snapshotting…' label so the user understands which post-game step is running (local ref creation, not upload)")
+}
+
+func TestProjection_StateChangedToPushing_FlipsStageToUploadingWithUploadingLabel(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
+	})
+	final := last(vms)
+	assert.Equal(t, projection.StageUploading, final.Stage,
+		"Pushing state must map to Uploading UI stage")
+	assert.Equal(t, "Uploading…", final.Label,
+		"Pushing stage must carry an 'Uploading…' label — this is the network-upload step")
 }
 
 func TestProjection_LockHeldInfo_RoutesToLockedStageWithHolder(t *testing.T) {
