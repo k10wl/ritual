@@ -12,6 +12,7 @@ import (
 	"ritual/internal/adapters"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/machine"
+	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pushing"
 )
@@ -147,3 +148,5 @@ func TestPushing_PublishesBatchLifecycleEventsOnTheBus(t *testing.T) {
 		}
 	}
 }
+
+var _ ports.Pusher = (*recordingPusher)(nil)
