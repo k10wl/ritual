@@ -107,8 +107,8 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("sync: %w", err)
 	}
 
-	// --- Heartbeat (needs WorldSync from kit; attached after app.New so the
-	// supervisor shares the same Locker as the state machine) ---
+	// --- Heartbeat (attached after app.New so the supervisor shares
+	// the same Locker as the state machine) ---
 	var stopHeartbeat func()
 	defer func() {
 		if stopHeartbeat != nil {
@@ -141,7 +141,7 @@ func run(ctx context.Context) error {
 		cmdBuilder,
 		readiness,
 	)
-	_, stopHeartbeat = heartbeat.Attach(bus, r.Heartbeat, localManifests, remoteManifests, sk.WorldSync) //nolint:contextcheck // supervisor owns its own lifecycle via bus events
+	_, stopHeartbeat = heartbeat.Attach(bus, r.Heartbeat) //nolint:contextcheck // supervisor owns its own lifecycle via bus events
 
 	// Wait for terminal status via bus
 	done := make(chan error, 1)
