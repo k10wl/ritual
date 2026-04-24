@@ -13,11 +13,11 @@ import (
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/acquiring"
-	"ritual/internal/core/stages/backup"
 	"ritual/internal/core/stages/checking"
+	"ritual/internal/core/stages/committing"
 	"ritual/internal/core/stages/failed"
 	"ritual/internal/core/stages/pulling"
-	"ritual/internal/core/stages/publishing"
+	"ritual/internal/core/stages/pushing"
 	"ritual/internal/core/stages/retaining"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/core/stages/unlocking"
@@ -38,7 +38,9 @@ type Ritual struct {
 	puller          ports.Puller
 	applier         ports.Applier
 	headResolver    pulling.HeadResolver
-	exitUpdaters    []ports.UpdaterService
+	committer        ports.Committer
+	pusher           ports.Pusher
+	commitTargets    []string
 	localRetentions  []retaining.Job
 	remoteRetentions []retaining.Job
 	cmdBuilder       ports.CmdBuilder
@@ -63,7 +65,9 @@ func New(
 	puller ports.Puller,
 	applier ports.Applier,
 	headResolver pulling.HeadResolver,
-	exitUpdaters []ports.UpdaterService,
+	committer ports.Committer,
+	pusher ports.Pusher,
+	commitTargets []string,
 	localRetentions, remoteRetentions []retaining.Job,
 	cmdBuilder ports.CmdBuilder,
 	readiness ports.ReadinessCheck,
@@ -79,7 +83,9 @@ func New(
 		puller:          puller,
 		applier:         applier,
 		headResolver:    headResolver,
-		exitUpdaters:     exitUpdaters,
+		committer:        committer,
+		pusher:           pusher,
+		commitTargets:    commitTargets,
 		localRetentions:  localRetentions,
 		remoteRetentions: remoteRetentions,
 		cmdBuilder:       cmdBuilder,
@@ -211,17 +217,16 @@ func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
 	failCheck := failed.New(ritual.StageChecking)
 	failPull := failed.New(ritual.StagePulling)
 	failAcq := failed.New(ritual.StageAcquiring)
+	failCommit := failed.New(ritual.StageCommitting)
+	failPush := failed.New(ritual.StagePushing)
 	failRet := failed.New(ritual.StageRetaining)
 
-	// Prune runs post-unlock today as two instances — local then remote —
-	// back-to-back. Spec §2303-2309 pairs prune with commit/push; that
-	// rewire follows once committing + pushing are wired into the chain.
-	pruneRemote := retaining.New(r.remoteRetentions, r.bus, failRet, nil)
-	pruneLocal := retaining.New(r.localRetentions, r.bus, failRet, pruneRemote)
-	unlock := unlocking.New(r.locker.Release, pruneLocal)
-	backupStage := backup.New(r.localStorage, r.remoteStorage, r.localManifests, unlock)
-	publish := publishing.New(r.exitUpdaters, backupStage)
-	run := running.New(r.cmdBuilder, r.readiness, publish, unlock)
+	unlock := unlocking.New(r.locker.Release, nil)
+	pruneRemote := retaining.New(r.remoteRetentions, r.bus, failRet, unlock)
+	push := pushing.New(r.pusher, pruneRemote, failPush)
+	pruneLocal := retaining.New(r.localRetentions, r.bus, failRet, push)
+	commit := committing.New(r.committer, NewCommitOptsResolver(r.commitTargets), pruneLocal, failCommit)
+	run := running.New(r.cmdBuilder, r.readiness, commit, unlock)
 	acquire := acquiring.New(r.locker.Acquire, r.locker.Inspect, r.localManifests.Get, r.locker.HeartbeatInterval(), run, failAcq)
 	pull := pulling.New(r.puller, r.applier, r.headResolver, acquire, failPull)
 	check := checking.New(r.checks, pull, failCheck)
@@ -229,6 +234,8 @@ func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
 	failCheck.SetRetry(check)
 	failPull.SetRetry(pull)
 	failAcq.SetRetry(acquire)
+	failCommit.SetRetry(commit)
+	failPush.SetRetry(push)
 	failRet.SetRetry(pruneLocal)
 
 	return check
