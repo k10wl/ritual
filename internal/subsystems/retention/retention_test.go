@@ -38,12 +38,11 @@ func TestBuild_PrunesRefsAndSweepsOrphanBlobs(t *testing.T) {
 
 	rulesLocal := domain.RetentionRules{KeepLast: 1}
 	rulesRemote := domain.RetentionRules{KeepLast: 1}
-	manifest := &domain.Manifest{RemoteRetention: rulesRemote}
 	t.Setenv("HOME", t.TempDir())
 
-	writeSettings(t, rulesLocal)
+	writeSettings(t, rulesLocal, rulesRemote)
 
-	localJobs, remoteJobs, err := retention.Build(localStorage, remoteStorage, nil, manifest)
+	localJobs, remoteJobs, err := retention.Build(localStorage, remoteStorage, nil)
 	require.NoError(t, err, "Build must wire jobs without error when storages are valid")
 
 	for _, job := range localJobs {
@@ -100,9 +99,14 @@ func seedBlob(t *testing.T, dir, hash string) {
 	require.NoError(t, os.WriteFile(filepath.Join(objectsDir, hash), []byte("blob-"+hash), 0o644), "write blob")
 }
 
-func writeSettings(t *testing.T, rules domain.RetentionRules) {
+func writeSettings(t *testing.T, localRules, remoteRules domain.RetentionRules) {
 	t.Helper()
-	s := &domain.Settings{Port: 25565, Memory: 4096, LocalRetention: rules}
+	s := &domain.Settings{
+		Port:            25565,
+		Memory:          4096,
+		LocalRetention:  localRules,
+		RemoteRetention: remoteRules,
+	}
 	require.NoError(t, s.Save(), "save settings for retention build")
 }
 

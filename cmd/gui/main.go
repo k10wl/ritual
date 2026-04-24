@@ -246,11 +246,7 @@ func buildRuntime() (*guiRuntime, error) {
 	// to 127.0.0.1:<settings.Port> when the real server wires in.
 	readiness := immediateReady{}
 
-	remoteManifest, err := remoteManifests.Get(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("load remote manifest for retention: %w", err)
-	}
-	localRets, remoteRets, err := retention.Build(localStorage, remoteStorage, bus, remoteManifest)
+	localRets, remoteRets, err := retention.Build(localStorage, remoteStorage, bus)
 	if err != nil {
 		return nil, fmt.Errorf("retention: %w", err)
 	}

@@ -117,7 +117,7 @@ func run(ctx context.Context) error {
 	}()
 	sysInfo := adapters.NewSystemInfo()
 	javaInfo := adapters.NewJavaInfo()
-	localRets, remoteRets, err := retention.Build(localStorage, remoteStorage, bus, remoteManifest)
+	localRets, remoteRets, err := retention.Build(localStorage, remoteStorage, bus)
 	if err != nil {
 		return fmt.Errorf("retention: %w", err)
 	}

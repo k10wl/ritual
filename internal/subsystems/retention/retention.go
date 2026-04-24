@@ -15,12 +15,11 @@ import (
 
 // Build wires the retention Jobs split per side, matching the spec's
 // commit→pruneLocal→push→pruneRemote pairing (§2297-2309). Local jobs cover
-// refs-local + logs-local; remote jobs cover refs-remote. remoteManifest
-// supplies the remote rules; local rules come from the host settings file.
+// refs-local + logs-local; remote jobs cover refs-remote. Both sides read
+// rules from the host settings file (no manifest plumbing).
 func Build(
 	localStorage, remoteStorage ports.StorageRepository,
 	bus ports.EventBus,
-	remoteManifest *domain.Manifest,
 ) (local, remote []retaining.Job, err error) {
 	settings, err := domain.LoadSettings()
 	if err != nil {
@@ -31,7 +30,7 @@ func Build(
 	if localRules == (domain.RetentionRules{}) {
 		localRules = domain.DefaultRetentionRules()
 	}
-	remoteRules := remoteManifest.RemoteRetention
+	remoteRules := settings.RemoteRetention
 	if remoteRules == (domain.RetentionRules{}) {
 		remoteRules = domain.DefaultRetentionRules()
 	}

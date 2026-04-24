@@ -17,23 +17,25 @@ const SettingsFilename = "settings.json"
 // by the Checking stage; defaults are the same constants the legacy
 // manifest fallbacks read from internal/config.
 type Settings struct {
-	Port           int            `json:"port"`
-	Memory         int            `json:"memory"`
-	MinRAMMB       int            `json:"min_ram_mb"`
-	MinDiskMB      int            `json:"min_disk_mb"`
-	MinJavaVersion int            `json:"min_java_version"`
-	LocalRetention RetentionRules `json:"local_retention"`
+	Port            int            `json:"port"`
+	Memory          int            `json:"memory"`
+	MinRAMMB        int            `json:"min_ram_mb"`
+	MinDiskMB       int            `json:"min_disk_mb"`
+	MinJavaVersion  int            `json:"min_java_version"`
+	LocalRetention  RetentionRules `json:"local_retention"`
+	RemoteRetention RetentionRules `json:"remote_retention"`
 }
 
 // DefaultSettings returns default settings values.
 func DefaultSettings() *Settings {
 	return &Settings{
-		Port:           25565,
-		Memory:         4096,
-		MinRAMMB:       config.DefaultMinRAMMB,
-		MinDiskMB:      config.DefaultMinDiskMB,
-		MinJavaVersion: config.DefaultMinJavaVersion,
-		LocalRetention: DefaultRetentionRules(),
+		Port:            25565,
+		Memory:          4096,
+		MinRAMMB:        config.DefaultMinRAMMB,
+		MinDiskMB:       config.DefaultMinDiskMB,
+		MinJavaVersion:  config.DefaultMinJavaVersion,
+		LocalRetention:  DefaultRetentionRules(),
+		RemoteRetention: DefaultRetentionRules(),
 	}
 }
 
