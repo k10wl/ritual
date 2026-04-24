@@ -29,23 +29,23 @@ import (
 // New wires the strategy chain once; Listen routes command events to
 // start/stop/retry.
 type Ritual struct {
-	bus             ports.EventBus
-	localStorage    ports.StorageRepository
-	remoteStorage   ports.StorageRepository
-	localManifests  ports.ManifestStore
-	remoteManifests ports.ManifestStore
-	checks          []checks.Check
-	puller          ports.Puller
-	applier         ports.Applier
-	headResolver    pulling.HeadResolver
+	bus              ports.EventBus
+	localStorage     ports.StorageRepository
+	remoteStorage    ports.StorageRepository
+	localManifests   ports.ManifestStore
+	remoteManifests  ports.ManifestStore
+	checks           []checks.Check
+	puller           ports.Puller
+	applier          ports.Applier
+	headResolver     pulling.HeadResolver
 	committer        ports.Committer
 	pusher           ports.Pusher
 	commitTargets    []string
 	localRetentions  []retaining.Job
 	remoteRetentions []retaining.Job
 	cmdBuilder       ports.CmdBuilder
-	readiness       ports.ReadinessCheck
-	locker          *observed.Locker
+	readiness        ports.ReadinessCheck
+	locker           *observed.Locker
 
 	entry    machine.Strategy[ritual.RunState]
 	runner   *ritual.Runner
@@ -74,24 +74,24 @@ func New(
 ) *Ritual {
 	host, _ := os.Hostname()
 	r := &Ritual{
-		bus:             bus,
-		localStorage:    localStorage,
-		remoteStorage:   remoteStorage,
-		localManifests:  localManifests,
-		remoteManifests: remoteManifests,
-		checks:          preflightChecks,
-		puller:          puller,
-		applier:         applier,
-		headResolver:    headResolver,
+		bus:              bus,
+		localStorage:     localStorage,
+		remoteStorage:    remoteStorage,
+		localManifests:   localManifests,
+		remoteManifests:  remoteManifests,
+		checks:           preflightChecks,
+		puller:           puller,
+		applier:          applier,
+		headResolver:     headResolver,
 		committer:        committer,
 		pusher:           pusher,
 		commitTargets:    commitTargets,
 		localRetentions:  localRetentions,
 		remoteRetentions: remoteRetentions,
 		cmdBuilder:       cmdBuilder,
-		readiness:       readiness,
-		locker:          observed.NewLocker(lock.New(remoteStorage, host), bus),
-		status:          Idle,
+		readiness:        readiness,
+		locker:           observed.NewLocker(lock.New(remoteStorage, host), bus),
+		status:           Idle,
 	}
 	r.entry = r.buildChain()
 	return r
