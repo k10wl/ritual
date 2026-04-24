@@ -24,6 +24,8 @@ type RunState struct {
 	SessionID    string
 	LocalBefore  *domain.Manifest
 	RemoteBefore *domain.Manifest
+	RefID        domain.RefID
+	ParentRefID  domain.RefID
 	Err          error
 	FailedStage  string
 }

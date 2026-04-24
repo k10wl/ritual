@@ -79,6 +79,76 @@ func TestPulling_ResolvesHeadPullsThenAppliesAndRoutesToOnOKOnSuccess(t *testing
 		"Pulling stage must route to onOK after both verbs succeed so the chain advances to Acquiring")
 }
 
+func TestPulling_RecordsPulledHeadOnRunStateForDownstreamParentResolution(t *testing.T) {
+	onOK := &sentinelStrategy{name: "ok"}
+	onFail := &sentinelStrategy{name: "fail"}
+	puller := &recordingPuller{}
+	applier := &recordingApplier{}
+
+	stage := pulling.New(puller, applier, staticResolver("2026-04-23T10-00-00.000Z"), onOK, onFail)
+
+	rs := newRunState()
+	_, err := stage.Run(t.Context(), rs)
+
+	require.NoError(t, err)
+	assert.Equal(t, domain.RefID("2026-04-23T10-00-00.000Z"), rs.ParentRefID,
+		"Pulling stage must record the pulled head id on rs.ParentRefID after Apply succeeds so the committing stage's fresh-commit branch has a Parent to reference")
+}
+
+func TestPulling_LeavesParentRefIDEmptyWhenRemoteHasNoRefs(t *testing.T) {
+	onOK := &sentinelStrategy{name: "ok"}
+	onFail := &sentinelStrategy{name: "fail"}
+	puller := &recordingPuller{}
+	applier := &recordingApplier{}
+
+	stage := pulling.New(puller, applier, staticResolver(""), onOK, onFail)
+
+	rs := newRunState()
+	next, err := stage.Run(t.Context(), rs)
+
+	require.NoError(t, err)
+	assert.Empty(t, puller.calls,
+		"Pulling stage must short-circuit on empty head id so an empty-remote bootstrap does not issue pointless GETs")
+	assert.Empty(t, applier.calls,
+		"Pulling stage must not call Apply when there is nothing on remote to materialise")
+	assert.Equal(t, domain.RefID(""), rs.ParentRefID,
+		"Pulling stage must leave rs.ParentRefID empty when remote is empty so the committing stage creates a true root commit with no parent (spec §1073 permits empty Parent on initial commit)")
+	assert.Same(t, machine.Strategy[ritual.RunState](onOK), next,
+		"Pulling stage must route to onOK when remote is empty — bootstrap is success, not failure, so acquiring and running still proceed")
+}
+
+func TestPulling_LeavesParentRefIDEmptyOnPullError(t *testing.T) {
+	onOK := &sentinelStrategy{name: "ok"}
+	onFail := &sentinelStrategy{name: "fail"}
+	puller := &recordingPuller{err: errors.New("pull: network")}
+	applier := &recordingApplier{}
+
+	stage := pulling.New(puller, applier, staticResolver("id"), onOK, onFail)
+
+	rs := newRunState()
+	_, err := stage.Run(t.Context(), rs)
+
+	require.NoError(t, err)
+	assert.Equal(t, domain.RefID(""), rs.ParentRefID,
+		"Pulling stage must not write rs.ParentRefID when Pull fails — the local workdir was not materialised from that ref, so downstream must not treat it as the pulled head")
+}
+
+func TestPulling_LeavesParentRefIDEmptyOnApplyError(t *testing.T) {
+	onOK := &sentinelStrategy{name: "ok"}
+	onFail := &sentinelStrategy{name: "fail"}
+	puller := &recordingPuller{}
+	applier := &recordingApplier{err: errors.New("apply: disk full")}
+
+	stage := pulling.New(puller, applier, staticResolver("id"), onOK, onFail)
+
+	rs := newRunState()
+	_, err := stage.Run(t.Context(), rs)
+
+	require.NoError(t, err)
+	assert.Equal(t, domain.RefID(""), rs.ParentRefID,
+		"Pulling stage must not write rs.ParentRefID when Apply fails — the workdir is partial, so claiming this id as pulled-head would mislead the committing stage into an inconsistent Parent link")
+}
+
 func TestPulling_RecordsHeadResolverErrorAndRoutesToOnFailWithoutCallingVerbs(t *testing.T) {
 	onOK := &sentinelStrategy{name: "ok"}
 	onFail := &sentinelStrategy{name: "fail"}

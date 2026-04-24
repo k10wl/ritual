@@ -65,6 +65,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 		rs.Err = err
 		return s.onFail, nil
 	}
+	rs.ParentRefID = id
 	publish(rs.Bus, ritual.FinishInfo{Operation: "pull"})
 	return s.onOK, nil
 }
