@@ -58,6 +58,16 @@ type noopApplier struct{}
 
 func (noopApplier) Apply(_ context.Context, _ domain.RefID) error { return nil }
 
+type noopCommitter struct{}
+
+func (noopCommitter) Commit(_ context.Context, _ ports.CommitOpts) (domain.RefID, error) {
+	return domain.RefID("noop-commit"), nil
+}
+
+type noopPusher struct{}
+
+func (noopPusher) Push(_ context.Context, _ domain.RefID) error { return nil }
+
 func noopHead(_ context.Context) (domain.RefID, error) { return domain.RefID("noop"), nil }
 
 type failOncePuller struct {
@@ -111,7 +121,7 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 		fakeManifestStore{}, fakeManifestStore{},
 		[]checks.Check{noopCheck},
 		noopPuller{}, noopApplier{}, noopHead,
-		nil, nil, nil,
+		noopCommitter{}, noopPusher{}, []string{"**"},
 		[]retaining.Job{noopJob}, []retaining.Job{noopJob},
 		fakeCmdBuilder{},
 		immediateReady{},
@@ -138,7 +148,7 @@ func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 		fakeManifestStore{}, fakeManifestStore{},
 		[]checks.Check{noopCheck},
 		flaky, noopApplier{}, noopHead,
-		nil, nil, nil,
+		noopCommitter{}, noopPusher{}, []string{"**"},
 		[]retaining.Job{noopJob}, []retaining.Job{noopJob},
 		fakeCmdBuilder{},
 		immediateReady{},
@@ -209,7 +219,7 @@ func TestRitual_Start_AfterDone_StartsAgain(t *testing.T) {
 		fakeManifestStore{}, fakeManifestStore{},
 		[]checks.Check{noopCheck},
 		noopPuller{}, noopApplier{}, noopHead,
-		nil, nil, nil,
+		noopCommitter{}, noopPusher{}, []string{"**"},
 		[]retaining.Job{noopJob}, []retaining.Job{noopJob},
 		fakeCmdBuilder{},
 		immediateReady{},
