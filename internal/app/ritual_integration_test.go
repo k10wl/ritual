@@ -1315,7 +1315,11 @@ func TestIntegration_Prune_BothInstancesExecute(t *testing.T) {
 	}
 
 	drain := collectBusEvents(r.bus)
-	seedRemoteWorld(t, r, file("world/level.dat", []byte("x")))
+	seedRemoteWorld(t, r,
+		file("world/level.dat", []byte("level data")),
+		file("world/region/r.0.0.mca", []byte("region data")),
+		file("world/playerdata/player-uuid.dat", []byte("player state")),
+	)
 
 	server := r.startRitual(t)
 	server.waitReady(t)
