@@ -161,6 +161,9 @@ func (r *Ritual) start(ctx context.Context) {
 
 	go func() {
 		err := r.runner.Run(ctx, r.entry)
+		if err == nil {
+			err = runState.Err
+		}
 		r.resolveStatus(ctx, err)
 	}()
 }
@@ -204,6 +207,9 @@ func (r *Ritual) retry(ctx context.Context) {
 	r.runner.RunState().Err = nil
 	go func() {
 		err := r.runner.RunCurrent(ctx)
+		if err == nil {
+			err = r.runner.RunState().Err
+		}
 		r.resolveStatus(ctx, err)
 	}()
 }
