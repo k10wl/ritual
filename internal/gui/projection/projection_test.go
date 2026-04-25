@@ -9,7 +9,6 @@ import (
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/acquiring"
 	"ritual/internal/core/stages/running"
-	"ritual/internal/core/sync"
 	"ritual/internal/gui/projection"
 	"sync/atomic"
 	"testing"
@@ -119,21 +118,6 @@ func TestProjection_ServerReady_FlipsReadyLight(t *testing.T) {
 	final := last(vms)
 	assert.True(t, final.ReadyLight, "ServerReadyInfo must flip ReadyLight so the Running screen shows the ready indicator to the user")
 	assert.Equal(t, "Ready", final.Label, "ReadyLight trigger must also update the label to 'Ready' so the UI has a human caption")
-}
-
-func TestProjection_SyncStageProgress_UpdatesBytesAndPercent(t *testing.T) {
-	vms := runProjection(t, nil, func(bus ports.EventBus) {
-		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
-		bus.Publish(sync.SyncStageProgressInfo{
-			File: "world.dat", FilesDone: 5, FilesTotal: 10,
-			BytesDone: 50 * 1024 * 1024, BytesTotal: 100 * 1024 * 1024,
-		})
-	})
-	final := last(vms)
-	assert.Equal(t, 50, final.Progress, "50MB done out of 100MB total must compute to 50%% — the progress bar depends on this integer percent")
-	assert.Equal(t, int64(50*1024*1024), final.BytesDone, "BytesDone must reflect the most recent SyncStageProgressInfo value so the 'X / Y MB' line is accurate")
-	assert.Equal(t, int64(100*1024*1024), final.BytesTotal, "BytesTotal must reflect the most recent SyncStageProgressInfo value so the 'X / Y MB' line is accurate")
-	assert.Equal(t, 5, final.FilesDone, "FilesDone must track SyncStageProgressInfo so per-file UI hints can render")
 }
 
 func TestProjection_StateChangedToCommitting_FlipsStageToUploadingWithSnapshotLabel(t *testing.T) {

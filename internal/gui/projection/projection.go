@@ -7,7 +7,6 @@ import (
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/acquiring"
 	"ritual/internal/core/stages/running"
-	"ritual/internal/core/sync"
 )
 
 // Emitter receives a snapshot after every fold that changes the ViewModel.
@@ -87,21 +86,6 @@ func (p *Projection) fold(evt ports.Event) bool {
 		p.state.ReadyLight = false
 	case running.ServerStoppedInfo:
 		p.state.ReadyLight = false
-	case sync.SyncStageStartedInfo:
-		p.state.Label = "Downloading…"
-		p.state.FilesTotal, p.state.BytesTotal = e.Files, e.Bytes
-		p.state.FilesDone, p.state.BytesDone, p.state.Progress = 0, 0, 0
-	case sync.SyncStageProgressInfo:
-		p.state.FilesDone, p.state.FilesTotal = e.FilesDone, e.FilesTotal
-		p.state.BytesDone, p.state.BytesTotal = e.BytesDone, e.BytesTotal
-		p.state.Progress = percent(e.BytesDone, e.BytesTotal)
-	case sync.SyncCommitStartedInfo:
-		p.state.FilesTotal, p.state.BytesTotal = e.Files, e.Bytes
-		p.state.FilesDone, p.state.BytesDone, p.state.Progress = 0, 0, 0
-	case sync.SyncCommitProgressInfo:
-		p.state.FilesDone, p.state.FilesTotal = e.FilesDone, e.FilesTotal
-		p.state.BytesDone, p.state.BytesTotal = e.BytesDone, e.BytesTotal
-		p.state.Progress = percent(e.BytesDone, e.BytesTotal)
 	case acquiring.LockHeldInfo:
 		p.state.Stage = StageLocked
 		p.state.LockHolder = e.Holder
