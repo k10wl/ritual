@@ -68,3 +68,9 @@ build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
 # Build artifacts / session dumps
 /gui
 .playwright-mcp/
+
+# Build artifacts
+/cli
+
+# Local Claude rules (per-developer)
+.claude/rules/
