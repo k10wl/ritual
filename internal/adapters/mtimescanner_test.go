@@ -25,7 +25,7 @@ func TestMtimeScanner_NewMtimeScanner_NilPreviousTreatedAsEmpty(t *testing.T) {
 	scanner, err := NewMtimeScanner(dir, time.Now().Add(-time.Hour), nil)
 	require.NoError(t, err)
 
-	result, err := scanner.Scan(context.Background())
+	result, err := scanner.Scan(context.Background(), []string{"**"})
 	assert.NoError(t, err)
 	assert.Contains(t, result, "file.dat", "nil previous should hash all files like empty map")
 }
@@ -43,7 +43,7 @@ func TestMtimeScanner_Scan_ModifiedAfterThreshold(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := scanner.Scan(context.Background())
+	result, err := scanner.Scan(context.Background(), []string{"**"})
 
 	assert.NoError(t, err)
 	assert.Contains(t, result, "modified.dat")
@@ -67,7 +67,7 @@ func TestMtimeScanner_Scan_UnmodifiedCarriesForward(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := scanner.Scan(context.Background())
+	result, err := scanner.Scan(context.Background(), []string{"**"})
 
 	assert.NoError(t, err)
 	assert.Equal(t, "carried_hash", result["unchanged.dat"].Hash, "should carry forward hash from previous")
@@ -87,7 +87,7 @@ func TestMtimeScanner_Scan_NewFileNotInPrevious(t *testing.T) {
 	scanner, err := NewMtimeScanner(dir, threshold, map[string]domain.FileEntry{})
 	require.NoError(t, err)
 
-	result, err := scanner.Scan(context.Background())
+	result, err := scanner.Scan(context.Background(), []string{"**"})
 
 	assert.NoError(t, err)
 	assert.Contains(t, result, "newfile.dat")
@@ -103,7 +103,7 @@ func TestMtimeScanner_Scan_DeletedFileOmitted(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := scanner.Scan(context.Background())
+	result, err := scanner.Scan(context.Background(), []string{"**"})
 
 	assert.NoError(t, err)
 	assert.NotContains(t, result, "deleted.dat", "deleted file should be omitted")
@@ -120,7 +120,7 @@ func TestMtimeScanner_Scan_EmptyDirNonEmptyPrevious(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := scanner.Scan(context.Background())
+	result, err := scanner.Scan(context.Background(), []string{"**"})
 
 	assert.NoError(t, err)
 	assert.Empty(t, result, "all previous files deleted — empty result")
@@ -136,7 +136,7 @@ func TestMtimeScanner_Scan_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = scanner.Scan(ctx)
+	_, err = scanner.Scan(ctx, []string{"**"})
 	assert.Error(t, err)
 }
 
@@ -149,7 +149,7 @@ func TestMtimeScanner_Scan_NestedForwardSlashes(t *testing.T) {
 	scanner, err := NewMtimeScanner(dir, time.Now().Add(-time.Hour), map[string]domain.FileEntry{})
 	require.NoError(t, err)
 
-	result, err := scanner.Scan(context.Background())
+	result, err := scanner.Scan(context.Background(), []string{"**"})
 
 	assert.NoError(t, err)
 	assert.Contains(t, result, "world/region/r.0.0.mca")

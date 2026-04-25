@@ -15,11 +15,6 @@ import (
 // Delete semantics: tree-delete. If key matches a single object, that object
 // is removed. If key is a prefix of multiple objects (or a directory on local
 // FS), the entire subtree is removed in one logical operation.
-//
-// V2 streaming methods (`GetStream`, `PutStream`, `Exists`) are the migration
-// target described in docs/superpowers/specs/2026-04-19-fast-sync-v2.1-design.md
-// (Storage V2 Migration). V1 buffered methods (`Get`, `Put`, `Rename`) are
-// deprecated and scheduled for removal in STORAGE-16.
 type StorageRepository interface {
 	fmt.Stringer
 
@@ -34,16 +29,10 @@ type StorageRepository interface {
 	// Exists reports whether key is present without transferring bytes.
 	Exists(ctx context.Context, key string) (bool, error)
 
-	// Deprecated: use GetStream. Removed in STORAGE-16.
-	Get(ctx context.Context, key string) ([]byte, error)
-	// Deprecated: use PutStream. Removed in STORAGE-16.
-	Put(ctx context.Context, key string, data []byte) error
 	Delete(ctx context.Context, key string) error
 	DeleteBatch(ctx context.Context, keys []string) error
 	List(ctx context.Context, prefix string) ([]string, error)
 	Copy(ctx context.Context, sourceKey string, destKey string) error
-	// Deprecated: no V2 equivalent. Removed in STORAGE-16.
-	Rename(ctx context.Context, sourceKey string, destKey string) error
 }
 
 // Puller fetches a ref and every blob it references from one storage side
@@ -105,10 +94,11 @@ type ReadinessCheck interface {
 }
 
 // DirectoryScanner produces a file map keyed by relative path with content
-// hash + size for every file in the worlds directory. Implementations
-// determine scanning strategy (full walk vs mtime-filtered).
+// hash + size for files matching any glob in targets. Implementations
+// determine scanning strategy (full walk vs mtime-filtered) and decide
+// per-path whether to hash. Empty targets means nothing matches.
 type DirectoryScanner interface {
-	Scan(ctx context.Context) (map[string]domain.FileEntry, error)
+	Scan(ctx context.Context, targets []string) (map[string]domain.FileEntry, error)
 }
 
 // BlobItem is one unit of work handed to a BlobRunner. Key is the opaque

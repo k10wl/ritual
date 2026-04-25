@@ -40,31 +40,10 @@ func (o *observedStorage) publish(evt ports.Event) {
 
 func sinceMs(start time.Time) int64 { return time.Since(start).Milliseconds() }
 
-func (o *observedStorage) Get(ctx context.Context, key string) ([]byte, error) {
-	start := time.Now()
-	data, err := o.inner.Get(ctx, key)
-	o.publish(StorageGetInfo{Store: o.label, Key: key, Bytes: len(data), DurationMs: sinceMs(start), Err: err})
-	return data, err
-}
-
-func (o *observedStorage) Put(ctx context.Context, key string, data []byte) error {
-	start := time.Now()
-	err := o.inner.Put(ctx, key, data)
-	o.publish(StoragePutInfo{Store: o.label, Key: key, Bytes: len(data), DurationMs: sinceMs(start), Err: err})
-	return err
-}
-
 func (o *observedStorage) Copy(ctx context.Context, src, dst string) error {
 	start := time.Now()
 	err := o.inner.Copy(ctx, src, dst)
 	o.publish(StorageCopyInfo{Store: o.label, SrcKey: src, DstKey: dst, DurationMs: sinceMs(start), Err: err})
-	return err
-}
-
-func (o *observedStorage) Rename(ctx context.Context, src, dst string) error {
-	start := time.Now()
-	err := o.inner.Rename(ctx, src, dst)
-	o.publish(StorageRenameInfo{Store: o.label, SrcKey: src, DstKey: dst, DurationMs: sinceMs(start), Err: err})
 	return err
 }
 

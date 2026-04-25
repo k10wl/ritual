@@ -109,16 +109,4 @@ func (f *faultyStorage) Copy(ctx context.Context, src, dst string) error {
 	return f.bundle.storage.Copy(ctx, src, dst)
 }
 
-func (f *faultyStorage) Get(ctx context.Context, key string) ([]byte, error) {
-	return f.bundle.storage.Get(ctx, key)
-}
-
-func (f *faultyStorage) Put(ctx context.Context, key string, data []byte) error {
-	return f.bundle.storage.Put(ctx, key, data)
-}
-
-func (f *faultyStorage) Rename(ctx context.Context, src, dst string) error {
-	return f.bundle.storage.Rename(ctx, src, dst)
-}
-
 var _ ports.StorageRepository = (*faultyStorage)(nil)

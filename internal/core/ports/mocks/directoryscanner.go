@@ -9,9 +9,10 @@ import (
 
 // MockDirectoryScanner is a mock implementation of DirectoryScanner for testing
 type MockDirectoryScanner struct {
-	ScanFunc   func(ctx context.Context) (map[string]domain.FileEntry, error)
-	ScanCalled bool
-	ScanCount  int
+	ScanFunc    func(ctx context.Context, targets []string) (map[string]domain.FileEntry, error)
+	ScanCalled  bool
+	ScanCount   int
+	LastTargets []string
 }
 
 // Compile-time check to ensure MockDirectoryScanner implements ports.DirectoryScanner
@@ -23,7 +24,7 @@ func NewMockDirectoryScanner() *MockDirectoryScanner {
 }
 
 // Scan produces a file map of world files.
-func (m *MockDirectoryScanner) Scan(ctx context.Context) (map[string]domain.FileEntry, error) {
+func (m *MockDirectoryScanner) Scan(ctx context.Context, targets []string) (map[string]domain.FileEntry, error) {
 	if m == nil {
 		return nil, errors.New("mock directory scanner cannot be nil")
 	}
@@ -33,9 +34,10 @@ func (m *MockDirectoryScanner) Scan(ctx context.Context) (map[string]domain.File
 
 	m.ScanCalled = true
 	m.ScanCount++
+	m.LastTargets = targets
 
 	if m.ScanFunc != nil {
-		return m.ScanFunc(ctx)
+		return m.ScanFunc(ctx, targets)
 	}
 	return map[string]domain.FileEntry{}, nil
 }

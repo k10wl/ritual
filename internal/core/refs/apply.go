@@ -9,7 +9,6 @@ import (
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/cespare/xxhash/v2"
 )
 
@@ -154,39 +153,19 @@ func (a *Applier) existingMatchesHash(ctx context.Context, filePath, expectedHas
 }
 
 func (a *Applier) prune(ctx context.Context, ref *domain.Ref) error {
-	scanned, err := a.scanner.Scan(ctx)
+	scanned, err := a.scanner.Scan(ctx, ref.Targets)
 	if err != nil {
 		return fmt.Errorf("scan workdir: %w", err)
 	}
 	for key := range scanned {
-		_, referenced := ref.Objects[key]
-		if referenced {
+		if _, referenced := ref.Objects[key]; referenced {
 			continue
 		}
-		if !matchesAnyTarget(ref.Targets, key) {
-			continue
-		}
-		err := a.workdir.Delete(ctx, key)
-		if err != nil {
+		if err := a.workdir.Delete(ctx, key); err != nil {
 			return fmt.Errorf("delete stale %s: %w", key, err)
 		}
 	}
 	return nil
-}
-
-// matchesAnyTarget returns true when candidate is inside any of the glob
-// patterns in targets. Uses bmatcuk/doublestar/v4 — the same globbing
-// Commit uses to select files into Objects — so Apply's prune-in-scope
-// decision agrees with Commit's inclusion decision across every Targets
-// shape, including multi-segment `**`.
-func matchesAnyTarget(targets []string, candidate string) bool {
-	for _, pattern := range targets {
-		matched, _ := doublestar.Match(pattern, candidate)
-		if matched {
-			return true
-		}
-	}
-	return false
 }
 
 var _ ports.Applier = (*Applier)(nil)

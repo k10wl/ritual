@@ -13,7 +13,7 @@ func TestMockDirectoryScanner_Scan_Success(t *testing.T) {
 	mock := NewMockDirectoryScanner()
 	ctx := context.Background()
 
-	result, err := mock.Scan(ctx)
+	result, err := mock.Scan(ctx, nil)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -25,9 +25,9 @@ func TestMockDirectoryScanner_Scan_MultipleCalls(t *testing.T) {
 	mock := NewMockDirectoryScanner()
 	ctx := context.Background()
 
-	_, _ = mock.Scan(ctx)
-	_, _ = mock.Scan(ctx)
-	_, _ = mock.Scan(ctx)
+	_, _ = mock.Scan(ctx, nil)
+	_, _ = mock.Scan(ctx, nil)
+	_, _ = mock.Scan(ctx, nil)
 
 	assert.True(t, mock.ScanCalled)
 	assert.Equal(t, 3, mock.ScanCount)
@@ -39,11 +39,11 @@ func TestMockDirectoryScanner_Scan_WithFunction(t *testing.T) {
 	expectedErr := errors.New("scan failed")
 	expectedMap := map[string]domain.FileEntry{"a.dat": {Hash: "hash1", Size: 5}}
 
-	mock.ScanFunc = func(ctx context.Context) (map[string]domain.FileEntry, error) {
+	mock.ScanFunc = func(ctx context.Context, _ []string) (map[string]domain.FileEntry, error) {
 		return expectedMap, expectedErr
 	}
 
-	result, err := mock.Scan(ctx)
+	result, err := mock.Scan(ctx, nil)
 
 	assert.Equal(t, expectedErr, err)
 	assert.Equal(t, expectedMap, result)
@@ -53,7 +53,7 @@ func TestMockDirectoryScanner_Scan_WithFunction(t *testing.T) {
 func TestMockDirectoryScanner_Scan_NilContext(t *testing.T) {
 	mock := NewMockDirectoryScanner()
 
-	_, err := mock.Scan(nil) //nolint:staticcheck // intentional nil-ctx test
+	_, err := mock.Scan(nil, nil) //nolint:staticcheck // intentional nil-ctx test
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "context cannot be nil")
@@ -63,7 +63,7 @@ func TestMockDirectoryScanner_Scan_NilMock(t *testing.T) {
 	var mock *MockDirectoryScanner
 	ctx := context.Background()
 
-	_, err := mock.Scan(ctx)
+	_, err := mock.Scan(ctx, nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "mock directory scanner cannot be nil")
@@ -73,10 +73,10 @@ func TestMockDirectoryScanner_Reset(t *testing.T) {
 	mock := NewMockDirectoryScanner()
 	ctx := context.Background()
 
-	mock.ScanFunc = func(ctx context.Context) (map[string]domain.FileEntry, error) {
+	mock.ScanFunc = func(ctx context.Context, _ []string) (map[string]domain.FileEntry, error) {
 		return nil, nil //nolint:nilnil // mock default
 	}
-	_, _ = mock.Scan(ctx)
+	_, _ = mock.Scan(ctx, nil)
 
 	assert.True(t, mock.ScanCalled)
 	assert.Equal(t, 1, mock.ScanCount)
@@ -96,7 +96,7 @@ func TestMockDirectoryScanner_Reset_Nil(t *testing.T) {
 func TestMockDirectoryScanner_ImplementsInterface(t *testing.T) {
 	mock := NewMockDirectoryScanner()
 	ctx := context.Background()
-	result, err := mock.Scan(ctx)
+	result, err := mock.Scan(ctx, nil)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 }

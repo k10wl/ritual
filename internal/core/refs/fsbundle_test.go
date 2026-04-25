@@ -215,14 +215,3 @@ func (c *keyCounter) Copy(ctx context.Context, src, dst string) error {
 	return c.inner.Copy(ctx, src, dst)
 }
 
-func (c *keyCounter) Get(ctx context.Context, key string) ([]byte, error) {
-	return c.inner.Get(ctx, key)
-}
-
-func (c *keyCounter) Put(ctx context.Context, key string, data []byte) error {
-	return c.inner.Put(ctx, key, data)
-}
-
-func (c *keyCounter) Rename(ctx context.Context, src, dst string) error {
-	return c.inner.Rename(ctx, src, dst)
-}

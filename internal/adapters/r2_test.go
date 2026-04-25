@@ -61,34 +61,6 @@ func TestR2Repository_SuccessCases(t *testing.T) {
 	mockClient := new(MockS3Client)
 	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
 
-	t.Run("get success", func(t *testing.T) {
-		key := "test-key"
-		expectedData := []byte("test data")
-		body := io.NopCloser(bytes.NewReader(expectedData))
-
-		mockClient.On("GetObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
-			Body: body,
-		}, nil)
-
-		result, err := repo.Get(context.Background(), key)
-
-		assert.NoError(t, err)
-		assert.Equal(t, expectedData, result)
-		mockClient.AssertExpectations(t)
-	})
-
-	t.Run("put success", func(t *testing.T) {
-		key := "test-key"
-		data := []byte("test data")
-
-		mockClient.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
-
-		err := repo.Put(context.Background(), key, data)
-
-		assert.NoError(t, err)
-		mockClient.AssertExpectations(t)
-	})
-
 	t.Run("delete success", func(t *testing.T) {
 		key := "test-key"
 
@@ -149,32 +121,6 @@ func TestR2Repository_ErrorConditions(t *testing.T) {
 	mockClient := new(MockS3Client)
 	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
 
-	t.Run("get error", func(t *testing.T) {
-		key := "test-key"
-		mockErr := errors.New("s3 error")
-
-		mockClient.On("GetObject", mock.Anything, mock.Anything, mock.Anything).Return((*s3.GetObjectOutput)(nil), mockErr)
-
-		result, err := repo.Get(context.Background(), key)
-
-		assert.Error(t, err)
-		assert.Nil(t, result)
-		mockClient.AssertExpectations(t)
-	})
-
-	t.Run("put error", func(t *testing.T) {
-		key := "test-key"
-		data := []byte("test data")
-		mockErr := errors.New("s3 error")
-
-		mockClient.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, mockErr)
-
-		err := repo.Put(context.Background(), key, data)
-
-		assert.Error(t, err)
-		mockClient.AssertExpectations(t)
-	})
-
 	t.Run("delete error", func(t *testing.T) {
 		key := "test-key"
 		mockErr := errors.New("s3 error")
@@ -230,52 +176,6 @@ func TestR2Repository_ErrorConditions(t *testing.T) {
 }
 
 func TestR2Repository_EdgeCases(t *testing.T) {
-	t.Run("empty key", func(t *testing.T) {
-		mockClient := new(MockS3Client)
-		repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
-		key := ""
-		expectedData := []byte("test data")
-		body := io.NopCloser(bytes.NewReader(expectedData))
-
-		mockClient.On("GetObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
-			Body: body,
-		}, nil)
-
-		result, err := repo.Get(context.Background(), key)
-
-		assert.NoError(t, err)
-		assert.Equal(t, expectedData, result)
-		mockClient.AssertExpectations(t)
-	})
-
-	t.Run("empty data", func(t *testing.T) {
-		mockClient := new(MockS3Client)
-		repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
-		key := "test-key"
-		data := []byte{}
-
-		mockClient.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
-
-		err := repo.Put(context.Background(), key, data)
-
-		assert.NoError(t, err)
-		mockClient.AssertExpectations(t)
-	})
-
-	t.Run("nil data", func(t *testing.T) {
-		mockClient := new(MockS3Client)
-		repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
-		key := "test-key"
-		data := []byte(nil)
-
-		mockClient.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
-
-		err := repo.Put(context.Background(), key, data)
-
-		assert.NoError(t, err)
-		mockClient.AssertExpectations(t)
-	})
-
 	t.Run("empty prefix", func(t *testing.T) {
 		mockClient := new(MockS3Client)
 		repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
@@ -334,7 +234,7 @@ func TestR2Repository_NoRetryOnPermanent(t *testing.T) {
 	mockClient.On("GetObject", mock.Anything, mock.Anything, mock.Anything).
 		Return((*s3.GetObjectOutput)(nil), permanent).Once()
 
-	_, err := repo.Get(context.Background(), "k")
+	_, err := repo.GetStream(context.Background(), "k")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

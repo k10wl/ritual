@@ -42,7 +42,7 @@ func NewMtimeScanner(root string, since time.Time, previous map[string]domain.Fi
 
 // Scan walks the directory and returns a map of relative paths to FileEntry.
 // Files modified after since are re-hashed. Others carry forward from previous map.
-func (s *MtimeScanner) Scan(ctx context.Context) (map[string]domain.FileEntry, error) {
+func (s *MtimeScanner) Scan(ctx context.Context, targets []string) (map[string]domain.FileEntry, error) {
 	if ctx == nil {
 		return nil, errors.New("context cannot be nil")
 	}
@@ -69,6 +69,10 @@ func (s *MtimeScanner) Scan(ctx context.Context) (map[string]domain.FileEntry, e
 			return fmt.Errorf("computing relative path for %s: %w", path, relErr)
 		}
 		key := filepath.ToSlash(rel)
+
+		if !matchesAnyGlob(targets, key) {
+			return nil
+		}
 
 		info, infoErr := d.Info()
 		if infoErr != nil {

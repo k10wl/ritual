@@ -46,42 +46,6 @@ func (f *FSRepository) String() string {
 	return "fs::" + f.name
 }
 
-// Rename moves a key to a new location atomically when supported by the
-// underlying filesystem. Falls back to copy + delete on cross-device errors.
-func (f *FSRepository) Rename(_ context.Context, sourceKey string, destKey string) error {
-	sourceKey = filepath.FromSlash(sourceKey)
-	destKey = filepath.FromSlash(destKey)
-	if _, err := f.root.Stat(sourceKey); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("source key not found: %s", sourceKey)
-		}
-		return fmt.Errorf("failed to stat source %s: %w", sourceKey, err)
-	}
-	destDir := filepath.Dir(destKey)
-	if destDir != "." {
-		if err := f.root.MkdirAll(destDir, 0o755); err != nil {
-			return fmt.Errorf("failed to create destination directory %s: %w", destDir, err)
-		}
-	}
-	if err := f.root.Rename(sourceKey, destKey); err != nil {
-		return fmt.Errorf("failed to rename %s to %s: %w", sourceKey, destKey, err)
-	}
-	return nil
-}
-
-// Get retrieves data by key from filesystem
-func (f *FSRepository) Get(_ context.Context, key string) ([]byte, error) {
-	key = filepath.FromSlash(key)
-	data, err := f.root.ReadFile(key)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("key not found: %s", key)
-		}
-		return nil, fmt.Errorf("failed to read file %s: %w", key, err)
-	}
-	return data, nil
-}
-
 // GetStream opens key for streaming read. Caller closes the returned ReadCloser.
 func (f *FSRepository) GetStream(_ context.Context, key string) (io.ReadCloser, error) {
 	key = filepath.FromSlash(key)
@@ -132,21 +96,6 @@ func (f *FSRepository) Exists(_ context.Context, key string) (bool, error) {
 		return false, fmt.Errorf("failed to stat %s: %w", key, err)
 	}
 	return true, nil
-}
-
-// Put stores data with the given key to filesystem
-func (f *FSRepository) Put(_ context.Context, key string, data []byte) error {
-	key = filepath.FromSlash(key)
-	dir := filepath.Dir(key)
-	if dir != "." {
-		if err := f.root.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
-		}
-	}
-	if err := f.root.WriteFile(key, data, 0o644); err != nil {
-		return fmt.Errorf("failed to write file %s: %w", key, err)
-	}
-	return nil
 }
 
 // Delete removes data by key from filesystem

@@ -90,21 +90,6 @@ func (c *CounterStorage) completeOp(err error) {
 	}
 }
 
-// Get is kept for the deprecated V1 surface and forwards without counting.
-func (c *CounterStorage) Get(ctx context.Context, key string) ([]byte, error) {
-	return c.inner.Get(ctx, key)
-}
-
-// Put is kept for the deprecated V1 surface and forwards without counting.
-func (c *CounterStorage) Put(ctx context.Context, key string, data []byte) error {
-	return c.inner.Put(ctx, key, data)
-}
-
-// Rename is kept for the deprecated V1 surface and forwards without counting.
-func (c *CounterStorage) Rename(ctx context.Context, src, dst string) error {
-	return c.inner.Rename(ctx, src, dst)
-}
-
 // Delete forwards unchanged.
 func (c *CounterStorage) Delete(ctx context.Context, key string) error {
 	return c.inner.Delete(ctx, key)

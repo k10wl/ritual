@@ -5,13 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"time"
 
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
-
-	"github.com/bmatcuk/doublestar/v4"
 )
 
 // Committer snapshots a workdir into a content-addressed
@@ -200,13 +197,8 @@ func (c *Committer) readRefAt(ctx context.Context, key string) (*domain.Ref, err
 		return nil, err
 	}
 	defer rc.Close()
-	raw, err := io.ReadAll(rc)
-	if err != nil {
-		return nil, err
-	}
 	ref := &domain.Ref{}
-	err = json.Unmarshal(raw, ref)
-	if err != nil {
+	if err := json.NewDecoder(rc).Decode(ref); err != nil {
 		return nil, err
 	}
 	return ref, nil
@@ -216,20 +208,9 @@ func (c *Committer) readRefAt(ctx context.Context, key string) (*domain.Ref, err
 // the scanner owns recursion and per-file xxhashing — then filters the
 // resulting map by any Targets glob via doublestar.Match.
 func (c *Committer) walkMatches(ctx context.Context, targets []string) (map[string]domain.FileEntry, error) {
-	scanned, err := c.scanner.Scan(ctx)
+	matched, err := c.scanner.Scan(ctx, targets)
 	if err != nil {
 		return nil, fmt.Errorf("refs.Committer.Commit: scan workdir: %w", err)
-	}
-	matched := make(map[string]domain.FileEntry, len(scanned))
-	for path, entry := range scanned {
-		hit, err := anyGlobMatches(targets, path)
-		if err != nil {
-			return nil, err
-		}
-		if !hit {
-			continue
-		}
-		matched[path] = entry
 	}
 	return matched, nil
 }
@@ -292,13 +273,8 @@ func (c *Committer) resolveParent(ctx context.Context, opts ports.CommitOpts) (d
 		return "", fmt.Errorf("refs.Committer.Commit: load amended draft %s: %w", opts.Amend, err)
 	}
 	defer rc.Close()
-	raw, err := io.ReadAll(rc)
-	if err != nil {
-		return "", fmt.Errorf("refs.Committer.Commit: read amended draft %s: %w", opts.Amend, err)
-	}
 	old := &domain.Ref{}
-	err = json.Unmarshal(raw, old)
-	if err != nil {
+	if err := json.NewDecoder(rc).Decode(old); err != nil {
 		return "", fmt.Errorf("refs.Committer.Commit: parse amended draft %s: %w", opts.Amend, err)
 	}
 	return old.Parent, nil
@@ -324,19 +300,6 @@ func (c *Committer) writeRef(ctx context.Context, ref *domain.Ref) error {
 		return fmt.Errorf("refs.Committer.Commit: write ref %s: %w", ref.Timestamp, err)
 	}
 	return nil
-}
-
-func anyGlobMatches(globs []string, key string) (bool, error) {
-	for _, g := range globs {
-		ok, err := doublestar.Match(g, key)
-		if err != nil {
-			return false, fmt.Errorf("refs.Committer.Commit: invalid glob %q: %w", g, err)
-		}
-		if ok {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 var _ ports.Committer = (*Committer)(nil)

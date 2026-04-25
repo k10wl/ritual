@@ -5,39 +5,6 @@ package observed
 
 import "fmt"
 
-// StorageGetInfo is published by observedStorage.Get after the inner adapter
-// returns. Bytes is len(data) on success, 0 on error. Err is nil on success.
-type StorageGetInfo struct {
-	Store      string
-	Key        string
-	Bytes      int
-	DurationMs int64
-	Err        error
-}
-
-func (s StorageGetInfo) String() string {
-	if s.Err != nil {
-		return fmt.Sprintf("storage.get store=%s key=%s err=%v dur=%dms", s.Store, s.Key, s.Err, s.DurationMs)
-	}
-	return fmt.Sprintf("storage.get store=%s key=%s bytes=%d dur=%dms", s.Store, s.Key, s.Bytes, s.DurationMs)
-}
-
-// StoragePutInfo is published by observedStorage.Put.
-type StoragePutInfo struct {
-	Store      string
-	Key        string
-	Bytes      int
-	DurationMs int64
-	Err        error
-}
-
-func (s StoragePutInfo) String() string {
-	if s.Err != nil {
-		return fmt.Sprintf("storage.put store=%s key=%s err=%v dur=%dms", s.Store, s.Key, s.Err, s.DurationMs)
-	}
-	return fmt.Sprintf("storage.put store=%s key=%s bytes=%d dur=%dms", s.Store, s.Key, s.Bytes, s.DurationMs)
-}
-
 // StorageCopyInfo is published by observedStorage.Copy.
 type StorageCopyInfo struct {
 	Store      string
@@ -52,22 +19,6 @@ func (s StorageCopyInfo) String() string {
 		return fmt.Sprintf("storage.copy store=%s %s→%s err=%v dur=%dms", s.Store, s.SrcKey, s.DstKey, s.Err, s.DurationMs)
 	}
 	return fmt.Sprintf("storage.copy store=%s %s→%s dur=%dms", s.Store, s.SrcKey, s.DstKey, s.DurationMs)
-}
-
-// StorageRenameInfo is published by observedStorage.Rename.
-type StorageRenameInfo struct {
-	Store      string
-	SrcKey     string
-	DstKey     string
-	DurationMs int64
-	Err        error
-}
-
-func (s StorageRenameInfo) String() string {
-	if s.Err != nil {
-		return fmt.Sprintf("storage.rename store=%s %s→%s err=%v dur=%dms", s.Store, s.SrcKey, s.DstKey, s.Err, s.DurationMs)
-	}
-	return fmt.Sprintf("storage.rename store=%s %s→%s dur=%dms", s.Store, s.SrcKey, s.DstKey, s.DurationMs)
 }
 
 // StorageDeleteInfo is published by observedStorage.Delete (single tree-delete).

@@ -120,20 +120,6 @@ func (r *R2Repository) WithPrefix(prefix string) *R2Repository {
 	return r
 }
 
-// Get reads an object from R2 and returns its bytes. Retries handled by SDK.
-func (r *R2Repository) Get(ctx context.Context, key string) ([]byte, error) {
-	key = filepath.ToSlash(key)
-	result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(r.bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get object %s: %w", key, err)
-	}
-	defer func() { _ = result.Body.Close() }()
-	return io.ReadAll(result.Body)
-}
-
 // GetStream retrieves object body by key as a streaming reader. Caller closes
 // the returned ReadCloser. Retries handled by SDK.
 func (r *R2Repository) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
