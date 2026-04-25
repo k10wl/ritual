@@ -91,13 +91,6 @@ type Collector interface {
 	Collect(ctx context.Context) error
 }
 
-// ValidatorService defines the validation interface
-// Validator ensures instance integrity and validates data consistency
-type ValidatorService interface {
-	// CheckLock validates lock mechanism compliance
-	CheckLock(local *domain.Manifest, remote *domain.Manifest) error
-}
-
 // CmdBuilder lazily creates the *exec.Cmd for the server process.
 // Caller provides IO interfaces for stdin/stdout wiring. Builder assigns
 // cmd.Stdin = stdin, cmd.Stdout = stdout, cmd.Stderr = stdout (merged).
