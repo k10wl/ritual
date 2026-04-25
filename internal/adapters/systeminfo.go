@@ -1,7 +1,7 @@
 package adapters
 
 import (
-	"ritual/internal/core/services"
+	"ritual/internal/core/checks"
 
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
@@ -12,8 +12,8 @@ import (
 type SystemInfo struct{}
 
 var (
-	_ services.SystemInfoProvider = (*SystemInfo)(nil)
-	_ services.DiskInfoProvider   = (*SystemInfo)(nil)
+	_ checks.SystemInfoProvider = (*SystemInfo)(nil)
+	_ checks.DiskInfoProvider   = (*SystemInfo)(nil)
 )
 
 // NewSystemInfo returns a SystemInfo adapter.

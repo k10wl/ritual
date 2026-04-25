@@ -1,4 +1,4 @@
-package services
+package checks
 
 // Provider interfaces consumed by the pre-flight checks. Implementations
 // live in the adapters package; tests use small fakes.

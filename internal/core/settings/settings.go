@@ -1,4 +1,6 @@
-package services
+// Package settings hosts the interactive settings prompt flow that
+// loads, validates, and persists domain.Settings via a ports.Prompter.
+package settings
 
 import (
 	"context"

@@ -52,11 +52,11 @@ import (
 	"ritual/internal/core/lock"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/refs"
-	"ritual/internal/core/services"
+	"ritual/internal/core/retention"
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/retaining"
 	"ritual/internal/core/stages/running"
-	"ritual/internal/subsystems/retention"
+	subretention "ritual/internal/subsystems/retention"
 	"strings"
 	"sync"
 	"testing"
@@ -894,11 +894,11 @@ func TestIntegration_Prune_BothInstancesExecute(t *testing.T) {
 	// instance, swapped slots, missing onOK) manifests as missing bus events.
 	keepAll := domain.RetentionRules{KeepLast: 999}
 	r.localRetentions = []retaining.Job{
-		retaining.NewRetentionRefsJob("refs-local", services.NewRefsRetention(r.local, keepAll), r.local),
+		retaining.NewRetentionRefsJob("refs-local", retention.NewRefsRetention(r.local, keepAll), r.local),
 		retaining.NewGCRefsJob("gc-refs-local", refs.NewCollector(r.local)),
 	}
 	r.remoteRetentions = []retaining.Job{
-		retaining.NewRetentionRefsJob("refs-remote", services.NewRefsRetention(r.local, keepAll), r.local),
+		retaining.NewRetentionRefsJob("refs-remote", retention.NewRefsRetention(r.local, keepAll), r.local),
 		retaining.NewGCRefsJob("gc-refs-remote", refs.NewCollector(r.local)),
 	}
 
@@ -940,7 +940,7 @@ func TestIntegration_Retention_BuildWiresLocalAndRemoteJobs_BothSidesEmitSplitEv
 	}).Save(),
 		"settings.Save must succeed before retention.Build — Build reads rules via domain.LoadSettings")
 
-	localJobs, remoteJobs, err := retention.Build(r.local, r.local, r.bus)
+	localJobs, remoteJobs, err := subretention.Build(r.local, r.local, r.bus)
 	require.NoError(t, err,
 		"retention.Build must wire jobs from real storage + bus without error — composition root contract")
 	require.Len(t, localJobs, 3,

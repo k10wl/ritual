@@ -5,18 +5,18 @@
 package conditions
 
 import (
+	"ritual/internal/adapters/observed"
 	"ritual/internal/config"
 	"ritual/internal/core/checks"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
-	"ritual/internal/core/services"
 )
 
 // HardwareInfoProvider aggregates the hardware providers needed by checks.
 // Injected so tests can pass fakes and the package compiles on any OS.
 type HardwareInfoProvider interface {
-	services.SystemInfoProvider
-	services.DiskInfoProvider
+	checks.SystemInfoProvider
+	checks.DiskInfoProvider
 }
 
 // Build returns the ordered, observed pre-flight check slice. Threshold
@@ -24,12 +24,12 @@ type HardwareInfoProvider interface {
 func Build(
 	s *domain.Settings,
 	hw HardwareInfoProvider,
-	java services.JavaVersionProvider,
+	java checks.JavaVersionProvider,
 	bus ports.EventBus,
 ) []checks.Check {
 	return []checks.Check{
-		checks.Observed("ram", checks.RAM(s.MinRAMMB, hw), bus),
-		checks.Observed("disk", checks.Disk(s.MinDiskMB, config.RootPath, hw), bus),
-		checks.Observed("java", checks.Java(s.MinJavaVersion, java), bus),
+		observed.NewCheck("ram", checks.RAM(s.MinRAMMB, hw), bus),
+		observed.NewCheck("disk", checks.Disk(s.MinDiskMB, config.RootPath, hw), bus),
+		observed.NewCheck("java", checks.Java(s.MinJavaVersion, java), bus),
 	}
 }

@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 
-	"ritual/internal/core/services"
 )
 
 // Sentinel errors returned (wrapped with details) by the built-in checks.
@@ -31,7 +30,7 @@ type Check func(ctx context.Context) error
 
 // RAM returns a Check that fails when the host has less free RAM than min
 // megabytes.
-func RAM(min int, hw services.SystemInfoProvider) Check {
+func RAM(min int, hw SystemInfoProvider) Check {
 	return func(_ context.Context) error {
 		free, err := hw.GetFreeRAMMB()
 		if err != nil {
@@ -46,7 +45,7 @@ func RAM(min int, hw services.SystemInfoProvider) Check {
 
 // Disk returns a Check that fails when path's volume has less free space
 // than min megabytes.
-func Disk(min int, path string, hw services.DiskInfoProvider) Check {
+func Disk(min int, path string, hw DiskInfoProvider) Check {
 	return func(_ context.Context) error {
 		free, err := hw.GetFreeDiskMB(path)
 		if err != nil {
@@ -61,7 +60,7 @@ func Disk(min int, path string, hw services.DiskInfoProvider) Check {
 
 // Java returns a Check that fails when the installed Java major version is
 // below min.
-func Java(min int, p services.JavaVersionProvider) Check {
+func Java(min int, p JavaVersionProvider) Check {
 	return func(_ context.Context) error {
 		version, err := p.GetJavaVersion()
 		if err != nil {

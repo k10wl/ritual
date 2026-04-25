@@ -1,4 +1,7 @@
-package services
+// Package netinfo is the driven adapter that surfaces host network info
+// (interface enumeration, dial-targets) to the GUI. Application drives;
+// the package only reads the OS.
+package netinfo
 
 import (
 	"fmt"

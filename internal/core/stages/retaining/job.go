@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"ritual/internal/core/ports"
-	"ritual/internal/core/services"
+	"ritual/internal/core/retention"
 )
 
 // Kind classifies a Job for typed event emission. Retention selects and
@@ -32,7 +32,7 @@ type Job struct {
 // NewRetentionRefsJob assembles the refs-side retention cycle (select +
 // batch-delete) for one storage. Label is set by the caller to encode side
 // (e.g. "refs-local").
-func NewRetentionRefsJob(label string, ret services.Retention, storage ports.StorageRepository) Job {
+func NewRetentionRefsJob(label string, ret retention.Retention, storage ports.StorageRepository) Job {
 	return Job{
 		Kind:  KindRetention,
 		Label: label,
@@ -70,7 +70,7 @@ func NewGCRefsJob(label string, collector ports.Collector) Job {
 
 // NewLogsJob assembles the logs-side retention cycle. No GC counterpart —
 // logs have no content-addressed blob store behind them.
-func NewLogsJob(label string, ret services.Retention, storage ports.StorageRepository) Job {
+func NewLogsJob(label string, ret retention.Retention, storage ports.StorageRepository) Job {
 	return Job{
 		Kind:  KindRetention,
 		Label: label,

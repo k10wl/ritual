@@ -29,8 +29,9 @@ import (
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/subsystems/retention"
 	"strings"
-	guisvc "ritual/internal/gui/services"
+	"ritual/internal/gui/control"
 	"ritual/internal/gui/logsink"
+	"ritual/internal/gui/netinfo"
 	"ritual/internal/gui/projection"
 	"sync/atomic"
 	"time"
@@ -50,13 +51,13 @@ func main() {
 		log.Fatalf("build runtime: %v", err)
 	}
 
-	control := guisvc.NewControlService(runtime.bus, runtime.projection, nil)
+	controlSvc := control.NewControlService(runtime.bus, runtime.projection, nil)
 
 	wailsApp := application.New(application.Options{
 		Name:        config.ProductName,
 		Description: "Ritual — Minecraft server manager (POC)",
 		Services: []application.Service{
-			application.NewService(control),
+			application.NewService(controlSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(ritual.GUIAssets),
@@ -101,7 +102,7 @@ func main() {
 
 	runtime.viewEmitter.bind(wailsApp)
 	runtime.logEmitter.bind(logsWindow)
-	control.SetLogsWindow(&wailsWindowControl{win: logsWindow})
+	controlSvc.SetLogsWindow(&wailsWindowControl{win: logsWindow})
 
 	mainWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		if shuttingDown.Load() {
@@ -261,7 +262,7 @@ func buildRuntime() (*guiRuntime, error) {
 	viewEmitter := newWailsViewEmitter()
 	logEmitter := &wailsLogEmitter{}
 
-	addresses := guisvc.NewAddressProvider(settings.Port, guisvc.NewSysInterfaceLister())
+	addresses := netinfo.NewAddressProvider(settings.Port, netinfo.NewSysInterfaceLister())
 	proj := projection.New(bus, viewEmitter, addresses)
 	sink := logsink.New(bus, logEmitter)
 

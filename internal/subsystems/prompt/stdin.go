@@ -1,6 +1,6 @@
 // Package prompt provides a stdin-backed implementation of
-// ports.Prompter for use by services.PromptSettings. Kept out of
-// cmd/cli so the composition root has one less concrete type.
+// ports.Prompter for use by services.PromptSettings. Kept out of the
+// composition root so it holds one less concrete type.
 package prompt
 
 import (

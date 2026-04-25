@@ -1,10 +1,10 @@
-package services_test
+package observed_test
 
 import (
 	"context"
 	"errors"
+	"ritual/internal/adapters/observed"
 	"ritual/internal/core/ports"
-	"ritual/internal/core/services"
 	"sync"
 	"testing"
 	"time"
@@ -42,7 +42,7 @@ func TestObservedRetention_PublishesMarkedKeysPerSelect(t *testing.T) {
 	})
 	bus := &capturingBus{}
 
-	obs := services.NewObservedRetention(inner, bus, "refs-local")
+	obs := observed.NewRetention(inner, bus, "refs-local")
 	got, err := obs.Select(ctx)
 
 	if err != nil {
@@ -56,7 +56,7 @@ func TestObservedRetention_PublishesMarkedKeysPerSelect(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("one event per Select call; got %d", len(events))
 	}
-	evt, ok := events[0].(services.RetentionSelectInfo)
+	evt, ok := events[0].(observed.RetentionSelectInfo)
 	if !ok {
 		t.Fatalf("event must be RetentionSelectInfo; got %T", events[0])
 	}
@@ -76,7 +76,7 @@ func TestObservedRetention_OnInnerError_StillPublishesEvent(t *testing.T) {
 	inner := retentionFunc(func(_ context.Context) ([]string, error) { return nil, boom })
 	bus := &capturingBus{}
 
-	obs := services.NewObservedRetention(inner, bus, "refs-remote")
+	obs := observed.NewRetention(inner, bus, "refs-remote")
 	_, err := obs.Select(ctx)
 
 	if !errors.Is(err, boom) {
@@ -93,7 +93,7 @@ func TestObservedRetention_NilBus_NoPanic(t *testing.T) {
 
 	inner := retentionFunc(func(_ context.Context) ([]string, error) { return nil, nil })
 
-	obs := services.NewObservedRetention(inner, nil, "refs-local")
+	obs := observed.NewRetention(inner, nil, "refs-local")
 	_, err := obs.Select(ctx)
 
 	if err != nil {

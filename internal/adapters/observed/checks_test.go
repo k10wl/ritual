@@ -1,4 +1,4 @@
-package checks_test
+package observed_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"ritual/internal/adapters"
+	"ritual/internal/adapters/observed"
 	"ritual/internal/core/checks"
 	"ritual/internal/core/ports"
 )
@@ -38,7 +39,7 @@ func errCheck(err error) checks.Check {
 func TestObserved_PublishesStartedThenPassedWhenWrappedCheckSucceeds(t *testing.T) {
 	bus := adapters.NewEventBus(16)
 	drain := collectEvents(bus)
-	wrapped := checks.Observed("ram", okCheck(), bus)
+	wrapped := observed.NewCheck("ram", okCheck(), bus)
 
 	require.NoError(t, wrapped(t.Context()),
 		"Observed must propagate the underlying nil result so the stage sees a passing check")
@@ -46,9 +47,9 @@ func TestObserved_PublishesStartedThenPassedWhenWrappedCheckSucceeds(t *testing.
 
 	require.Len(t, events, 2,
 		"Observed must publish exactly Started and Passed when the wrapped check succeeds — no extra noise")
-	_, ok := events[0].(checks.CheckStarted)
+	_, ok := events[0].(observed.CheckStarted)
 	assert.True(t, ok, "first event must be CheckStarted so subscribers can pair it with the terminal event")
-	passed, ok := events[1].(checks.CheckPassed)
+	passed, ok := events[1].(observed.CheckPassed)
 	require.True(t, ok, "second event must be CheckPassed so subscribers can mark the check green")
 	assert.Equal(t, "ram", passed.Name,
 		"CheckPassed must carry the configured name so logs and GUI surfaces can identify which check passed")
@@ -58,7 +59,7 @@ func TestObserved_PublishesStartedThenFailedAndPropagatesError(t *testing.T) {
 	bus := adapters.NewEventBus(16)
 	drain := collectEvents(bus)
 	underlying := errors.New("perfmon unavailable")
-	wrapped := checks.Observed("ram", errCheck(underlying), bus)
+	wrapped := observed.NewCheck("ram", errCheck(underlying), bus)
 
 	err := wrapped(t.Context())
 	events := drain()
@@ -68,7 +69,7 @@ func TestObserved_PublishesStartedThenFailedAndPropagatesError(t *testing.T) {
 		"Observed must wrap with %%w so callers can still match the underlying sentinel")
 	require.Len(t, events, 2,
 		"Observed must publish exactly Started and Failed when the wrapped check errors")
-	failed, ok := events[1].(checks.CheckFailed)
+	failed, ok := events[1].(observed.CheckFailed)
 	require.True(t, ok, "terminal event for a failing check must be CheckFailed so subscribers can mark it red")
 	assert.Equal(t, "ram", failed.Name,
 		"CheckFailed must carry the configured name so failures are self-identifying in logs and the GUI")
@@ -79,7 +80,7 @@ func TestObserved_PublishesStartedThenFailedAndPropagatesError(t *testing.T) {
 func TestObserved_WrapsErrorWithCheckNameSoFailuresAreSelfIdentifying(t *testing.T) {
 	bus := adapters.NewEventBus(16)
 	drain := collectEvents(bus)
-	wrapped := checks.Observed("disk", errCheck(errors.New("io timeout")), bus)
+	wrapped := observed.NewCheck("disk", errCheck(errors.New("io timeout")), bus)
 
 	err := wrapped(t.Context())
 	_ = drain()

@@ -7,11 +7,12 @@ package retention
 
 import (
 	"fmt"
+	"ritual/internal/adapters/observed"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/refs"
-	"ritual/internal/core/services"
+	coreret "ritual/internal/core/retention"
 	"ritual/internal/core/stages/retaining"
 )
 
@@ -42,7 +43,7 @@ func Build(
 	local = []retaining.Job{
 		retaining.NewRetentionRefsJob(
 			"refs-local",
-			services.NewObservedRetention(services.NewRefsRetention(localStorage, localRules), bus, "refs-local"),
+			observed.NewRetention(coreret.NewRefsRetention(localStorage, localRules), bus, "refs-local"),
 			localStorage,
 		),
 		retaining.NewGCRefsJob(
@@ -51,14 +52,14 @@ func Build(
 		),
 		retaining.NewLogsJob(
 			"logs-local",
-			services.NewObservedRetention(services.NewLogsRetention(localStorage, logRules), bus, "logs-local"),
+			observed.NewRetention(coreret.NewLogsRetention(localStorage, logRules), bus, "logs-local"),
 			localStorage,
 		),
 	}
 	remote = []retaining.Job{
 		retaining.NewRetentionRefsJob(
 			"refs-remote",
-			services.NewObservedRetention(services.NewRefsRetention(remoteStorage, remoteRules), bus, "refs-remote"),
+			observed.NewRetention(coreret.NewRefsRetention(remoteStorage, remoteRules), bus, "refs-remote"),
 			remoteStorage,
 		),
 		retaining.NewGCRefsJob(

@@ -1,8 +1,7 @@
-// Package services exposes Wails-bound service types for the GUI frontend.
-// Composition root wires the bus, projection snapshot source, and logs window
-// handle; services are pure method surfaces that translate JS calls into
-// bus events or snapshot lookups. No business logic.
-package services
+// Package control is the driving adapter for the GUI: Wails-bound method
+// surfaces that translate frontend (JS) calls into bus commands or
+// snapshot lookups. No business logic.
+package control
 
 import (
 	"errors"

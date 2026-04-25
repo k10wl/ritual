@@ -1,9 +1,10 @@
-package checks
+package observed
 
 import (
 	"context"
 	"fmt"
 
+	"ritual/internal/core/checks"
 	"ritual/internal/core/ports"
 )
 
@@ -30,22 +31,23 @@ func (e CheckFailed) String() string {
 	return "check failed: " + e.Name + ": " + e.Err.Error()
 }
 
-// Observed wraps a Check so that its lifecycle is published on the bus and
-// any returned error is prefixed with the check's name. The wrapped check
-// stays bus-free and unit-testable; observability is a decorator concern.
-func Observed(name string, c Check, bus ports.EventBus) Check {
+// NewCheck wraps a checks.Check so that its lifecycle is published on the
+// bus and any returned error is prefixed with the check's name. The wrapped
+// check stays bus-free and unit-testable; observability is a decorator
+// concern that lives outside the domain.
+func NewCheck(name string, c checks.Check, bus ports.EventBus) checks.Check {
 	return func(ctx context.Context) error {
-		publish(bus, CheckStarted{Name: name})
+		publishCheck(bus, CheckStarted{Name: name})
 		if err := c(ctx); err != nil {
-			publish(bus, CheckFailed{Name: name, Err: err})
+			publishCheck(bus, CheckFailed{Name: name, Err: err})
 			return fmt.Errorf("check %s: %w", name, err)
 		}
-		publish(bus, CheckPassed{Name: name})
+		publishCheck(bus, CheckPassed{Name: name})
 		return nil
 	}
 }
 
-func publish(bus ports.EventBus, e ports.Event) {
+func publishCheck(bus ports.EventBus, e ports.Event) {
 	if bus != nil {
 		bus.Publish(e)
 	}

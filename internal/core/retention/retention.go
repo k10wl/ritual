@@ -1,7 +1,7 @@
-// Package services hosts the retention engine and its keyspace-specific
+// Package retention is the retention engine and its keyspace-specific
 // concretes. Retention is pure policy: given keys, select which to drop.
 // Deletion is caller-side. See §Retention and GC in the v2.1 design.
-package services
+package retention
 
 import "context"
 

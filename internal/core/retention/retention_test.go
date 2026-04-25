@@ -1,11 +1,11 @@
-package services_test
+package retention_test
 
 import (
 	"context"
 	"errors"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports/mocks"
-	"ritual/internal/core/services"
+	"ritual/internal/core/retention"
 	"testing"
 	"time"
 )
@@ -26,7 +26,7 @@ func TestRefsRetention_Select_ListsRefsAndReturnsMarkedDrops(t *testing.T) {
 		}, nil
 	}
 
-	r := services.NewRefsRetention(storage, domain.RetentionRules{KeepLast: 2})
+	r := retention.NewRefsRetention(storage, domain.RetentionRules{KeepLast: 2})
 	got, err := r.Select(ctx)
 
 	if err != nil {
@@ -47,7 +47,7 @@ func TestRefsRetention_Select_ListError_Propagates(t *testing.T) {
 		return nil, boom
 	}
 
-	r := services.NewRefsRetention(storage, domain.RetentionRules{KeepLast: 2})
+	r := retention.NewRefsRetention(storage, domain.RetentionRules{KeepLast: 2})
 	_, err := r.Select(ctx)
 
 	if !errors.Is(err, boom) {
@@ -62,7 +62,7 @@ func TestRefsRetention_Select_EmptyList_NoDrops(t *testing.T) {
 	storage := &mocks.MockStorageRepository{}
 	storage.ListFunc = func(_ context.Context, _ string) ([]string, error) { return nil, nil }
 
-	r := services.NewRefsRetention(storage, domain.RetentionRules{KeepLast: 2})
+	r := retention.NewRefsRetention(storage, domain.RetentionRules{KeepLast: 2})
 	got, err := r.Select(ctx)
 
 	if err != nil {
@@ -90,7 +90,7 @@ func TestLogsRetention_Select_ListsLogsAndTrimsByKeepLast(t *testing.T) {
 		}, nil
 	}
 
-	r := services.NewLogsRetention(storage, domain.RetentionRules{KeepLast: 2})
+	r := retention.NewLogsRetention(storage, domain.RetentionRules{KeepLast: 2})
 	got, err := r.Select(ctx)
 
 	if err != nil {
@@ -113,7 +113,7 @@ func TestLogsRetention_Select_UnknownFile_IsPreserved(t *testing.T) {
 		}, nil
 	}
 
-	r := services.NewLogsRetention(storage, domain.RetentionRules{KeepLast: 1})
+	r := retention.NewLogsRetention(storage, domain.RetentionRules{KeepLast: 1})
 	got, err := r.Select(ctx)
 
 	if err != nil {

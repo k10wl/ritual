@@ -1,6 +1,5 @@
 // Package logging attaches a stdout + optional-file subscriber to the
-// event bus. Replaces the ad-hoc consumer goroutine that used to live
-// in cmd/cli.
+// event bus.
 package logging
 
 import (
