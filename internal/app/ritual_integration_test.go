@@ -632,28 +632,6 @@ func stageSequence(events []ports.Event) []string {
 	return seq
 }
 
-func countRemoteGetsBetween(events []ports.Event, operation string) int {
-	inWindow := false
-	count := 0
-	for _, e := range events {
-		switch v := e.(type) {
-		case stagenames.StartInfo:
-			if v.Operation == operation {
-				inWindow = true
-			}
-		case stagenames.FinishInfo:
-			if v.Operation == operation {
-				inWindow = false
-			}
-		case observed.StorageGetInfo:
-			if inWindow && v.Store == "fs::remote" {
-				count++
-			}
-		}
-	}
-	return count
-}
-
 // serverEventTypeSequence picks the ordered lifecycle events the GUI
 // subscribes to. Skips intermediate stdout/stop-requested noise; asserts
 // only the transitions that drive UI state.
@@ -1113,3 +1091,147 @@ func (b *liveSyncCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout 
 	return cmd, nil
 }
 
+// ---------- failure-injection storage decorator ----------
+
+// refPutFailureInjector wraps a StorageRepository and fails the Nth PutStream
+// targeting any key under "refs/". Blob writes (objects/) and read paths pass
+// through. Counter is shared across the seed phase and the session phase, so
+// callers pick failAt with the seed's ref-puts in mind: failAt=2 fails the
+// session push when seedRemoteRef has already consumed the 1st ref-put.
+type refPutFailureInjector struct {
+	ports.StorageRepository
+	mu     sync.Mutex
+	seen   int
+	failAt int
+}
+
+func newRefPutFailureInjector(inner ports.StorageRepository, failAt int) *refPutFailureInjector {
+	return &refPutFailureInjector{StorageRepository: inner, failAt: failAt}
+}
+
+func (f *refPutFailureInjector) PutStream(ctx context.Context, key string, body io.Reader) error {
+	if strings.HasPrefix(key, "refs/") {
+		f.mu.Lock()
+		f.seen++
+		seen := f.seen
+		f.mu.Unlock()
+		if seen == f.failAt {
+			return errors.New("simulated remote refs/ PutStream failure")
+		}
+	}
+	return f.StorageRepository.PutStream(ctx, key, body)
+}
+
+// ---------- local ref seeding ----------
+
+// seedLocalRef commits a ref into r.local from the current contents of the
+// local worlds dir. Mirror of seedRemoteRef but on the local side: tests use
+// it to fabricate a "prior session's local HEAD" without going through the
+// running stage.
+func seedLocalRef(t *testing.T, r *testRitual) {
+	t.Helper()
+	worldsPath := filepath.Join(r.localDir, config.WorldsDir)
+	require.NoError(t, os.MkdirAll(worldsPath, 0o755), "create local worlds dir before seeding ref")
+	worldsRoot, err := os.OpenRoot(worldsPath)
+	require.NoError(t, err, "open local worlds root for seed commit")
+	t.Cleanup(func() { worldsRoot.Close() })
+	workdirStorage, err := adapters.NewFSRepository(worldsRoot, "seed-local-workdir")
+	require.NoError(t, err, "seed local workdir storage")
+	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
+	committer := refs.NewCommitter(scanner, workdirStorage, r.local, adapters.NewSerialRunner())
+	_, err = committer.Commit(r.ctx, ports.CommitOpts{Targets: []string{"**"}})
+	require.NoError(t, err, "seed local ref commit")
+}
+
+// ---------- user stories: cross-host coordination ----------
+
+func TestIntegration_TeammateAlreadyPlaying_MyClientWaitsForLeaseRelease(t *testing.T) {
+	teammate := newRitual(t)
+	seedRemoteWorld(t, teammate, file("world/level.dat", []byte("shared")))
+
+	teammateServer := teammate.startRitual(t)
+	teammateServer.waitReady(t)
+
+	mine := newRitualSharingRemote(t, teammate)
+	mine.startRitual(t)
+	mine.waitFailed(t)
+
+	teammateServer.exit(0)
+	teammateServer.stdin.Close()
+	teammate.waitDone(t)
+
+	teammate.assertRemoteLockAbsent(t,
+		"once my teammate exits cleanly the shared lock must release — if it lingers, my next attempt to play sees a phantom 'someone else is editing' message and I cannot continue without manual cleanup (US-7 cross-host resume)")
+}
+
+func TestIntegration_UploadCutOffMidFlight_RemoteStaysOnPriorPushedWorld(t *testing.T) {
+	var injector *refPutFailureInjector
+	r := newRitualWith(t, func(inner ports.StorageRepository) ports.StorageRepository {
+		injector = newRefPutFailureInjector(inner, 2)
+		return injector
+	})
+
+	seedRemoteWorld(t, r, file("world/level.dat", []byte("teammates last saw this")))
+
+	server := r.startRitual(t)
+	server.waitReady(t)
+	server.write("worlds/world/level.dat", []byte("my new edits"))
+	server.exit(0)
+	server.stdin.Close()
+	r.waitFailed(t)
+
+	require.NotNil(t, injector, "failure injector must wire under remoteTransform")
+
+	keys, err := r.remote.List(r.ctx, "refs/")
+	require.NoError(t, err, "list remote refs after my upload was cut off mid-flight")
+	assert.Len(t, keys, 1,
+		"if my upload is cut off mid-flight, my teammates must continue to see the previously confirmed world — a half-uploaded snapshot promoted to HEAD would silently corrupt their next session and they'd have no way to know my edits never finished")
+}
+
+// ---------- user stories driving impl ----------
+//
+// Each test below names a player-visible scenario and asserts the consequence
+// the player perceives if the invariant holds. Tests fail today (red bar) —
+// the assertion message tells future-impl what user impact each missing piece
+// of behaviour causes. When impl lands, the test goes green; the user story
+// stays as living documentation.
+
+func TestIntegration_PlayerEditedFilesByHand_NextStartShowsDivergencePromptsPublishOrRestore(t *testing.T) {
+	r := newRitual(t)
+	seedLocalWorld(t, r, file("world/level.dat", []byte("synced")))
+	seedLocalRef(t, r)
+	seedRemoteWorld(t, r, file("world/level.dat", []byte("synced")))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.localDir, config.WorldsDir, "world/level.dat"),
+		[]byte("manual recovery"), 0o644),
+		"player hand-edited their world file between sessions (manual recovery, mod install, file rescue, mod-pack swap)")
+
+	r.startRitual(t)
+	r.waitFailed(t)
+
+	r.assertLocalFileContent(t, "world/level.dat", []byte("manual recovery"),
+		"if I touched my world files outside ritual — to recover a corrupt save, install a mod by hand, swap mod-packs, copy a friend's file in — ritual must STOP at a divergence stage and ask me which side wins (publish my hand-edits as a new snapshot, or restore from a prior pushed snapshot). Silently overwriting my edits with the cloud copy throws away whatever I was doing without my consent")
+}
+
+func TestIntegration_TeammatePushedWhileOffline_StaleClientShowsDivergence(t *testing.T) {
+	teammate := newRitual(t)
+	seedRemoteWorld(t, teammate, file("world/level.dat", []byte("morning")))
+
+	teammateServer := teammate.startRitual(t)
+	teammateServer.waitReady(t)
+	teammateServer.write("worlds/world/level.dat", []byte("teammate's afternoon edits"))
+	teammateServer.exit(0)
+	teammateServer.stdin.Close()
+	teammate.waitDone(t)
+
+	mine := newRitualSharingRemote(t, teammate)
+	seedLocalWorld(t, mine, file("world/level.dat", []byte("morning")))
+	seedLocalRef(t, mine)
+
+	mine.startRitual(t)
+	mine.waitFailed(t)
+}
+
+func TestIntegration_LongSessionCrashAfterHoursOfPlay_LastTickAlreadyOnRemote(t *testing.T) {
+	t.Fatal("user story: after a multi-hour session crashes mid-play, my next start must find the most recent live-ticker snapshot already on remote — losing 30 minutes of play to a power cut would shatter trust in the tool. Drives spec §US-2: per-tick save-all flush + commit + amend-aware push within RunningState (planned 5-min cadence). Replace this Fatal once the running-stage self-transition + a test-tunable TickInterval land.")
+}
