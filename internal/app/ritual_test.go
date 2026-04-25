@@ -37,13 +37,6 @@ func (fakeStorage) List(_ context.Context, _ string) ([]string, error)          
 func (fakeStorage) Copy(_ context.Context, _, _ string) error                    { return nil }
 func (fakeStorage) Rename(_ context.Context, _, _ string) error                  { return nil }
 
-type fakeManifestStore struct{}
-
-func (fakeManifestStore) Get(_ context.Context) (*domain.Manifest, error) {
-	return &domain.Manifest{}, nil
-}
-func (fakeManifestStore) Save(_ context.Context, _ *domain.Manifest) error { return nil }
-
 func noopCheck(_ context.Context) error { return nil }
 
 type noopPuller struct{}
@@ -114,7 +107,7 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 	r := app.New(
 		bus,
 		fakeStorage{}, fakeStorage{},
-		fakeManifestStore{}, fakeManifestStore{},
+
 		[]checks.Check{noopCheck},
 		noopPuller{}, noopApplier{}, noopHead,
 		noopCommitter{}, noopPusher{}, []string{"**"},
@@ -141,7 +134,7 @@ func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 	r := app.New(
 		bus,
 		fakeStorage{}, fakeStorage{},
-		fakeManifestStore{}, fakeManifestStore{},
+
 		[]checks.Check{noopCheck},
 		flaky, noopApplier{}, noopHead,
 		noopCommitter{}, noopPusher{}, []string{"**"},
@@ -184,7 +177,7 @@ func TestRitual_Stop_CancelsRunning(t *testing.T) {
 	r := app.New(
 		bus,
 		fakeStorage{}, fakeStorage{},
-		fakeManifestStore{}, fakeManifestStore{},
+
 		nil, noopPuller{}, noopApplier{}, noopHead, nil, nil, nil, nil, nil,
 		blocker,
 		immediateReady{},
@@ -212,7 +205,7 @@ func TestRitual_Start_AfterDone_StartsAgain(t *testing.T) {
 	r := app.New(
 		bus,
 		fakeStorage{}, fakeStorage{},
-		fakeManifestStore{}, fakeManifestStore{},
+
 		[]checks.Check{noopCheck},
 		noopPuller{}, noopApplier{}, noopHead,
 		noopCommitter{}, noopPusher{}, []string{"**"},
@@ -241,7 +234,7 @@ func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
 	r := app.New(
 		bus,
 		fakeStorage{}, fakeStorage{},
-		fakeManifestStore{}, fakeManifestStore{},
+
 		nil, noopPuller{}, noopApplier{}, noopHead, nil, nil, nil, nil, nil,
 		fakeCmdBuilder{},
 		immediateReady{},

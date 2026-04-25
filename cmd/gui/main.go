@@ -189,16 +189,6 @@ func buildRuntime() (*guiRuntime, error) {
 	localStorage := observed.NewStorage(adapters.NewCounterStorage(localCompressed, localCounters), bus)
 	remoteStorage := observed.NewStorage(adapters.NewCounterStorage(remoteCompressed, remoteCounters), bus)
 
-	localManifests := adapters.NewManifestStore(localStorage)
-	remoteManifests := adapters.NewManifestStore(remoteStorage)
-
-	if err := ensureManifest(context.Background(), localManifests); err != nil {
-		return nil, fmt.Errorf("seed local manifest: %w", err)
-	}
-	if err := ensureManifest(context.Background(), remoteManifests); err != nil {
-		return nil, fmt.Errorf("seed remote manifest: %w", err)
-	}
-
 	settings, err := domain.LoadSettings()
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
@@ -254,7 +244,6 @@ func buildRuntime() (*guiRuntime, error) {
 	r := app.New(
 		bus,
 		localStorage, remoteStorage,
-		localManifests, remoteManifests,
 		nil, // no conditions for POC
 		puller, applier, headResolver,
 		committer, pusher, commitTargets,
@@ -313,14 +302,6 @@ func newRemoteHeadResolver(remote ports.StorageRepository) pulling.HeadResolver 
 		}
 		return domain.RefID(head), nil
 	}
-}
-
-func ensureManifest(ctx context.Context, store ports.ManifestStore) error {
-	existing, err := store.Get(ctx)
-	if err == nil && existing != nil {
-		return nil
-	}
-	return store.Save(ctx, &domain.Manifest{})
 }
 
 func waitTerminal(bus ports.EventBus, budget time.Duration) {

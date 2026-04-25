@@ -56,7 +56,6 @@ import (
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/retaining"
 	"ritual/internal/core/stages/running"
-	"ritual/internal/subsystems/heartbeat"
 	"strings"
 	"sync"
 	"testing"
@@ -107,18 +106,16 @@ func TestMain(m *testing.M) {
 // ---------- testRitual ----------
 
 type testRitual struct {
-	localDir        string
-	remoteDir       string
-	localRoot       *os.Root
-	remoteRoot      *os.Root
-	local           ports.StorageRepository
-	remote          ports.StorageRepository
-	localManifests  ports.ManifestStore
-	remoteManifests ports.ManifestStore
-	bus             ports.EventBus
-	ch              <-chan ports.Event
-	ctx             context.Context
-	cancel          context.CancelFunc
+	localDir   string
+	remoteDir  string
+	localRoot  *os.Root
+	remoteRoot *os.Root
+	local      ports.StorageRepository
+	remote     ports.StorageRepository
+	bus        ports.EventBus
+	ch         <-chan ports.Event
+	ctx        context.Context
+	cancel     context.CancelFunc
 
 	// Optional prune jobs per stage instance. Integration tests simulate
 	// the remote slot by pointing its jobs at localStorage — cheaper than
@@ -167,28 +164,20 @@ func newRitualWith(t *testing.T, remoteTransform func(ports.StorageRepository) p
 	local := observed.NewStorage(rawLocal, bus)
 	remote := observed.NewStorage(remoteInner, bus)
 
-	localManifests := adapters.NewManifestStore(local)
-	remoteManifests := adapters.NewManifestStore(remote)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	require.NoError(t, localManifests.Save(ctx, &domain.Manifest{}), "seed empty local manifest")
-	require.NoError(t, remoteManifests.Save(ctx, &domain.Manifest{}), "seed empty remote manifest")
-
 	return &testRitual{
-		localDir:        localDir,
-		remoteDir:       remoteDir,
-		localRoot:       localRoot,
-		remoteRoot:      remoteRoot,
-		local:           local,
-		remote:          remote,
-		localManifests:  localManifests,
-		remoteManifests: remoteManifests,
-		bus:             bus,
-		ch:              ch,
-		ctx:             ctx,
-		cancel:          cancel,
+		localDir:   localDir,
+		remoteDir:  remoteDir,
+		localRoot:  localRoot,
+		remoteRoot: remoteRoot,
+		local:      local,
+		remote:     remote,
+		bus:        bus,
+		ch:         ch,
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 }
 
@@ -210,26 +199,20 @@ func newRitualSharingRemote(t *testing.T, other *testRitual) *testRitual {
 
 	local := observed.NewStorage(rawLocal, bus)
 
-	localManifests := adapters.NewManifestStore(local)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	require.NoError(t, localManifests.Save(ctx, &domain.Manifest{}), "seed empty local manifest (shared-remote)")
-
 	return &testRitual{
-		localDir:        localDir,
-		remoteDir:       other.remoteDir,
-		localRoot:       localRoot,
-		remoteRoot:      other.remoteRoot,
-		local:           local,
-		remote:          other.remote,
-		localManifests:  localManifests,
-		remoteManifests: other.remoteManifests,
-		bus:             bus,
-		ch:              ch,
-		ctx:             ctx,
-		cancel:          cancel,
+		localDir:   localDir,
+		remoteDir:  other.remoteDir,
+		localRoot:  localRoot,
+		remoteRoot: other.remoteRoot,
+		local:      local,
+		remote:     other.remote,
+		bus:        bus,
+		ch:         ch,
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 }
 
@@ -326,7 +309,6 @@ func (r *testRitual) startRitualFull(t *testing.T, preflightChecks []checks.Chec
 	ritual := app.New(
 		r.bus,
 		r.local, r.remote,
-		r.localManifests, r.remoteManifests,
 		preflightChecks,
 		puller, applier, headResolver,
 		committer, pusher, commitTargets,
@@ -455,8 +437,6 @@ func (r *testRitual) buildCommittingVerbs(t *testing.T, worldsPath string, scann
 func seedRemoteWorld(t *testing.T, r *testRitual, files ...testFile) {
 	t.Helper()
 	seedFiles(t, r.remoteDir, files)
-	updateManifestXXHash(t, r.ctx, r.remoteDir, r.remoteManifests, config.WorldsDir,
-		func(m *domain.Manifest) *domain.SyncState { return &m.Worlds.SyncState })
 	seedRemoteRef(t, r)
 }
 
@@ -484,41 +464,6 @@ func seedRemoteRef(t *testing.T, r *testRitual) {
 func seedLocalWorld(t *testing.T, r *testRitual, files ...testFile) {
 	t.Helper()
 	seedFiles(t, r.localDir, files)
-	updateManifestXXHash(t, r.ctx, r.localDir, r.localManifests, config.WorldsDir,
-		func(m *domain.Manifest) *domain.SyncState { return &m.Worlds.SyncState })
-}
-
-func seedSyncedWorld(t *testing.T, r *testRitual, files ...testFile) {
-	t.Helper()
-	seedFiles(t, r.localDir, files)
-	seedFiles(t, r.remoteDir, files)
-
-	worldsPath := filepath.Join(r.localDir, config.WorldsDir)
-	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
-	xxhashMap, err := scanner.Scan(r.ctx)
-	require.NoError(t, err, "scan worlds for synced seed")
-
-	localManifest, err := r.localManifests.Get(r.ctx)
-	require.NoError(t, err, "get local manifest for synced seed")
-	localManifest.Worlds.XXHashMap = xxhashMap
-	localManifest.Worlds.XXHashSyncAt = time.Now()
-	require.NoError(t, r.localManifests.Save(r.ctx, localManifest), "save local manifest for synced seed")
-
-	remoteManifest, err := r.remoteManifests.Get(r.ctx)
-	require.NoError(t, err, "get remote manifest for synced seed")
-	remoteManifest.Worlds.XXHashMap = xxhashMap
-	remoteManifest.Worlds.XXHashSyncAt = time.Now()
-	require.NoError(t, r.remoteManifests.Save(r.ctx, remoteManifest), "save remote manifest for synced seed")
-}
-
-func seedRemoteManifest(t *testing.T, r *testRitual, manifest *domain.Manifest) {
-	t.Helper()
-	require.NoError(t, r.remoteManifests.Save(r.ctx, manifest), "seed remote manifest")
-}
-
-func seedLocalManifest(t *testing.T, r *testRitual, manifest *domain.Manifest) {
-	t.Helper()
-	require.NoError(t, r.localManifests.Save(r.ctx, manifest), "seed local manifest")
 }
 
 func seedExpiredRemoteLock(t *testing.T, r *testRitual, owner, sessionID string) {
@@ -550,32 +495,6 @@ func seedFiles(t *testing.T, rootDir string, files []testFile) {
 		require.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0o755), "create parent dirs for %s", f.path)
 		require.NoError(t, os.WriteFile(fullPath, f.content, 0o644), "write seed file %s", f.path)
 	}
-}
-
-func updateManifestXXHash(
-	t *testing.T,
-	ctx context.Context,
-	rootDir string,
-	store ports.ManifestStore,
-	prefix string,
-	getState func(*domain.Manifest) *domain.SyncState,
-) {
-	t.Helper()
-	prefixDir := filepath.Join(rootDir, prefix)
-	if _, err := os.Stat(prefixDir); os.IsNotExist(err) {
-		return
-	}
-	scanner := adapters.NewFullScanner(os.DirFS(prefixDir))
-	xxhashMap, err := scanner.Scan(ctx)
-	require.NoError(t, err, "scan %s for xxhash update", prefix)
-
-	manifest, err := store.Get(ctx)
-	require.NoError(t, err, "get manifest for xxhash update")
-
-	state := getState(manifest)
-	state.XXHashMap = xxhashMap
-	state.XXHashSyncAt = time.Now()
-	require.NoError(t, store.Save(ctx, manifest), "save manifest after xxhash update")
 }
 
 // ---------- assert helpers ----------
@@ -622,38 +541,6 @@ func (r *testRitual) assertRemoteFileMissing(t *testing.T, path string, msg stri
 	fullPath := filepath.Join(r.remoteDir, config.WorldsDir, path)
 	_, err := os.Stat(fullPath)
 	assert.True(t, os.IsNotExist(err), msg)
-}
-
-func (r *testRitual) assertManifestUnlocked(t *testing.T, msg string) {
-	t.Helper()
-	localManifest, err := r.localManifests.Get(r.ctx)
-	require.NoError(t, err, msg)
-	assert.Empty(t, localManifest.LockedBy, msg+" (local manifest should be unlocked)")
-
-	remoteManifest, err := r.remoteManifests.Get(r.ctx)
-	require.NoError(t, err, msg)
-	assert.Empty(t, remoteManifest.LockedBy, msg+" (remote manifest should be unlocked)")
-}
-
-func (r *testRitual) assertManifestLockedBy(t *testing.T, wantSubstr string, msg string) {
-	t.Helper()
-	remoteManifest, err := r.remoteManifests.Get(r.ctx)
-	require.NoError(t, err, msg)
-	assert.Contains(t, remoteManifest.LockedBy, wantSubstr, msg)
-}
-
-func (r *testRitual) assertManifestXXHashCount(t *testing.T, want int, msg string) {
-	t.Helper()
-	localManifest, err := r.localManifests.Get(r.ctx)
-	require.NoError(t, err, msg)
-	assert.Len(t, localManifest.Worlds.XXHashMap, want, msg)
-}
-
-func (r *testRitual) assertManifestXXHashNotEmpty(t *testing.T, msg string) {
-	t.Helper()
-	localManifest, err := r.localManifests.Get(r.ctx)
-	require.NoError(t, err, msg)
-	assert.NotEmpty(t, localManifest.Worlds.XXHashMap, msg)
 }
 
 func (r *testRitual) assertNoStagingFiles(t *testing.T, msg string) {
@@ -819,84 +706,6 @@ func TestIntegration_FirstLaunch_NoLocalFiles_DownloadsEverything(t *testing.T) 
 		"first launch — world files should be downloaded from remote")
 	ritual.assertLocalHasFile(t, "world/region/r.0.0.mca",
 		"first launch — region files should be downloaded from remote")
-	ritual.assertManifestUnlocked(t,
-		"lock should be cleared after successful first run")
-}
-
-func TestIntegration_PlayedAndExitClean_ChangesUploadedAndBackedUp(t *testing.T) {
-	ritual := newRitual(t)
-
-	seedRemoteWorld(t, ritual,
-		file("world/level.dat", []byte("original level")),
-		file("world/region/r.0.0.mca", []byte("region data")),
-		file("world/playerdata/old.dat", []byte("old player")),
-	)
-
-	server := ritual.startRitual(t)
-	server.waitReady(t)
-	server.write("worlds/world/level.dat", []byte("modified level"))
-	server.write("worlds/world/playerdata/new.dat", []byte("new player"))
-	server.exit(0)
-	server.stdin.Close()
-	ritual.waitDone(t)
-
-	ritual.assertRemoteFileContent(t, "world/level.dat", []byte("modified level"),
-		"server modified level.dat — remote should reflect the change after publish")
-	ritual.assertRemoteHasFile(t, "world/playerdata/new.dat",
-		"server created new player file — should exist on remote after publish")
-	ritual.assertRemoteHasFile(t, "world/region/r.0.0.mca",
-		"untouched region file should still exist on remote")
-	ritual.assertManifestXXHashCount(t, 4,
-		"3 original + 1 new file = 4 entries in xxhash map")
-	ritual.assertManifestUnlocked(t,
-		"lock should be cleared after successful pipeline completion")
-}
-
-func TestIntegration_AlreadySynced_NoTransfersNoBackup(t *testing.T) {
-	ritual := newRitual(t)
-
-	seedSyncedWorld(t, ritual,
-		file("world/level.dat", []byte("level")),
-	)
-
-	server := ritual.startRitual(t)
-	server.waitReady(t)
-	server.exit(0)
-	server.stdin.Close()
-	ritual.waitDone(t)
-
-	ritual.assertManifestUnlocked(t,
-		"lock should be cleared even when no work was done")
-}
-
-func TestIntegration_ServerMutatesFiles_AllChangesReflectedOnRemote(t *testing.T) {
-	ritual := newRitual(t)
-
-	seedRemoteWorld(t, ritual,
-		file("world/a.dat", []byte("original a")),
-		file("world/b.dat", []byte("original b")),
-		file("world/c.dat", []byte("original c")),
-	)
-
-	server := ritual.startRitual(t)
-	server.waitReady(t)
-	server.write("worlds/world/a.dat", []byte("modified a"))
-	server.write("worlds/world/d.dat", []byte("brand new"))
-	server.delete("worlds/world/c.dat")
-	server.exit(0)
-	server.stdin.Close()
-	ritual.waitDone(t)
-
-	ritual.assertRemoteFileContent(t, "world/a.dat", []byte("modified a"),
-		"modified file should have new content on remote")
-	ritual.assertRemoteFileContent(t, "world/b.dat", []byte("original b"),
-		"untouched file should remain unchanged")
-	ritual.assertRemoteHasFile(t, "world/d.dat",
-		"new file created by server should appear on remote")
-	ritual.assertRemoteFileMissing(t, "world/c.dat",
-		"deleted file should be removed from remote")
-	ritual.assertManifestXXHashCount(t, 3,
-		"3 original - 1 deleted + 1 added = 3 entries in manifest")
 }
 
 // ---------- integration tests: failure paths ----------
@@ -913,8 +722,6 @@ func TestIntegration_ConditionFails_NothingTouched(t *testing.T) {
 
 	ritual.assertLocalFileMissing(t, "world/level.dat",
 		"condition failed at checking — no files should be downloaded")
-	ritual.assertManifestUnlocked(t,
-		"condition failed before lock — both manifests should remain unlocked")
 }
 
 func TestIntegration_LeaseExpired_TakesOverAndCompletes(t *testing.T) {
@@ -950,8 +757,6 @@ func TestIntegration_ServerCrash_NoUploadLockReleased(t *testing.T) {
 
 	ritual.assertRemoteFileContent(t, "world/level.dat", []byte("original"),
 		"server crashed — remote should have pre-run content, no upload should happen")
-	ritual.assertManifestUnlocked(t,
-		"lock must be released even after server crash")
 }
 
 // ---------- integration tests: stop, retry, multi-host ----------
@@ -971,7 +776,6 @@ func (r *testRitual) startRitualWithFlakyPuller(t *testing.T, flaky *failOnceInt
 	rit := app.New(
 		r.bus,
 		r.local, r.remote,
-		r.localManifests, r.remoteManifests,
 		nil,
 		flaky, applier, headResolver,
 		committer, pusher, commitTargets,
@@ -1001,9 +805,6 @@ func TestIntegration_StopMidGame_LockReleased(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	server.stdin.Close()
 	ritual.waitDone(t)
-
-	ritual.assertManifestUnlocked(t,
-		"lock must be released after graceful stop")
 }
 
 func TestIntegration_FetchFails_RetrySucceeds(t *testing.T) {
@@ -1024,33 +825,6 @@ func TestIntegration_FetchFails_RetrySucceeds(t *testing.T) {
 
 	assert.Equal(t, 2, flaky.calls,
 		"puller should be called twice — fail on first, succeed on retry")
-}
-
-func TestIntegration_MultiHost_AUploads_BDownloadsPlaysUploads(t *testing.T) {
-	ritualA := newRitual(t)
-
-	seedLocalWorld(t, ritualA,
-		file("world/level.dat", []byte("host A level")),
-	)
-
-	serverA := ritualA.startRitual(t)
-	serverA.waitReady(t)
-	serverA.write("worlds/world/level.dat", []byte("host A modified"))
-	serverA.exit(0)
-	serverA.stdin.Close()
-	ritualA.waitDone(t)
-
-	ritualB := newRitualSharingRemote(t, ritualA)
-
-	serverB := ritualB.startRitual(t)
-	serverB.waitReady(t)
-	serverB.write("worlds/world/level.dat", []byte("host B modified"))
-	serverB.exit(0)
-	serverB.stdin.Close()
-	ritualB.waitDone(t)
-
-	ritualA.assertRemoteFileContent(t, "world/level.dat", []byte("host B modified"),
-		"remote should have Host B's changes — B was the last to upload")
 }
 
 // ---------- integration tests: backup and retention ----------
@@ -1131,8 +905,6 @@ func TestIntegration_ServerCrash_SkipsCommitAndPush(t *testing.T) {
 		"server crash (exit code != 0) must skip Committing — mid-mutation workdir is not a safe snapshot source")
 	assert.NotContains(t, stages, stagenames.StagePushing,
 		"server crash must skip Pushing — nothing was committed, nothing to push")
-	r.assertManifestUnlocked(t,
-		"crash path still must release the lock via Unlocking")
 }
 
 func TestIntegration_Prune_BothInstancesExecute(t *testing.T) {
@@ -1203,31 +975,6 @@ func TestIntegration_ServerLifecycleEventsEmitted_StartingReadyStoppingStopped(t
 		"server lifecycle events must fire in fixed order — GUI state machine subscribes to these to drive DOWN/STARTING/STARTED/STOPPING transitions; backend emission is the contract")
 }
 
-func TestIntegration_OutdatedManifest_NoXXHash_FullSyncPopulatesMaps(t *testing.T) {
-	ritual := newRitual(t)
-
-	seedFiles(t, ritual.localDir, []testFile{
-		file("world/level.dat", []byte("level")),
-	})
-	seedLocalManifest(t, ritual, &domain.Manifest{ManifestVersion: "1.0.0"})
-
-	seedFiles(t, ritual.remoteDir, []testFile{
-		file("world/level.dat", []byte("level")),
-	})
-	seedRemoteManifest(t, ritual, &domain.Manifest{ManifestVersion: "1.0.0"})
-
-	server := ritual.startRitual(t)
-	server.waitReady(t)
-	server.exit(0)
-	server.stdin.Close()
-	ritual.waitDone(t)
-
-	ritual.assertManifestXXHashNotEmpty(t,
-		"outdated manifest with no xxhash — pipeline should populate maps from actual files")
-	ritual.assertManifestUnlocked(t,
-		"lock should be cleared after migration sync")
-}
-
 // ---------- liveSyncCmdBuilder ----------
 
 type liveSyncCmdBuilder struct {
@@ -1243,314 +990,3 @@ func (b *liveSyncCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout 
 	return cmd, nil
 }
 
-// ---------- startRitualWithLiveSync ----------
-
-func (r *testRitual) startRitualWithLiveSync(t *testing.T) {
-	t.Helper()
-
-	worldsPath := filepath.Join(r.localDir, config.WorldsDir)
-	require.NoError(t, os.MkdirAll(worldsPath, 0o755), "create worlds dir")
-
-	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
-
-	cmdBuilder := &liveSyncCmdBuilder{binary: fakerunBin, root: r.localDir}
-
-	puller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
-	committer, pusher, commitTargets := r.buildCommittingVerbs(t, worldsPath, scanner)
-
-	rit := app.New(
-		r.bus,
-		r.local, r.remote,
-		r.localManifests, r.remoteManifests,
-		nil,
-		puller, applier, headResolver,
-		committer, pusher, commitTargets,
-		nil, nil,
-		cmdBuilder,
-		immediateReady{},
-	)
-	rit.SetHeartbeatInterval(20 * time.Millisecond)
-
-	_, stopHeartbeat := heartbeat.Attach(r.bus, rit.Heartbeat)
-	t.Cleanup(stopHeartbeat)
-
-	rit.Listen(r.ctx)
-	r.bus.Publish(app.StartRequested{})
-}
-
-// ---------- live sync assert helpers ----------
-
-func (r *testRitual) assertRemoteManifestSyncAt(t *testing.T, msg string) time.Time {
-	t.Helper()
-	remoteManifest, err := r.remoteManifests.Get(r.ctx)
-	require.NoError(t, err, msg)
-	assert.False(t, remoteManifest.Worlds.XXHashSyncAt.IsZero(), msg)
-	return remoteManifest.Worlds.XXHashSyncAt
-}
-
-func waitForSaveCompleted(t *testing.T, ch <-chan ports.Event, count int, timeout time.Duration) {
-	t.Helper()
-	deadline := time.After(timeout)
-	seen := 0
-	for {
-		select {
-		case <-deadline:
-			t.Fatalf("timed out waiting for %d SaveCompleted events (got %d)", count, seen)
-		case e, ok := <-ch:
-			if !ok {
-				t.Fatalf("event channel closed while waiting for SaveCompleted (got %d/%d)", seen, count)
-			}
-			if _, ok := e.(running.SaveCompleted); ok {
-				seen++
-				if seen >= count {
-					return
-				}
-			}
-		}
-	}
-}
-
-func waitForSaveCompletedThenStatus(t *testing.T, ch <-chan ports.Event, saveCount int, stop func(), want app.Outcome, timeout time.Duration) {
-	t.Helper()
-	deadline := time.After(timeout)
-	seen := 0
-	stopped := false
-	for {
-		select {
-		case <-deadline:
-			if !stopped {
-				t.Fatalf("timed out waiting for %d SaveCompleted events (got %d)", saveCount, seen)
-			}
-			t.Fatalf("timed out waiting for %s status after stop", want)
-		case e, ok := <-ch:
-			if !ok {
-				t.Fatal("event channel closed unexpectedly")
-			}
-			if !stopped {
-				if _, ok := e.(running.SaveCompleted); ok {
-					seen++
-					if seen >= saveCount {
-						stop()
-						stopped = true
-					}
-				}
-			}
-			if stopped {
-				if sc, ok := e.(app.StatusChanged); ok && sc.Status == want {
-					return
-				}
-			}
-		}
-	}
-}
-
-func seedRemoteWorldWithShortHeartbeat(t *testing.T, r *testRitual, files ...testFile) {
-	t.Helper()
-	seedFiles(t, r.remoteDir, files)
-
-	remoteManifest, err := r.remoteManifests.Get(r.ctx)
-	require.NoError(t, err, "get remote manifest for short heartbeat seed")
-	remoteManifest.Lease.HeartbeatInterval = domain.Duration(20 * time.Millisecond)
-	remoteManifest.Lease.TTL = domain.Duration(500 * time.Millisecond)
-
-	worldsPath := filepath.Join(r.remoteDir, config.WorldsDir)
-	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
-	xxhashMap, err := scanner.Scan(r.ctx)
-	require.NoError(t, err, "scan worlds for short heartbeat seed")
-	remoteManifest.Worlds.XXHashMap = xxhashMap
-	remoteManifest.Worlds.XXHashSyncAt = time.Now()
-
-	require.NoError(t, r.remoteManifests.Save(r.ctx, remoteManifest), "save remote manifest with short heartbeat")
-	seedRemoteRef(t, r)
-}
-
-// ---------- integration tests: live sync ----------
-
-func TestIntegration_PlayingWithLiveSync_WorldsSyncEveryTick(t *testing.T) {
-	ritual := newRitual(t)
-
-	seedRemoteWorldWithShortHeartbeat(t, ritual,
-		file("world/level.dat", []byte("level data")),
-		file("world/region/r.0.0.mca", []byte("region data")),
-	)
-
-	ch, unsub := ritual.bus.Subscribe()
-	defer unsub()
-
-	ritual.startRitualWithLiveSync(t)
-
-	waitForSaveCompletedThenStatus(t, ch, 2, ritual.sendStop, app.Done, time.Second)
-
-	ritual.assertRemoteHasFile(t, "world/level.dat",
-		"live sync — world files should remain on remote after sync ticks")
-	ritual.assertRemoteHasFile(t, "world/region/r.0.0.mca",
-		"live sync — region files should remain on remote after sync ticks")
-	ritual.assertRemoteManifestSyncAt(t,
-		"live sync — remote manifest SyncState.XXHashSyncAt should be updated after sync ticks")
-	ritual.assertManifestUnlocked(t,
-		"lock should be cleared after live sync run completes")
-}
-
-func TestIntegration_NothingChangedDuringPlay_NothingUploaded(t *testing.T) {
-	ritual := newRitual(t)
-
-	seedRemoteWorldWithShortHeartbeat(t, ritual,
-		file("world/level.dat", []byte("level data")),
-	)
-
-	ch, unsub := ritual.bus.Subscribe()
-	defer unsub()
-
-	ritual.startRitualWithLiveSync(t)
-
-	waitForSaveCompletedThenStatus(t, ch, 2, ritual.sendStop, app.Done, time.Second)
-
-	ritual.assertRemoteFileContent(t, "world/level.dat", []byte("level data"),
-		"nothing changed during play — remote file content should be identical to seed")
-	ritual.assertNoStagingFiles(t,
-		"nothing changed during play — no staging artifacts should remain")
-	ritual.assertManifestUnlocked(t,
-		"lock should be cleared after no-op sync run")
-}
-
-func TestIntegration_CrashRecovery_LocalNewerKept(t *testing.T) {
-	ritual := newRitual(t)
-
-	seedFiles(t, ritual.remoteDir, []testFile{
-		file("world/level.dat", []byte("remote old data")),
-	})
-
-	remoteManifest, err := ritual.remoteManifests.Get(ritual.ctx)
-	require.NoError(t, err, "get remote manifest for crash recovery test")
-	remoteManifest.Lease.HeartbeatInterval = domain.Duration(20 * time.Millisecond)
-	remoteManifest.Lease.TTL = domain.Duration(500 * time.Millisecond)
-	remoteManifest.Worlds.XXHashSyncAt = time.Now().Add(-time.Hour)
-	remoteManifest.Worlds.XXHashMap = map[string]domain.FileEntry{
-		"world/level.dat": {Hash: "remote-hash-old", Size: 16},
-	}
-	require.NoError(t, ritual.remoteManifests.Save(ritual.ctx, remoteManifest), "save remote manifest for crash recovery")
-
-	seedFiles(t, ritual.localDir, []testFile{
-		file("world/level.dat", []byte("local newer data")),
-	})
-
-	worldsPath := filepath.Join(ritual.localDir, config.WorldsDir)
-	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
-	localXXHash, err := scanner.Scan(ritual.ctx)
-	require.NoError(t, err, "scan local worlds for crash recovery")
-
-	localManifest, err := ritual.localManifests.Get(ritual.ctx)
-	require.NoError(t, err, "get local manifest for crash recovery test")
-	localManifest.Worlds.XXHashSyncAt = time.Now()
-	localManifest.Worlds.XXHashMap = localXXHash
-	require.NoError(t, ritual.localManifests.Save(ritual.ctx, localManifest), "save local manifest for crash recovery")
-
-	ch, unsub := ritual.bus.Subscribe()
-	defer unsub()
-
-	ritual.startRitualWithLiveSync(t)
-
-	waitForSaveCompletedThenStatus(t, ch, 1, ritual.sendStop, app.Done, time.Second)
-
-	ritual.assertLocalFileContent(t, "world/level.dat", []byte("local newer data"),
-		"crash recovery — local is newer than remote, download should be skipped and local data preserved")
-	ritual.assertManifestUnlocked(t,
-		"lock should be cleared after crash recovery run")
-}
-
-func TestIntegration_LiveSyncUploadsNewFiles_RemoteReflectsChanges(t *testing.T) {
-	ritual := newRitual(t)
-
-	seedRemoteWorldWithShortHeartbeat(t, ritual,
-		file("world/level.dat", []byte("original level")),
-	)
-
-	ch, unsub := ritual.bus.Subscribe()
-	defer unsub()
-
-	ritual.startRitualWithLiveSync(t)
-
-	waitForSaveCompleted(t, ch, 1, time.Second)
-
-	worldsPath := filepath.Join(ritual.localDir, config.WorldsDir)
-	newFilePath := filepath.Join(worldsPath, "world", "playerdata", "player1.dat")
-	require.NoError(t, os.MkdirAll(filepath.Dir(newFilePath), 0o755), "create playerdata dir")
-	require.NoError(t, os.WriteFile(newFilePath, []byte("player one"), 0o644), "write new player file")
-
-	waitForSaveCompletedThenStatus(t, ch, 1, ritual.sendStop, app.Done, time.Second)
-
-	ritual.assertRemoteHasFile(t, "world/level.dat",
-		"live sync — original file should still exist on remote")
-	ritual.assertRemoteHasFile(t, "world/playerdata/player1.dat",
-		"live sync — new file written during play should be uploaded to remote by sync tick")
-	ritual.assertRemoteFileContent(t, "world/playerdata/player1.dat", []byte("player one"),
-		"live sync — uploaded file content should match what was written locally")
-	ritual.assertManifestUnlocked(t,
-		"lock should be cleared after live sync with file mutations")
-}
-
-func TestIntegration_LiveSyncAfterCleanStop_RemoteHasSyncedState(t *testing.T) {
-	ritual := newRitual(t)
-
-	seedRemoteWorldWithShortHeartbeat(t, ritual,
-		file("world/level.dat", []byte("level data")),
-		file("world/region/r.0.0.mca", []byte("region data")),
-	)
-
-	ch, unsub := ritual.bus.Subscribe()
-	defer unsub()
-
-	ritual.startRitualWithLiveSync(t)
-
-	waitForSaveCompletedThenStatus(t, ch, 1, ritual.sendStop, app.Done, time.Second)
-
-	remoteManifest, err := ritual.remoteManifests.Get(ritual.ctx)
-	require.NoError(t, err, "get remote manifest after clean stop")
-	assert.NotEmpty(t, remoteManifest.Worlds.XXHashMap,
-		"clean stop after live sync — remote manifest should have xxhash map populated from sync")
-	assert.False(t, remoteManifest.Worlds.XXHashSyncAt.IsZero(),
-		"clean stop after live sync — remote manifest XXHashSyncAt should be set")
-
-	localManifest, err := ritual.localManifests.Get(ritual.ctx)
-	require.NoError(t, err, "get local manifest after clean stop")
-	assert.NotEmpty(t, localManifest.Worlds.XXHashMap,
-		"clean stop after live sync — local manifest should have xxhash map populated from sync")
-
-	ritual.assertRemoteHasFile(t, "world/level.dat",
-		"clean stop — world files should persist on remote")
-	ritual.assertRemoteHasFile(t, "world/region/r.0.0.mca",
-		"clean stop — region files should persist on remote")
-	ritual.assertManifestUnlocked(t,
-		"lock should be cleared after clean stop with live sync")
-}
-
-func TestIntegration_ServerBecomesReady_AutosavesDisabled(t *testing.T) {
-	ritual := newRitual(t)
-
-	seedRemoteWorldWithShortHeartbeat(t, ritual,
-		file("world/level.dat", []byte("level data")),
-	)
-
-	ch, unsub := ritual.bus.Subscribe()
-	defer unsub()
-
-	ritual.startRitualWithLiveSync(t)
-
-	deadline := time.After(time.Second)
-	for {
-		select {
-		case <-deadline:
-			ritual.sendStop()
-			t.Fatal("timed out waiting for save-off — autosaves should be disabled when server becomes ready")
-		case e, ok := <-ch:
-			if !ok {
-				t.Fatal("event channel closed while waiting for save-off")
-			}
-			if out, ok := e.(running.ServerOutputInfo); ok && strings.Contains(out.Line, "Automatic saving is now disabled") {
-				ritual.sendStop()
-				waitForIntegrationStatus(t, ch, app.Done, time.Second)
-				return
-			}
-		}
-	}
-}

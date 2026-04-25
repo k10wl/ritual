@@ -9,7 +9,6 @@ package acquiring
 import (
 	"context"
 	"errors"
-	"ritual/internal/core/domain"
 	"ritual/internal/core/lock"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
@@ -25,37 +24,28 @@ type AcquireFn func(ctx context.Context) (sessionID string, err error)
 // free. Used only for the LockHeldInfo diagnostic on ErrLocked.
 type InspectFn func(ctx context.Context) (*lock.Holder, error)
 
-// SnapshotLocalFn captures the local manifest at acquire time so Backup
-// can diff post-run XXHashMap against the pre-session baseline. Acquiring
-// runs after Pull/Apply, so the snapshot is taken immediately before the
-// server session begins.
-type SnapshotLocalFn func(ctx context.Context) (*domain.Manifest, error)
-
 // Strategy implements the Acquiring stage.
 type Strategy struct {
-	acquire       AcquireFn
-	inspect       InspectFn
-	snapshotLocal SnapshotLocalFn
-	interval      time.Duration
-	onOK          machine.Strategy[ritual.RunState]
-	onFail        machine.Strategy[ritual.RunState]
+	acquire  AcquireFn
+	inspect  InspectFn
+	interval time.Duration
+	onOK     machine.Strategy[ritual.RunState]
+	onFail   machine.Strategy[ritual.RunState]
 }
 
 // New builds an Acquiring Strategy.
 func New(
 	acquire AcquireFn,
 	inspect InspectFn,
-	snapshotLocal SnapshotLocalFn,
 	interval time.Duration,
 	onOK, onFail machine.Strategy[ritual.RunState],
 ) *Strategy {
 	return &Strategy{
-		acquire:       acquire,
-		inspect:       inspect,
-		snapshotLocal: snapshotLocal,
-		interval:      interval,
-		onOK:          onOK,
-		onFail:        onFail,
+		acquire:  acquire,
+		inspect:  inspect,
+		interval: interval,
+		onOK:     onOK,
+		onFail:   onFail,
 	}
 }
 
@@ -91,14 +81,6 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 	}
 
 	rs.SessionID = sessionID
-	if s.snapshotLocal != nil {
-		snap, snapErr := s.snapshotLocal(ctx)
-		if snapErr != nil {
-			publish(rs.Bus, ritual.ErrorInfo{Operation: "acquire.snapshot", Err: snapErr})
-		} else {
-			rs.LocalBefore = snap
-		}
-	}
 	publish(rs.Bus, ritual.FinishInfo{Operation: "acquire"})
 	publish(rs.Bus, ritual.LockAcquiredInfo{
 		RunID:     rs.RunID,

@@ -71,7 +71,7 @@ func TestAcquiring_FreshSlot_SetsSessionIDAndPublishesLockAcquired(t *testing.T)
 
 	onFail := &stubStrategy{tag: "failed"}
 	onOK := &stubStrategy{tag: "run"}
-	strategy := acquiring.New(locker.Acquire, locker.Inspect, nil, locker.HeartbeatInterval, onOK, onFail)
+	strategy := acquiring.New(locker.Acquire, locker.Inspect, locker.HeartbeatInterval, onOK, onFail)
 
 	rs := &ritual.RunState{RunID: "test-run", Bus: bus}
 	next, err := strategy.Run(ctx, rs)
@@ -107,7 +107,7 @@ func TestAcquiring_ActiveLease_PublishesLockHeldInfoWithHolder(t *testing.T) {
 
 	onFail := &stubStrategy{tag: "failed"}
 	onOK := &stubStrategy{tag: "run"}
-	strategy := acquiring.New(locker.Acquire, locker.Inspect, nil, locker.HeartbeatInterval, onOK, onFail)
+	strategy := acquiring.New(locker.Acquire, locker.Inspect, locker.HeartbeatInterval, onOK, onFail)
 
 	rs := &ritual.RunState{RunID: "test-run", Bus: bus}
 	next, err := strategy.Run(ctx, rs)
@@ -143,7 +143,7 @@ func TestAcquiring_StorageError_RoutesFailWithoutLockAcquiredInfo(t *testing.T) 
 
 	onFail := &stubStrategy{tag: "failed"}
 	onOK := &stubStrategy{tag: "run"}
-	strategy := acquiring.New(locker.Acquire, locker.Inspect, nil, locker.HeartbeatInterval, onOK, onFail)
+	strategy := acquiring.New(locker.Acquire, locker.Inspect, locker.HeartbeatInterval, onOK, onFail)
 
 	rs := &ritual.RunState{RunID: "test-run", Bus: bus}
 	next, err := strategy.Run(ctx, rs)

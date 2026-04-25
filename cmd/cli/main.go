@@ -93,16 +93,9 @@ func run(ctx context.Context) error {
 	rawRemote = rawRemote.WithPrefix(envBucket)
 	localStorage := observed.NewStorage(rawLocal, bus)
 	remoteStorage := observed.NewStorage(rawRemote, bus)
-	localManifests := adapters.NewManifestStore(localStorage)
-	remoteManifests := adapters.NewManifestStore(remoteStorage)
-
-	remoteManifest, err := remoteManifests.Get(ctx)
-	if err != nil {
-		return fmt.Errorf("get remote manifest: %w", err)
-	}
 
 	// --- Subsystem builders (CLI-specific wiring) ---
-	sk, err := synckit.Build(ctx, workRoot, localStorage, remoteStorage, localManifests, remoteManifests, bus)
+	sk, err := synckit.Build(ctx, workRoot, localStorage, remoteStorage, bus)
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)
 	}
@@ -126,7 +119,8 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("settings: %w", err)
 	}
 	preflightChecks := conditions.Build(settings, sysInfo, javaInfo, bus)
-	cmdBuilder, err := adapters.NewServerCmdBuilder(workRoot, remoteManifest.Server.StartScript, settings.ToServerRuntime)
+	// TODO(v2.1): start-script path should come from settings.StartScript once that field exists.
+	cmdBuilder, err := adapters.NewServerCmdBuilder(workRoot, "start.bat", settings.ToServerRuntime)
 	if err != nil {
 		return fmt.Errorf("cmd builder: %w", err)
 	}
@@ -136,7 +130,6 @@ func run(ctx context.Context) error {
 	r := app.New(
 		bus,
 		localStorage, remoteStorage,
-		localManifests, remoteManifests,
 		preflightChecks, sk.Puller, sk.Applier, sk.HeadResolver, sk.Committer, sk.Pusher, sk.CommitTargets, localRets, remoteRets,
 		cmdBuilder,
 		readiness,

@@ -32,8 +32,6 @@ type Ritual struct {
 	bus              ports.EventBus
 	localStorage     ports.StorageRepository
 	remoteStorage    ports.StorageRepository
-	localManifests   ports.ManifestStore
-	remoteManifests  ports.ManifestStore
 	checks           []checks.Check
 	puller           ports.Puller
 	applier          ports.Applier
@@ -59,8 +57,6 @@ func New(
 	bus ports.EventBus,
 	localStorage ports.StorageRepository,
 	remoteStorage ports.StorageRepository,
-	localManifests ports.ManifestStore,
-	remoteManifests ports.ManifestStore,
 	preflightChecks []checks.Check,
 	puller ports.Puller,
 	applier ports.Applier,
@@ -77,8 +73,6 @@ func New(
 		bus:              bus,
 		localStorage:     localStorage,
 		remoteStorage:    remoteStorage,
-		localManifests:   localManifests,
-		remoteManifests:  remoteManifests,
 		checks:           preflightChecks,
 		puller:           puller,
 		applier:          applier,
@@ -233,7 +227,7 @@ func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
 	pruneLocal := retaining.New(r.localRetentions, r.bus, failRet, push)
 	commit := committing.New(r.committer, NewCommitOptsResolver(r.commitTargets), pruneLocal, failCommit)
 	run := running.New(r.cmdBuilder, r.readiness, commit, unlock)
-	acquire := acquiring.New(r.locker.Acquire, r.locker.Inspect, r.localManifests.Get, r.locker.HeartbeatInterval(), run, failAcq)
+	acquire := acquiring.New(r.locker.Acquire, r.locker.Inspect, r.locker.HeartbeatInterval(), run, failAcq)
 	pull := pulling.New(r.puller, r.applier, r.headResolver, acquire, failPull)
 	check := checking.New(r.checks, pull, failCheck)
 

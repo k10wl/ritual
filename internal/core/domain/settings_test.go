@@ -176,6 +176,12 @@ func TestSettingsSavePrettyPrints(t *testing.T) {
     "keep_daily": 0,
     "keep_weekly": 0,
     "keep_monthly": 0
+  },
+  "remote_retention": {
+    "keep_last": 0,
+    "keep_daily": 0,
+    "keep_weekly": 0,
+    "keep_monthly": 0
   }
 }`, config.DefaultMinRAMMB, config.DefaultMinDiskMB, config.DefaultMinJavaVersion)
 	if string(content) != expected {

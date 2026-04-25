@@ -33,15 +33,13 @@ type Kit struct {
 	WorldSync     ports.SyncService    // heartbeat uses this for live sync during server running
 }
 
-// Build wires scanners, filters, sync services, and updaters. It reads
-// the local manifest once to seed the mtime scanner. Errors during
-// filter parsing or ritual-updater creation are returned; partial
+// Build wires scanners, filters, refs verbs, and the live-tick sync
+// service. Errors during filter parsing are returned; partial
 // constructions never leak.
 func Build(
 	ctx context.Context,
 	workRoot *os.Root,
 	localStorage, remoteStorage ports.StorageRepository,
-	localManifests, remoteManifests ports.ManifestStore,
 	bus ports.EventBus,
 ) (Kit, error) {
 	hostname, _ := os.Hostname()
@@ -66,7 +64,7 @@ func Build(
 		return Kit{}, fmt.Errorf("server .ritualsync: %w", err)
 	}
 
-	worldScanner := adapters.NewFilteredScanner(worldInnerScanner(ctx, worldsPath, localManifests, worldsFS), worldsFilter)
+	worldScanner := adapters.NewFilteredScanner(adapters.NewFullScanner(worldsFS), worldsFilter)
 	serverScanner := adapters.NewFilteredScanner(adapters.NewFullScanner(serverFS), serverFilter)
 
 	worldSync := services.NewSyncService(
@@ -141,14 +139,3 @@ func newRemoteHeadResolver(remote ports.StorageRepository) pulling.HeadResolver 
 	}
 }
 
-func worldInnerScanner(ctx context.Context, worldsPath string, localManifests ports.ManifestStore, worldsFS fs.FS) ports.DirectoryScanner {
-	m, err := localManifests.Get(ctx)
-	if err != nil || m == nil || len(m.Worlds.XXHashMap) == 0 {
-		return adapters.NewFullScanner(worldsFS)
-	}
-	mtime, err := adapters.NewMtimeScanner(worldsPath, m.Worlds.XXHashSyncAt, m.Worlds.XXHashMap)
-	if err != nil {
-		return adapters.NewFullScanner(worldsFS)
-	}
-	return mtime
-}
