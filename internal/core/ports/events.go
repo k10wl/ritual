@@ -5,9 +5,9 @@ import "fmt"
 // Event is any fmt.Stringer. Open set, self-describing, compile-safe.
 //
 // Concrete event types live next to the package that emits them — e.g.
-// server lifecycle in core/stages/running, sync in core/sync, lock/state
-// in core/ritual, retry/readiness in adapters. See ports.EventBus for
-// subscription mechanics.
+// server lifecycle in core/stages/running, refs progress in adapters/observed,
+// lock/state in core/ritual, retry/readiness in adapters. See ports.EventBus
+// for subscription mechanics.
 //
 // Conventions:
 //   - Use ritual.UpdateInfo{Operation, Message, Data} for generic progress;
