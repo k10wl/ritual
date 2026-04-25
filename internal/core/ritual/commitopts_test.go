@@ -1,18 +1,17 @@
-package app_test
+package ritual_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
-	"ritual/internal/app"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 )
 
 func TestNewCommitOptsResolver_FreshCommitUsesParentRefIDAsParent(t *testing.T) {
-	resolver := app.NewCommitOptsResolver([]string{"world/**"})
+	resolver := ritual.NewCommitOptsResolver([]string{"world/**"})
 	rs := &ritual.RunState{ParentRefID: "pulled-head"}
 
 	got := resolver(rs)
@@ -25,7 +24,7 @@ func TestNewCommitOptsResolver_FreshCommitUsesParentRefIDAsParent(t *testing.T) 
 }
 
 func TestNewCommitOptsResolver_AmendCollapsesLiveTickerDraft(t *testing.T) {
-	resolver := app.NewCommitOptsResolver([]string{"world/**"})
+	resolver := ritual.NewCommitOptsResolver([]string{"world/**"})
 	rs := &ritual.RunState{RefID: "draft-from-ticker", ParentRefID: "pulled-head"}
 
 	got := resolver(rs)

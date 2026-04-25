@@ -1,23 +1,62 @@
-package app_test
+package integration_test
 
 import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"ritual/internal/adapters"
-	"ritual/internal/app"
+	"ritual/internal/adapters/observed"
 	"ritual/internal/core/checks"
 	"ritual/internal/core/domain"
+	"ritual/internal/core/lock"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/retaining"
+	"ritual/internal/subsystems/lifecycle"
+	"ritual/internal/subsystems/pipeline"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 )
+
+// setupRitual wires the same composition as cmd/gui (minus Wails) into a
+// single Attach + cancel pair. The first storage is unused (reserved for
+// future local-only verbs); remoteStorage feeds the locker.
+func setupRitual(
+	t *testing.T,
+	bus ports.EventBus,
+	_, remoteStorage ports.StorageRepository,
+	cs []checks.Check,
+	p ports.Puller, a ports.Applier, hr pulling.HeadResolver,
+	cm ports.Committer, pu ports.Pusher, ct []string,
+	lr, rr []retaining.Job,
+	cb ports.CmdBuilder,
+	rd ports.ReadinessCheck,
+) func() {
+	t.Helper()
+	host, _ := os.Hostname()
+	locker := observed.NewLocker(lock.New(remoteStorage, host), bus)
+	entry := pipeline.Build(pipeline.Deps{
+		Bus: bus, Checks: cs,
+		Puller: p, Applier: a, HeadResolver: hr,
+		Committer: cm, CommitOpts: ritual.NewCommitOptsResolver(ct), Pusher: pu,
+		LocalRetentions: lr, RemoteRetentions: rr,
+		CmdBuilder: cb, Readiness: rd,
+		AcquireFn: locker.Acquire, InspectFn: locker.Inspect, ReleaseFn: locker.Release,
+		HeartbeatInterval: locker.HeartbeatInterval(),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	stop := lifecycle.Attach(ctx, bus, entry)
+	return func() {
+		stop()
+		cancel()
+	}
+}
 
 // --- Fakes ---
 
@@ -85,7 +124,7 @@ func (fakeCmdBuilder) Build(ctx context.Context, _ io.Reader, _ io.Writer) (*exe
 	return exec.CommandContext(ctx, "echo", "ok"), nil
 }
 
-func waitForStatus(t *testing.T, ch <-chan ports.Event, want app.Outcome, timeout time.Duration) {
+func waitForStatus(t *testing.T, ch <-chan ports.Event, want lifecycle.Outcome, timeout time.Duration) {
 	t.Helper()
 	deadline := time.After(timeout)
 	for {
@@ -96,7 +135,7 @@ func waitForStatus(t *testing.T, ch <-chan ports.Event, want app.Outcome, timeou
 			if !ok {
 				t.Fatal("channel closed")
 			}
-			if sc, ok := e.(app.StatusChanged); ok && sc.Status == want {
+			if sc, ok := e.(lifecycle.StatusChanged); ok && sc.Status == want {
 				return
 			}
 		}
@@ -108,23 +147,18 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 	ch, unsub := bus.Subscribe()
 	defer unsub()
 
-	r := app.New(
-		bus,
+	defer setupRitual(t, bus,
 		fakeStorage{}, fakeStorage{},
-
 		[]checks.Check{noopCheck},
 		noopPuller{}, noopApplier{}, noopHead,
 		noopCommitter{}, noopPusher{}, []string{"**"},
 		[]retaining.Job{noopJob}, []retaining.Job{noopJob},
 		fakeCmdBuilder{},
 		immediateReady{},
-	)
+	)()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	r.Listen(ctx)
-	bus.Publish(app.StartRequested{})
-	waitForStatus(t, ch, app.Done, 5*time.Second)
+	bus.Publish(ritual.StartRequested{})
+	waitForStatus(t, ch, lifecycle.Done, 5*time.Second)
 
 	assert.True(t, true, "pipeline reached Done")
 }
@@ -135,27 +169,21 @@ func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 	defer unsub()
 
 	flaky := &failOncePuller{}
-	r := app.New(
-		bus,
+	defer setupRitual(t, bus,
 		fakeStorage{}, fakeStorage{},
-
 		[]checks.Check{noopCheck},
 		flaky, noopApplier{}, noopHead,
 		noopCommitter{}, noopPusher{}, []string{"**"},
 		[]retaining.Job{noopJob}, []retaining.Job{noopJob},
 		fakeCmdBuilder{},
 		immediateReady{},
-	)
+	)()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	r.Listen(ctx)
+	bus.Publish(ritual.StartRequested{})
+	waitForStatus(t, ch, lifecycle.Failed, 5*time.Second)
 
-	bus.Publish(app.StartRequested{})
-	waitForStatus(t, ch, app.Failed, 5*time.Second)
-
-	bus.Publish(app.RetryRequested{})
-	waitForStatus(t, ch, app.Done, 5*time.Second)
+	bus.Publish(ritual.RetryRequested{})
+	waitForStatus(t, ch, lifecycle.Done, 5*time.Second)
 
 	assert.Equal(t, 2, flaky.calls, "puller called twice: fail + retry")
 }
@@ -178,24 +206,18 @@ func TestRitual_Stop_CancelsRunning(t *testing.T) {
 	defer unsub()
 
 	blocker := &blockingCmdBuilder{ready: make(chan struct{})}
-	r := app.New(
-		bus,
+	defer setupRitual(t, bus,
 		fakeStorage{}, fakeStorage{},
-
 		nil, noopPuller{}, noopApplier{}, noopHead, nil, nil, nil, nil, nil,
 		blocker,
 		immediateReady{},
-	)
+	)()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	r.Listen(ctx)
-
-	bus.Publish(app.StartRequested{})
+	bus.Publish(ritual.StartRequested{})
 	<-blocker.ready
 
-	bus.Publish(app.StopRequested{})
-	waitForStatus(t, ch, app.Done, 5*time.Second)
+	bus.Publish(ritual.StopRequested{})
+	waitForStatus(t, ch, lifecycle.Done, 5*time.Second)
 }
 
 // Story #7 — Start is only rejected while Running. After terminal states
@@ -206,28 +228,22 @@ func TestRitual_Start_AfterDone_StartsAgain(t *testing.T) {
 	ch, unsub := bus.Subscribe()
 	defer unsub()
 
-	r := app.New(
-		bus,
+	defer setupRitual(t, bus,
 		fakeStorage{}, fakeStorage{},
-
 		[]checks.Check{noopCheck},
 		noopPuller{}, noopApplier{}, noopHead,
 		noopCommitter{}, noopPusher{}, []string{"**"},
 		[]retaining.Job{noopJob}, []retaining.Job{noopJob},
 		fakeCmdBuilder{},
 		immediateReady{},
-	)
+	)()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	r.Listen(ctx)
+	bus.Publish(ritual.StartRequested{})
+	waitForStatus(t, ch, lifecycle.Done, 5*time.Second)
 
-	bus.Publish(app.StartRequested{})
-	waitForStatus(t, ch, app.Done, 5*time.Second)
-
-	bus.Publish(app.StartRequested{})
-	waitForStatus(t, ch, app.Running, 5*time.Second)
-	waitForStatus(t, ch, app.Done, 5*time.Second)
+	bus.Publish(ritual.StartRequested{})
+	waitForStatus(t, ch, lifecycle.Running, 5*time.Second)
+	waitForStatus(t, ch, lifecycle.Done, 5*time.Second)
 }
 
 func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
@@ -235,20 +251,14 @@ func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
 	ch, unsub := bus.Subscribe()
 	defer unsub()
 
-	r := app.New(
-		bus,
+	defer setupRitual(t, bus,
 		fakeStorage{}, fakeStorage{},
-
 		nil, noopPuller{}, noopApplier{}, noopHead, nil, nil, nil, nil, nil,
 		fakeCmdBuilder{},
 		immediateReady{},
-	)
+	)()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	r.Listen(ctx)
-
-	bus.Publish(app.RetryRequested{})
+	bus.Publish(ritual.RetryRequested{})
 
 	deadline := time.After(time.Second)
 	for {
@@ -256,7 +266,7 @@ func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
 		case <-deadline:
 			return // no crash, acceptable
 		case e := <-ch:
-			if sc, ok := e.(app.StatusChanged); ok && sc.Err != nil {
+			if sc, ok := e.(lifecycle.StatusChanged); ok && sc.Err != nil {
 				assert.Contains(t, sc.Err.Error(), "cannot retry")
 				return
 			}

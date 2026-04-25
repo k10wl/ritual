@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"ritual/internal/app"
+	"ritual/internal/core/ritual"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
@@ -65,20 +65,20 @@ func (c *ControlService) Start(port int, memoryMB int) error {
 	if err := settings.Save(); err != nil {
 		return fmt.Errorf("save settings: %w", err)
 	}
-	c.bus.Publish(app.StartRequested{})
+	c.bus.Publish(ritual.StartRequested{})
 	return nil
 }
 
 // Stop publishes a StopRequested command. The Ritual orchestrator
 // decides whether it is a legal stop at this moment.
 func (c *ControlService) Stop() {
-	c.bus.Publish(app.StopRequested{})
+	c.bus.Publish(ritual.StopRequested{})
 }
 
 // Retry publishes a RetryRequested command; the Ritual orchestrator
 // rejects the request if status is not Failed.
 func (c *ControlService) Retry() {
-	c.bus.Publish(app.RetryRequested{})
+	c.bus.Publish(ritual.RetryRequested{})
 }
 
 // GetSnapshot returns the current GUI view model. The frontend calls this

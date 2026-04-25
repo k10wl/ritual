@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"ritual/internal/adapters"
-	"ritual/internal/app"
+	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/acquiring"
@@ -153,7 +153,7 @@ func TestProjection_LockHeldInfo_RoutesToLockedStageWithHolder(t *testing.T) {
 
 func TestProjection_StatusFailed_FlipsStageToFailedWithErrorText(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
-		bus.Publish(app.StatusChanged{Status: app.Failed, Err: errors.New("remote storage exploded")})
+		bus.Publish(lifecycle.StatusChanged{Status: lifecycle.Failed, Err: errors.New("remote storage exploded")})
 	})
 	final := last(vms)
 	assert.Equal(t, projection.StageFailed, final.Stage, "StatusChanged{Failed} must flip the UI to Failed stage so the red banner renders")
@@ -163,7 +163,7 @@ func TestProjection_StatusFailed_FlipsStageToFailedWithErrorText(t *testing.T) {
 func TestProjection_StatusFailedAfterLockHeld_StaysOnLockedScreen(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(acquiring.LockHeldInfo{Holder: "other"})
-		bus.Publish(app.StatusChanged{Status: app.Failed, Err: errors.New("already locked by other")})
+		bus.Publish(lifecycle.StatusChanged{Status: lifecycle.Failed, Err: errors.New("already locked by other")})
 	})
 	final := last(vms)
 	assert.Equal(t, projection.StageLocked, final.Stage, "after LockHeldInfo the subsequent StatusChanged{Failed} is redundant — UI must stay on the friendly Locked screen, not flip to a scary error banner")
@@ -173,7 +173,7 @@ func TestProjection_StatusFailedAfterLockHeld_StaysOnLockedScreen(t *testing.T) 
 func TestProjection_StatusDone_ResetsToIdle(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StageRunning})
-		bus.Publish(app.StatusChanged{Status: app.Done})
+		bus.Publish(lifecycle.StatusChanged{Status: lifecycle.Done})
 	})
 	final := last(vms)
 	assert.Equal(t, projection.StageIdle, final.Stage, "successful Done terminal status must return the UI to Idle so the user can start another session")

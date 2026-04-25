@@ -17,16 +17,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"ritual"
+	ritualassets "ritual"
 	"ritual/internal/adapters"
 	"ritual/internal/adapters/observed"
 	"ritual/internal/adapters/progress"
-	"ritual/internal/app"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
+	"ritual/internal/core/lock"
+	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/refs"
+	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pulling"
+	"ritual/internal/subsystems/lifecycle"
+	"ritual/internal/subsystems/pipeline"
 	"ritual/internal/subsystems/retention"
 	"strings"
 	"ritual/internal/gui/control"
@@ -60,7 +64,7 @@ func main() {
 			application.NewService(controlSvc),
 		},
 		Assets: application.AssetOptions{
-			Handler: application.AssetFileServerFS(ritual.GUIAssets),
+			Handler: application.AssetFileServerFS(ritualassets.GUIAssets),
 		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
@@ -111,18 +115,18 @@ func main() {
 		shuttingDown.Store(true)
 		e.Cancel()
 		go func() {
-			runtime.bus.Publish(app.StopRequested{})
+			runtime.bus.Publish(ritual.StopRequested{})
 			waitTerminal(runtime.bus, 20*time.Second)
 			wailsApp.Quit()
 		}()
 	})
 
 	ctx := wailsApp.Context()
-	runtime.ritual.Listen(ctx)
+	stopLifecycle := lifecycle.Attach(ctx, runtime.bus, runtime.entry)
+	defer stopLifecycle()
 	go runtime.projection.Run(ctx)
 	go runtime.logsink.Run(ctx)
 	go runtime.ticker.Run(ctx)
-	runtime.bus.Publish(app.StatusChanged{Status: app.Idle})
 
 	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)
@@ -133,7 +137,8 @@ func main() {
 // Kept internal to cmd/gui — not a public API.
 type guiRuntime struct {
 	bus         ports.EventBus
-	ritual      *app.Ritual
+	entry       machine.Strategy[ritual.RunState]
+	locker      *observed.Locker
 	projection  *projection.Projection
 	logsink     *logsink.Sink
 	viewEmitter *wailsViewEmitter
@@ -242,16 +247,26 @@ func buildRuntime() (*guiRuntime, error) {
 		return nil, fmt.Errorf("retention: %w", err)
 	}
 
-	r := app.New(
-		bus,
-		localStorage, remoteStorage,
-		nil, // no conditions for POC
-		puller, applier, headResolver,
-		committer, pusher, commitTargets,
-		localRets, remoteRets,
-		cmdBuilder,
-		readiness,
-	)
+	host, _ := os.Hostname()
+	locker := observed.NewLocker(lock.New(remoteStorage, host), bus)
+	entry := pipeline.Build(pipeline.Deps{
+		Bus:               bus,
+		Checks:            nil, // no conditions for POC
+		Puller:            puller,
+		Applier:           applier,
+		HeadResolver:      headResolver,
+		Committer:         committer,
+		CommitOpts:        ritual.NewCommitOptsResolver(commitTargets),
+		Pusher:            pusher,
+		LocalRetentions:   localRets,
+		RemoteRetentions:  remoteRets,
+		CmdBuilder:        cmdBuilder,
+		Readiness:         readiness,
+		AcquireFn:         locker.Acquire,
+		InspectFn:         locker.Inspect,
+		ReleaseFn:         locker.Release,
+		HeartbeatInterval: locker.HeartbeatInterval(),
+	})
 
 	// Progress ticker over remote counters — downloads dominate user-visible
 	// throughput during Pull. Local counters stay wired for a future ticker
@@ -268,7 +283,8 @@ func buildRuntime() (*guiRuntime, error) {
 
 	return &guiRuntime{
 		bus:         bus,
-		ritual:      r,
+		entry:       entry,
+		locker:      locker,
 		projection:  proj,
 		logsink:     sink,
 		viewEmitter: viewEmitter,
@@ -316,11 +332,11 @@ func waitTerminal(bus ports.EventBus, budget time.Duration) {
 			if !ok {
 				return
 			}
-			sc, ok := evt.(app.StatusChanged)
+			sc, ok := evt.(lifecycle.StatusChanged)
 			if !ok {
 				continue
 			}
-			if sc.Status == app.Done || sc.Status == app.Failed || sc.Status == app.Idle {
+			if sc.Status == lifecycle.Done || sc.Status == lifecycle.Failed || sc.Status == lifecycle.Idle {
 				return
 			}
 		case <-deadline.C:

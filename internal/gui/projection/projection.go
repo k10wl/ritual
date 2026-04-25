@@ -2,7 +2,7 @@ package projection
 
 import (
 	"context"
-	"ritual/internal/app"
+	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/acquiring"
@@ -91,7 +91,7 @@ func (p *Projection) fold(evt ports.Event) bool {
 		p.state.LockHolder = e.Holder
 		p.state.Label = e.Holder + " is playing"
 		p.state.ErrorText = ""
-	case app.StatusChanged:
+	case lifecycle.StatusChanged:
 		p.onStatusChanged(e)
 	default:
 		return false
@@ -119,11 +119,11 @@ func (p *Projection) onStateChanged(to string) {
 	}
 }
 
-func (p *Projection) onStatusChanged(e app.StatusChanged) {
+func (p *Projection) onStatusChanged(e lifecycle.StatusChanged) {
 	switch e.Status {
-	case app.Idle, app.Done:
+	case lifecycle.Idle, lifecycle.Done:
 		p.state = ViewModel{Stage: StageIdle}
-	case app.Failed:
+	case lifecycle.Failed:
 		if p.state.Stage == StageLocked {
 			return
 		}
@@ -131,7 +131,7 @@ func (p *Projection) onStatusChanged(e app.StatusChanged) {
 		if e.Err != nil {
 			p.state.ErrorText = e.Err.Error()
 		}
-	case app.Running:
+	case lifecycle.Running:
 	}
 }
 

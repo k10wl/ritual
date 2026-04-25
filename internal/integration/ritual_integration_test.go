@@ -30,7 +30,7 @@
 //   - No table-driven tests. Each scenario is its own function.
 //
 //   - Every assertion has a message string. Bare assertions are not allowed.
-package app_test
+package integration_test
 
 import (
 	"bytes"
@@ -45,7 +45,6 @@ import (
 	"path/filepath"
 	"ritual/internal/adapters"
 	"ritual/internal/adapters/observed"
-	"ritual/internal/app"
 	"ritual/internal/config"
 	"ritual/internal/core/checks"
 	"ritual/internal/core/domain"
@@ -53,16 +52,17 @@ import (
 	"ritual/internal/core/ports"
 	"ritual/internal/core/refs"
 	"ritual/internal/core/retention"
+	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/retaining"
 	"ritual/internal/core/stages/running"
+	"ritual/internal/subsystems/lifecycle"
+	"ritual/internal/subsystems/pipeline"
 	subretention "ritual/internal/subsystems/retention"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	stagenames "ritual/internal/core/ritual"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -307,45 +307,46 @@ func (r *testRitual) startRitualFull(t *testing.T, preflightChecks []checks.Chec
 	puller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
 	committer, pusher, commitTargets := r.buildCommittingVerbs(t, worldsPath, scanner)
 
-	ritual := app.New(
-		r.bus,
-		r.local, r.remote,
-		preflightChecks,
-		puller, applier, headResolver,
-		committer, pusher, commitTargets,
-		r.localRetentions, r.remoteRetentions,
-		cmdBuilder,
-		immediateReady{},
-	)
-
-	ritual.Listen(r.ctx)
-	r.bus.Publish(app.StartRequested{})
+	host, _ := os.Hostname()
+	locker := observed.NewLocker(lock.New(r.remote, host), r.bus)
+	entry := pipeline.Build(pipeline.Deps{
+		Bus: r.bus, Checks: preflightChecks,
+		Puller: puller, Applier: applier, HeadResolver: headResolver,
+		Committer: committer, CommitOpts: ritual.NewCommitOptsResolver(commitTargets), Pusher: pusher,
+		LocalRetentions: r.localRetentions, RemoteRetentions: r.remoteRetentions,
+		CmdBuilder: cmdBuilder, Readiness: immediateReady{},
+		AcquireFn: locker.Acquire, InspectFn: locker.Inspect, ReleaseFn: locker.Release,
+		HeartbeatInterval: locker.HeartbeatInterval(),
+	})
+	stop := lifecycle.Attach(r.ctx, r.bus, entry)
+	t.Cleanup(stop)
+	r.bus.Publish(ritual.StartRequested{})
 	return server
 }
 
 // ---------- send helpers ----------
 
 func (r *testRitual) sendStop() {
-	r.bus.Publish(app.StopRequested{})
+	r.bus.Publish(ritual.StopRequested{})
 }
 
 func (r *testRitual) sendRetry() {
-	r.bus.Publish(app.RetryRequested{})
+	r.bus.Publish(ritual.RetryRequested{})
 }
 
 // ---------- wait helpers ----------
 
 func (r *testRitual) waitDone(t *testing.T) {
 	t.Helper()
-	waitForIntegrationStatus(t, r.ch, app.Done, time.Second)
+	waitForIntegrationStatus(t, r.ch, lifecycle.Done, time.Second)
 }
 
 func (r *testRitual) waitFailed(t *testing.T) {
 	t.Helper()
-	waitForIntegrationStatus(t, r.ch, app.Failed, time.Second)
+	waitForIntegrationStatus(t, r.ch, lifecycle.Failed, time.Second)
 }
 
-func waitForIntegrationStatus(t *testing.T, ch <-chan ports.Event, want app.Outcome, timeout time.Duration) {
+func waitForIntegrationStatus(t *testing.T, ch <-chan ports.Event, want lifecycle.Outcome, timeout time.Duration) {
 	t.Helper()
 	deadline := time.After(timeout)
 	for {
@@ -356,7 +357,7 @@ func waitForIntegrationStatus(t *testing.T, ch <-chan ports.Event, want app.Outc
 			if !ok {
 				t.Fatal("event channel closed while waiting for status")
 			}
-			if sc, ok := e.(app.StatusChanged); ok && sc.Status == want {
+			if sc, ok := e.(lifecycle.StatusChanged); ok && sc.Status == want {
 				return
 			}
 		}
@@ -613,7 +614,7 @@ func collectBusEvents(bus ports.EventBus) func() []ports.Event {
 func stageSequence(events []ports.Event) []string {
 	seq := []string{}
 	push := func(name string) {
-		if name == stagenames.StageDone || name == stagenames.StageFailed {
+		if name == ritual.StageDone || name == ritual.StageFailed {
 			return
 		}
 		if len(seq) > 0 && seq[len(seq)-1] == name {
@@ -622,7 +623,7 @@ func stageSequence(events []ports.Event) []string {
 		seq = append(seq, name)
 	}
 	for _, e := range events {
-		sc, ok := e.(stagenames.StateChangedInfo)
+		sc, ok := e.(ritual.StateChangedInfo)
 		if !ok {
 			continue
 		}
@@ -752,19 +753,19 @@ func (r *testRitual) startRitualWithFlakyPuller(t *testing.T, flaky *failOnceInt
 	flaky.inner = realPuller
 	committer, pusher, commitTargets := r.buildCommittingVerbs(t, worldsPath, scanner)
 
-	rit := app.New(
-		r.bus,
-		r.local, r.remote,
-		nil,
-		flaky, applier, headResolver,
-		committer, pusher, commitTargets,
-		nil, nil,
-		cmdBuilder,
-		immediateReady{},
-	)
-
-	rit.Listen(r.ctx)
-	r.bus.Publish(app.StartRequested{})
+	host, _ := os.Hostname()
+	locker := observed.NewLocker(lock.New(r.remote, host), r.bus)
+	entry := pipeline.Build(pipeline.Deps{
+		Bus:    r.bus,
+		Puller: flaky, Applier: applier, HeadResolver: headResolver,
+		Committer: committer, CommitOpts: ritual.NewCommitOptsResolver(commitTargets), Pusher: pusher,
+		CmdBuilder: cmdBuilder, Readiness: immediateReady{},
+		AcquireFn: locker.Acquire, InspectFn: locker.Inspect, ReleaseFn: locker.Release,
+		HeartbeatInterval: locker.HeartbeatInterval(),
+	})
+	stop := lifecycle.Attach(r.ctx, r.bus, entry)
+	t.Cleanup(stop)
+	r.bus.Publish(ritual.StartRequested{})
 	return server
 }
 
@@ -827,15 +828,15 @@ func TestIntegration_PipelineOrder_MatchesCheckPullAcquireRunCommitRetainPushRet
 	events := drain()
 
 	want := []string{
-		stagenames.StageChecking,
-		stagenames.StagePulling,
-		stagenames.StageAcquiring,
-		stagenames.StageRunning,
-		stagenames.StageCommitting,
-		stagenames.StageRetaining,
-		stagenames.StagePushing,
-		stagenames.StageRetaining,
-		stagenames.StageUnlocking,
+		ritual.StageChecking,
+		ritual.StagePulling,
+		ritual.StageAcquiring,
+		ritual.StageRunning,
+		ritual.StageCommitting,
+		ritual.StageRetaining,
+		ritual.StagePushing,
+		ritual.StageRetaining,
+		ritual.StageUnlocking,
 	}
 	assert.Equal(t, want, stageSequence(events),
 		"post-session chain per spec §2267: commit writes local ref, local prune sweeps orphan blobs before they escape, push uploads ref+blobs, remote prune reaps once remote is authoritative, unlock last")
@@ -880,9 +881,9 @@ func TestIntegration_ServerCrash_SkipsCommitAndPush(t *testing.T) {
 	events := drain()
 
 	stages := stageSequence(events)
-	assert.NotContains(t, stages, stagenames.StageCommitting,
+	assert.NotContains(t, stages, ritual.StageCommitting,
 		"server crash (exit code != 0) must skip Committing — mid-mutation workdir is not a safe snapshot source")
-	assert.NotContains(t, stages, stagenames.StagePushing,
+	assert.NotContains(t, stages, ritual.StagePushing,
 		"server crash must skip Pushing — nothing was committed, nothing to push")
 }
 
@@ -1043,7 +1044,7 @@ func allRetentionFinishesNilErr(events []ports.Event) bool {
 func countRetainStarts(events []ports.Event) int {
 	n := 0
 	for _, e := range events {
-		s, ok := e.(stagenames.StartInfo)
+		s, ok := e.(ritual.StartInfo)
 		if ok && s.Operation == "retain" {
 			n++
 		}
@@ -1052,20 +1053,20 @@ func countRetainStarts(events []ports.Event) int {
 }
 
 func TestIntegration_ServerLifecycleEventsEmitted_StartingReadyStoppingStopped(t *testing.T) {
-	ritual := newRitual(t)
+	r := newRitual(t)
 
-	seedRemoteWorld(t, ritual,
+	seedRemoteWorld(t, r,
 		file("world/level.dat", []byte("level")),
 	)
 
-	drain := collectBusEvents(ritual.bus)
+	drain := collectBusEvents(r.bus)
 
-	server := ritual.startRitual(t)
+	server := r.startRitual(t)
 	server.waitReady(t)
-	ritual.bus.Publish(app.StopRequested{})
+	r.bus.Publish(ritual.StopRequested{})
 	time.Sleep(50 * time.Millisecond)
 	server.stdin.Close()
-	ritual.waitDone(t)
+	r.waitDone(t)
 
 	events := drain()
 
