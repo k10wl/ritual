@@ -11,8 +11,15 @@ const (
 	StagePushing    = "Pushing"
 	StageUnlocking  = "Unlocking"
 	StageRetaining  = "Retaining"
-	StageFailed     = "Failed"
-	StageDone       = "Done"
+	// StageRetainingLocal / StageRetainingRemote attribute a retaining
+	// failure to the side that actually failed so retry re-enters the
+	// correct instance instead of replaying the local sweep before the
+	// remote one. The strategy itself still reports StageRetaining; only
+	// the failed-stage instance carries the suffix.
+	StageRetainingLocal  = "Retaining/Local"
+	StageRetainingRemote = "Retaining/Remote"
+	StageFailed          = "Failed"
+	StageDone            = "Done"
 )
 
 // Named is implemented by every stage strategy. The ritual driver uses

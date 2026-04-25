@@ -12,15 +12,9 @@ import (
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
-	"ritual/internal/core/stages/acquiring"
-	"ritual/internal/core/stages/checking"
-	"ritual/internal/core/stages/committing"
-	"ritual/internal/core/stages/failed"
 	"ritual/internal/core/stages/pulling"
-	"ritual/internal/core/stages/pushing"
 	"ritual/internal/core/stages/retaining"
-	"ritual/internal/core/stages/running"
-	"ritual/internal/core/stages/unlocking"
+	"ritual/internal/subsystems/pipeline"
 	"sync/atomic"
 	"time"
 )
@@ -200,7 +194,7 @@ func (r *Ritual) retry(ctx context.Context) {
 	r.userStop.Store(false)
 	r.runner.RunState().Err = nil
 	go func() {
-		err := r.runner.RunCurrent(ctx)
+		err := r.runner.Resume(ctx, r.entry)
 		if err == nil {
 			err = r.runner.RunState().Err
 		}
@@ -214,29 +208,22 @@ func (r *Ritual) setStatus(status Outcome) {
 }
 
 func (r *Ritual) buildChain() machine.Strategy[ritual.RunState] {
-	failCheck := failed.New(ritual.StageChecking)
-	failPull := failed.New(ritual.StagePulling)
-	failAcq := failed.New(ritual.StageAcquiring)
-	failCommit := failed.New(ritual.StageCommitting)
-	failPush := failed.New(ritual.StagePushing)
-	failRet := failed.New(ritual.StageRetaining)
-
-	unlock := unlocking.New(r.locker.Release, nil)
-	pruneRemote := retaining.New(r.remoteRetentions, r.bus, failRet, unlock)
-	push := pushing.New(r.pusher, pruneRemote, failPush)
-	pruneLocal := retaining.New(r.localRetentions, r.bus, failRet, push)
-	commit := committing.New(r.committer, NewCommitOptsResolver(r.commitTargets), pruneLocal, failCommit)
-	run := running.New(r.cmdBuilder, r.readiness, commit, unlock)
-	acquire := acquiring.New(r.locker.Acquire, r.locker.Inspect, r.locker.HeartbeatInterval(), run, failAcq)
-	pull := pulling.New(r.puller, r.applier, r.headResolver, acquire, failPull)
-	check := checking.New(r.checks, pull, failCheck)
-
-	failCheck.SetRetry(check)
-	failPull.SetRetry(pull)
-	failAcq.SetRetry(acquire)
-	failCommit.SetRetry(commit)
-	failPush.SetRetry(push)
-	failRet.SetRetry(pruneLocal)
-
-	return check
+	return pipeline.Build(pipeline.Deps{
+		Bus:               r.bus,
+		Checks:            r.checks,
+		Puller:            r.puller,
+		Applier:           r.applier,
+		HeadResolver:      r.headResolver,
+		Committer:         r.committer,
+		CommitOpts:        NewCommitOptsResolver(r.commitTargets),
+		Pusher:            r.pusher,
+		LocalRetentions:   r.localRetentions,
+		RemoteRetentions:  r.remoteRetentions,
+		CmdBuilder:        r.cmdBuilder,
+		Readiness:         r.readiness,
+		AcquireFn:         r.locker.Acquire,
+		InspectFn:         r.locker.Inspect,
+		ReleaseFn:         r.locker.Release,
+		HeartbeatInterval: r.locker.HeartbeatInterval(),
+	})
 }

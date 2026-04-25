@@ -36,6 +36,18 @@ func (r *Runner) RunCurrent(ctx context.Context) error {
 	return r.drive(ctx)
 }
 
+// Resume re-enters at the last stopped strategy, falling back to the
+// supplied entry strategy when the chain has already terminated. Used by
+// the orchestrator to recover from terminal stages (e.g. running crash
+// routes through unlocking and ends the chain) where RunCurrent has no
+// current strategy to replay.
+func (r *Runner) Resume(ctx context.Context, fallback machine.Strategy[RunState]) error {
+	if r.current == nil {
+		r.current = fallback
+	}
+	return r.drive(ctx)
+}
+
 // drive runs the state machine loop. On error, r.current stays on the
 // strategy that errored so RunCurrent re-enters there (e.g. the failed
 // strategy follows its onRetry back-edge on the next attempt).

@@ -73,7 +73,11 @@ func (f *failOncePuller) Pull(_ context.Context, _ domain.RefID) error {
 
 var _ pulling.HeadResolver = noopHead
 
-func noopJob(_ context.Context) error { return nil }
+var noopJob = retaining.Job{
+	Kind:  retaining.KindRetention,
+	Label: "noop",
+	Run:   func(_ context.Context) error { return nil },
+}
 
 type fakeCmdBuilder struct{}
 

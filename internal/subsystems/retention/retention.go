@@ -1,6 +1,8 @@
-// Package retention builds the retention Job slice used by the Retaining
-// stage. Composition root for refs-side retention+GC and logs-side
-// retention.
+// Package retention builds the retention + GC Job slices used by the
+// Retaining stage. Composition root for refs-side retention + GC and
+// logs-side retention. Local and remote slices mirror the spec's
+// commit→pruneLocal→push→pruneRemote pairing (§2297-2309); each side
+// emits typed Retention*/GC* events keyed by Label.
 package retention
 
 import (
@@ -13,9 +15,10 @@ import (
 	"ritual/internal/core/stages/retaining"
 )
 
-// Build wires the retention Jobs split per side, matching the spec's
-// commit→pruneLocal→push→pruneRemote pairing (§2297-2309). Local jobs cover
-// refs-local + logs-local; remote jobs cover refs-remote. Both sides read
+// Build wires the retention Jobs split per side. Local jobs cover
+// refs-local (retention + GC) + logs-local; remote jobs cover refs-remote
+// (retention + GC). Order within a side matters: retention drops manifests
+// first, then GC mark-sweeps the orphan blobs they exposed. Both sides read
 // rules from the host settings file (no manifest plumbing).
 func Build(
 	localStorage, remoteStorage ports.StorageRepository,
@@ -37,20 +40,29 @@ func Build(
 	logRules := domain.RetentionRules{KeepLast: config.MaxLogFiles}
 
 	local = []retaining.Job{
-		retaining.NewRefsJob(
+		retaining.NewRetentionRefsJob(
+			"refs-local",
 			services.NewObservedRetention(services.NewRefsRetention(localStorage, localRules), bus, "refs-local"),
 			localStorage,
+		),
+		retaining.NewGCRefsJob(
+			"gc-refs-local",
 			refs.NewCollector(localStorage),
 		),
 		retaining.NewLogsJob(
-			services.NewObservedRetention(services.NewLogsRetention(localStorage, logRules), bus, "logs"),
+			"logs-local",
+			services.NewObservedRetention(services.NewLogsRetention(localStorage, logRules), bus, "logs-local"),
 			localStorage,
 		),
 	}
 	remote = []retaining.Job{
-		retaining.NewRefsJob(
+		retaining.NewRetentionRefsJob(
+			"refs-remote",
 			services.NewObservedRetention(services.NewRefsRetention(remoteStorage, remoteRules), bus, "refs-remote"),
 			remoteStorage,
+		),
+		retaining.NewGCRefsJob(
+			"gc-refs-remote",
 			refs.NewCollector(remoteStorage),
 		),
 	}

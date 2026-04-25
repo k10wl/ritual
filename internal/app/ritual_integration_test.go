@@ -56,6 +56,7 @@ import (
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/retaining"
 	"ritual/internal/core/stages/running"
+	"ritual/internal/subsystems/retention"
 	"strings"
 	"sync"
 	"testing"
@@ -915,10 +916,12 @@ func TestIntegration_Prune_BothInstancesExecute(t *testing.T) {
 	// instance, swapped slots, missing onOK) manifests as missing bus events.
 	keepAll := domain.RetentionRules{KeepLast: 999}
 	r.localRetentions = []retaining.Job{
-		retaining.NewRefsJob(services.NewRefsRetention(r.local, keepAll), r.local, refs.NewCollector(r.local)),
+		retaining.NewRetentionRefsJob("refs-local", services.NewRefsRetention(r.local, keepAll), r.local),
+		retaining.NewGCRefsJob("gc-refs-local", refs.NewCollector(r.local)),
 	}
 	r.remoteRetentions = []retaining.Job{
-		retaining.NewRefsJob(services.NewRefsRetention(r.local, keepAll), r.local, refs.NewCollector(r.local)),
+		retaining.NewRetentionRefsJob("refs-remote", services.NewRefsRetention(r.local, keepAll), r.local),
+		retaining.NewGCRefsJob("gc-refs-remote", refs.NewCollector(r.local)),
 	}
 
 	drain := collectBusEvents(r.bus)
@@ -937,6 +940,126 @@ func TestIntegration_Prune_BothInstancesExecute(t *testing.T) {
 	starts := countRetainStarts(drain())
 	assert.Equal(t, 2, starts,
 		"retain StartInfo must fire twice per run — once paired with committing (local prune), once paired with pushing (remote prune) per spec §2297. starts!=2 means one retaining.Strategy instance was dropped from buildChain")
+}
+
+func TestIntegration_Retention_BuildWiresLocalAndRemoteJobs_BothSidesEmitSplitEvents(t *testing.T) {
+	r := newRitual(t)
+
+	settingsRoot := t.TempDir()
+	originalRootPath := config.RootPath
+	config.RootPath = settingsRoot
+	t.Cleanup(func() { config.RootPath = originalRootPath })
+
+	keepAll := domain.RetentionRules{KeepLast: 999}
+	require.NoError(t, (&domain.Settings{
+		Port:            25565,
+		Memory:          4096,
+		MinRAMMB:        1,
+		MinDiskMB:       1,
+		MinJavaVersion:  1,
+		LocalRetention:  keepAll,
+		RemoteRetention: keepAll,
+	}).Save(),
+		"settings.Save must succeed before retention.Build — Build reads rules via domain.LoadSettings")
+
+	localJobs, remoteJobs, err := retention.Build(r.local, r.local, r.bus)
+	require.NoError(t, err,
+		"retention.Build must wire jobs from real storage + bus without error — composition root contract")
+	require.Len(t, localJobs, 3,
+		"local side must wire three Jobs in order: refs retention, refs GC, logs retention. Length drift means a slot is missing or duplicated; Strategy iterates the slice verbatim, so a missing Job silently skips a sweep")
+	require.Len(t, remoteJobs, 2,
+		"remote side must wire exactly two Jobs: refs retention then refs GC. Logs are local-only — adding a logs Job to remote means we tried to retain remote logs that do not exist")
+
+	assert.Equal(t, retaining.KindRetention, localJobs[0].Kind,
+		"local[0] must be Retention so manifests drop before GC mark-sweeps blobs they exposed; reverse order leaks orphan blobs that survive until the next session")
+	assert.Equal(t, "refs-local", localJobs[0].Label,
+		"local[0] Label must round-trip into per-Job events as refs-local — subscribers split sides via Label, not via stage chain inspection")
+	assert.Equal(t, retaining.KindGC, localJobs[1].Kind,
+		"local[1] must be GC and run after local[0] retention — see §2297 retention pairing rationale")
+	assert.Equal(t, "gc-refs-local", localJobs[1].Label,
+		"local[1] Label must be gc-refs-local so a stuck GC is attributable to the local side")
+	assert.Equal(t, retaining.KindRetention, localJobs[2].Kind,
+		"local[2] (logs) must be Retention — logs have no content-addressed blob store so no GC counterpart")
+	assert.Equal(t, "logs-local", localJobs[2].Label,
+		"local[2] Label distinguishes logs from refs in the same side")
+
+	assert.Equal(t, retaining.KindRetention, remoteJobs[0].Kind,
+		"remote[0] must be Retention — remote sweep must drop manifests before GC, identical ordering rule as local")
+	assert.Equal(t, "refs-remote", remoteJobs[0].Label,
+		"remote[0] Label must be refs-remote — subscribers split sides via Label so a remote-only retention failure is attributable")
+	assert.Equal(t, retaining.KindGC, remoteJobs[1].Kind,
+		"remote[1] must be GC and run after remote[0] retention; reverse order would leave orphan blobs after retention drops a manifest")
+	assert.Equal(t, "gc-refs-remote", remoteJobs[1].Label,
+		"remote[1] Label must be gc-refs-remote so the remote-side GC can be observed independently of the local one")
+
+	r.localRetentions = localJobs
+	r.remoteRetentions = remoteJobs
+
+	drain := collectBusEvents(r.bus)
+	seedRemoteWorld(t, r,
+		file("world/level.dat", []byte("level data")),
+		file("world/region/r.0.0.mca", []byte("region data")),
+	)
+
+	server := r.startRitual(t)
+	server.waitReady(t)
+	server.exit(0)
+	server.stdin.Close()
+	r.waitDone(t)
+
+	events := drain()
+
+	wantLifecycle := []string{
+		"retention.start:refs-local",
+		"retention.finish:refs-local",
+		"gc.start:gc-refs-local",
+		"gc.finish:gc-refs-local",
+		"retention.start:logs-local",
+		"retention.finish:logs-local",
+		"retention.start:refs-remote",
+		"retention.finish:refs-remote",
+		"gc.start:gc-refs-remote",
+		"gc.finish:gc-refs-remote",
+	}
+	gotLifecycle := retentionLifecycleSequence(events)
+	assert.Equal(t, wantLifecycle, gotLifecycle,
+		"a real session wired through retention.Build must fire Retention*/GC* events in this exact order: local side (refs-retention → refs-gc → logs-retention) paired with committing, then remote side (refs-retention → refs-gc) paired with pushing. Drift means a Job slot was dropped, sides were swapped, or a Kind was misclassified")
+
+	assert.True(t, allRetentionFinishesNilErr(events),
+		"every Retention/GC Finished event must carry Err=nil for a clean session — a non-nil Err here means a wired Job failed silently against real storage and the upstream chain still treated the run as Done; investigate Job factory wiring before flake-blaming")
+}
+
+func retentionLifecycleSequence(events []ports.Event) []string {
+	out := []string{}
+	for _, e := range events {
+		switch v := e.(type) {
+		case retaining.RetentionStartedInfo:
+			out = append(out, "retention.start:"+v.Label)
+		case retaining.RetentionFinishedInfo:
+			out = append(out, "retention.finish:"+v.Label)
+		case retaining.GCStartedInfo:
+			out = append(out, "gc.start:"+v.Label)
+		case retaining.GCFinishedInfo:
+			out = append(out, "gc.finish:"+v.Label)
+		}
+	}
+	return out
+}
+
+func allRetentionFinishesNilErr(events []ports.Event) bool {
+	for _, e := range events {
+		switch v := e.(type) {
+		case retaining.RetentionFinishedInfo:
+			if v.Err != nil {
+				return false
+			}
+		case retaining.GCFinishedInfo:
+			if v.Err != nil {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func countRetainStarts(events []ports.Event) int {

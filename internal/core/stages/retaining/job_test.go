@@ -17,7 +17,7 @@ type collectorFunc func(ctx context.Context) error
 
 func (f collectorFunc) Collect(ctx context.Context) error { return f(ctx) }
 
-func TestRefsJob_HealthyPath_DeletesSelectedKeysThenCollects(t *testing.T) {
+func TestRetentionRefsJob_HealthyPath_DeletesSelectedKeys(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
@@ -32,24 +32,23 @@ func TestRefsJob_HealthyPath_DeletesSelectedKeysThenCollects(t *testing.T) {
 		return nil
 	}
 
-	collectCalled := false
-	coll := collectorFunc(func(_ context.Context) error { collectCalled = true; return nil })
+	job := retaining.NewRetentionRefsJob("refs-local", ret, storage)
+	if job.Kind != retaining.KindRetention {
+		t.Fatalf("retention refs job must carry KindRetention; got %v", job.Kind)
+	}
+	if job.Label != "refs-local" {
+		t.Fatalf("label must round-trip from constructor; got %q", job.Label)
+	}
 
-	job := retaining.NewRefsJob(ret, storage, coll)
-	err := job(ctx)
-
-	if err != nil {
+	if err := job.Run(ctx); err != nil {
 		t.Fatalf("healthy run must not error: %v", err)
 	}
 	if len(deleted) != 1 || deleted[0] != "refs/20260414160000.json" {
 		t.Errorf("selected keys must be batch-deleted; got %v", deleted)
 	}
-	if !collectCalled {
-		t.Errorf("collector must always run after refs retention")
-	}
 }
 
-func TestRefsJob_EmptySelection_SkipsDelete_StillCollects(t *testing.T) {
+func TestRetentionRefsJob_EmptySelection_SkipsDelete(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
@@ -62,23 +61,15 @@ func TestRefsJob_EmptySelection_SkipsDelete_StillCollects(t *testing.T) {
 		return nil
 	}
 
-	collectCalled := false
-	coll := collectorFunc(func(_ context.Context) error { collectCalled = true; return nil })
-
-	err := retaining.NewRefsJob(ret, storage, coll)(ctx)
-
-	if err != nil {
+	if err := retaining.NewRetentionRefsJob("refs-local", ret, storage).Run(ctx); err != nil {
 		t.Fatalf("empty selection must not error: %v", err)
 	}
 	if deleteCalled {
 		t.Errorf("empty selection must not invoke DeleteBatch")
 	}
-	if !collectCalled {
-		t.Errorf("collector is independent of selection — must run even when nothing to delete")
-	}
 }
 
-func TestRefsJob_DeleteFails_CollectStillRuns_ErrorsJoined(t *testing.T) {
+func TestRetentionRefsJob_DeleteFails_SurfacesWrappedError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
@@ -91,20 +82,13 @@ func TestRefsJob_DeleteFails_CollectStillRuns_ErrorsJoined(t *testing.T) {
 		return errors.New("delete-boom")
 	}
 
-	collectCalled := false
-	coll := collectorFunc(func(_ context.Context) error { collectCalled = true; return nil })
-
-	err := retaining.NewRefsJob(ret, storage, coll)(ctx)
-
+	err := retaining.NewRetentionRefsJob("refs-local", ret, storage).Run(ctx)
 	if err == nil || !errorContains(err, "delete-boom") {
-		t.Errorf("delete error must surface via errors.Join; got %v", err)
-	}
-	if !collectCalled {
-		t.Errorf("collect must run even after delete failure — GC is independent")
+		t.Errorf("delete error must surface wrapped; got %v", err)
 	}
 }
 
-func TestRefsJob_SelectFails_NoDelete_CollectStillRuns(t *testing.T) {
+func TestRetentionRefsJob_SelectFails_NoDelete(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
@@ -119,19 +103,47 @@ func TestRefsJob_SelectFails_NoDelete_CollectStillRuns(t *testing.T) {
 		return nil
 	}
 
-	collectCalled := false
-	coll := collectorFunc(func(_ context.Context) error { collectCalled = true; return nil })
-
-	err := retaining.NewRefsJob(ret, storage, coll)(ctx)
-
+	err := retaining.NewRetentionRefsJob("refs-local", ret, storage).Run(ctx)
 	if err == nil || !errorContains(err, "select-boom") {
 		t.Errorf("select error must surface; got %v", err)
 	}
 	if deleteCalled {
 		t.Errorf("select failure must not invoke DeleteBatch — we have no keys to act on")
 	}
+}
+
+func TestGCRefsJob_HealthyPath_RunsCollector(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	collectCalled := false
+	coll := collectorFunc(func(_ context.Context) error { collectCalled = true; return nil })
+
+	job := retaining.NewGCRefsJob("gc-refs-local", coll)
+	if job.Kind != retaining.KindGC {
+		t.Fatalf("gc refs job must carry KindGC; got %v", job.Kind)
+	}
+	if job.Label != "gc-refs-local" {
+		t.Fatalf("label must round-trip from constructor; got %q", job.Label)
+	}
+
+	if err := job.Run(ctx); err != nil {
+		t.Fatalf("healthy run must not error: %v", err)
+	}
 	if !collectCalled {
-		t.Errorf("collect must run even after select failure — GC is independent")
+		t.Errorf("collector must be invoked")
+	}
+}
+
+func TestGCRefsJob_CollectorFails_SurfacesWrappedError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	coll := collectorFunc(func(_ context.Context) error { return errors.New("collect-boom") })
+
+	err := retaining.NewGCRefsJob("gc-refs-local", coll).Run(ctx)
+	if err == nil || !errorContains(err, "collect-boom") {
+		t.Errorf("collect error must surface wrapped; got %v", err)
 	}
 }
 
@@ -150,9 +162,12 @@ func TestLogsJob_HealthyPath_DeletesSelectedKeys(t *testing.T) {
 		return nil
 	}
 
-	err := retaining.NewLogsJob(ret, storage)(ctx)
+	job := retaining.NewLogsJob("logs-local", ret, storage)
+	if job.Kind != retaining.KindRetention {
+		t.Fatalf("logs job is retention-only; got Kind=%v", job.Kind)
+	}
 
-	if err != nil {
+	if err := job.Run(ctx); err != nil {
 		t.Fatalf("healthy run must not error: %v", err)
 	}
 	if len(deleted) != 1 || deleted[0] != "logs/20260414160000.log" {
@@ -173,9 +188,7 @@ func TestLogsJob_EmptySelection_SkipsDelete(t *testing.T) {
 		return nil
 	}
 
-	err := retaining.NewLogsJob(ret, storage)(ctx)
-
-	if err != nil {
+	if err := retaining.NewLogsJob("logs-local", ret, storage).Run(ctx); err != nil {
 		t.Fatalf("empty selection must not error: %v", err)
 	}
 	if deleteCalled {

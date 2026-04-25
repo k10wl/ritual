@@ -46,10 +46,10 @@ func TestBuild_PrunesRefsAndSweepsOrphanBlobs(t *testing.T) {
 	require.NoError(t, err, "Build must wire jobs without error when storages are valid")
 
 	for _, job := range localJobs {
-		require.NoError(t, job(ctx), "each local retention job must complete cleanly")
+		require.NoError(t, job.Run(ctx), "each local retention job must complete cleanly")
 	}
 	for _, job := range remoteJobs {
-		require.NoError(t, job(ctx), "each remote retention job must complete cleanly")
+		require.NoError(t, job.Run(ctx), "each remote retention job must complete cleanly")
 	}
 
 	assertExists(t, localDir, "refs/20260420100000.json", "newest ref must survive KeepLast:1")
