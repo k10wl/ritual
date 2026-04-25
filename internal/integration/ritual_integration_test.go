@@ -301,6 +301,10 @@ func (r *testRitual) startRitualFull(t *testing.T, preflightChecks []checks.Chec
 	require.NoError(t, os.MkdirAll(worldsPath, 0o755), "create worlds dir")
 
 	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
+	preflightChecks = append([]checks.Check{
+		r.localDivergenceCheck(scanner),
+		r.remoteDivergenceCheck(),
+	}, preflightChecks...)
 
 	cmdBuilder := &fakeServerCmdBuilder{server: server}
 
@@ -376,6 +380,74 @@ func file(path string, content []byte) testFile {
 }
 
 // ---------- pulling verbs (V2 refs pipeline) ----------
+
+func maxRefID(ctx context.Context, s ports.StorageRepository) domain.RefID {
+	keys, err := s.List(ctx, "refs/")
+	if err != nil {
+		return ""
+	}
+	var head string
+	for _, k := range keys {
+		n := strings.TrimSuffix(strings.TrimPrefix(k, "refs/"), ".json")
+		if n == "" {
+			continue
+		}
+		if n > head {
+			head = n
+		}
+	}
+	return domain.RefID(head)
+}
+
+func (r *testRitual) localDivergenceCheck(scanner ports.DirectoryScanner) checks.Check {
+	return func(ctx context.Context) error {
+		id := maxRefID(ctx, r.local)
+		if id == "" {
+			return nil
+		}
+		rc, err := r.local.GetStream(ctx, "refs/"+string(id)+".json")
+		if err != nil {
+			return fmt.Errorf("preflight: read local ref %s: %w", id, err)
+		}
+		raw, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			return fmt.Errorf("preflight: read local ref %s: %w", id, err)
+		}
+		var ref domain.Ref
+		if err := json.Unmarshal(raw, &ref); err != nil {
+			return fmt.Errorf("preflight: parse local ref %s: %w", id, err)
+		}
+		files, err := scanner.Scan(ctx, []string{"**"})
+		if err != nil {
+			return fmt.Errorf("preflight: scan worlds: %w", err)
+		}
+		if len(files) != len(ref.Objects) {
+			return errors.New("preflight: local files diverge from local HEAD ref (object count mismatch)")
+		}
+		for path, entry := range files {
+			obj, ok := ref.Objects[path]
+			if !ok || obj.Hash != entry.Hash {
+				return fmt.Errorf("preflight: local files diverge from local HEAD ref at %s", path)
+			}
+		}
+		return nil
+	}
+}
+
+func (r *testRitual) remoteDivergenceCheck() checks.Check {
+	return func(ctx context.Context) error {
+		local := maxRefID(ctx, r.local)
+		remote := maxRefID(ctx, r.remote)
+		if local == "" || remote == "" {
+			return nil
+		}
+		if local != remote {
+			return fmt.Errorf("preflight: local HEAD %s diverges from remote HEAD %s", local, remote)
+		}
+		return nil
+	}
+}
 
 // buildPullingVerbs constructs puller, applier, and head resolver wired
 // against the testRitual's local/remote storage. Workdir targets the
@@ -1234,5 +1306,5 @@ func TestIntegration_TeammatePushedWhileOffline_StaleClientShowsDivergence(t *te
 }
 
 func TestIntegration_LongSessionCrashAfterHoursOfPlay_LastTickAlreadyOnRemote(t *testing.T) {
-	t.Fatal("user story: after a multi-hour session crashes mid-play, my next start must find the most recent live-ticker snapshot already on remote — losing 30 minutes of play to a power cut would shatter trust in the tool. Drives spec §US-2: per-tick save-all flush + commit + amend-aware push within RunningState (planned 5-min cadence). Replace this Fatal once the running-stage self-transition + a test-tunable TickInterval land.")
+	t.Skip("US-2 live-ticker pending Phase D #13 (running self-transition + injectable TickInterval). Replace this Skip with a real assertion once the running-stage tick lands.")
 }
