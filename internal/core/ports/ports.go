@@ -136,8 +136,3 @@ type BlobRunner interface {
 	Run(ctx context.Context, items []BlobItem, fn func(ctx context.Context, key string) error) error
 }
 
-// SyncService handles bidirectional synchronization between local and remote states.
-type SyncService interface {
-	Download(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error)
-	Upload(ctx context.Context, local, remote domain.SyncState) (domain.SyncState, error)
-}

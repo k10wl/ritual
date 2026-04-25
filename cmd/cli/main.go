@@ -8,19 +8,23 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"ritual/internal/adapters"
 	"ritual/internal/adapters/observed"
 	"ritual/internal/app"
 	"ritual/internal/config"
+	"ritual/internal/core/domain"
+	"ritual/internal/core/ports"
+	"ritual/internal/core/refs"
 	"ritual/internal/core/services"
+	"ritual/internal/core/stages/pulling"
 	"ritual/internal/subsystems/conditions"
 	"ritual/internal/subsystems/heartbeat"
 	"ritual/internal/subsystems/logging"
 	"ritual/internal/subsystems/prompt"
 	"ritual/internal/subsystems/retention"
+	"strings"
 	"syscall"
-
-	synckit "ritual/internal/subsystems/sync"
 )
 
 var (
@@ -94,11 +98,30 @@ func run(ctx context.Context) error {
 	localStorage := observed.NewStorage(rawLocal, bus)
 	remoteStorage := observed.NewStorage(rawRemote, bus)
 
-	// --- Subsystem builders (CLI-specific wiring) ---
-	sk, err := synckit.Build(ctx, workRoot, localStorage, remoteStorage, bus)
-	if err != nil {
-		return fmt.Errorf("sync: %w", err)
+	// --- Refs pipeline (Pull, Apply, Commit, Push) shares one ParallelRunner
+	// across the four verbs so the 10-way blob concurrency saturates uniformly.
+	worldsPath := filepath.Join(config.RootPath, config.WorldsDir)
+	if err := os.MkdirAll(worldsPath, config.DirPermission); err != nil {
+		return fmt.Errorf("create worlds dir: %w", err)
 	}
+	worldsRoot, err := os.OpenRoot(worldsPath)
+	if err != nil {
+		return fmt.Errorf("open worlds root: %w", err)
+	}
+	defer func() { _ = worldsRoot.Close() }()
+	workdirStorage, err := adapters.NewFSRepository(worldsRoot, "workdir")
+	if err != nil {
+		return fmt.Errorf("workdir storage: %w", err)
+	}
+	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
+	const refsConcurrency = 10
+	runner := adapters.NewParallelRunner(refsConcurrency)
+	puller := refs.NewPuller(remoteStorage, localStorage, runner)
+	applier := refs.NewApplier(localStorage, workdirStorage, scanner, runner)
+	committer := refs.NewCommitter(scanner, workdirStorage, localStorage, runner)
+	pusher := refs.NewPusher(localStorage, remoteStorage, runner)
+	commitTargets := []string{"**"}
+	headResolver := newRemoteHeadResolver(remoteStorage)
 
 	// --- Heartbeat (attached after app.New so the supervisor shares
 	// the same Locker as the state machine) ---
@@ -130,7 +153,7 @@ func run(ctx context.Context) error {
 	r := app.New(
 		bus,
 		localStorage, remoteStorage,
-		preflightChecks, sk.Puller, sk.Applier, sk.HeadResolver, sk.Committer, sk.Pusher, sk.CommitTargets, localRets, remoteRets,
+		preflightChecks, puller, applier, headResolver, committer, pusher, commitTargets, localRets, remoteRets,
 		cmdBuilder,
 		readiness,
 	)
@@ -160,4 +183,28 @@ func run(ctx context.Context) error {
 	r.Listen(ctx)
 	bus.Publish(app.StartRequested{})
 	return <-done
+}
+
+func newRemoteHeadResolver(remote ports.StorageRepository) pulling.HeadResolver {
+	return func(ctx context.Context) (domain.RefID, error) {
+		keys, err := remote.List(ctx, "refs/")
+		if err != nil {
+			return "", fmt.Errorf("list refs: %w", err)
+		}
+		var head string
+		for _, key := range keys {
+			name := strings.TrimPrefix(key, "refs/")
+			name = strings.TrimSuffix(name, ".json")
+			if name == "" {
+				continue
+			}
+			if name > head {
+				head = name
+			}
+		}
+		if head == "" {
+			return "", errors.New("no refs on remote")
+		}
+		return domain.RefID(head), nil
+	}
 }
