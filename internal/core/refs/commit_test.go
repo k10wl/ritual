@@ -35,6 +35,7 @@ import (
 	"testing"
 	"time"
 
+	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/refs"
@@ -556,6 +557,103 @@ func TestCommitter_RefFileIsHumanReadableJSON_NotMinified(t *testing.T) {
 		"POC fix #7 regression: refs/{id}.json on disk must be MarshalIndent-formatted (newline + 2-space indent) so an operator can `cat` the file and read it without reflowing — the v1 single-line `json.Marshal` form left users staring at an opaque one-liner")
 	assert.Contains(t, string(body), "\n  \"",
 		"POC fix #7 regression: indented refs JSON must use a 2-space indent for nested fields — matches the agreed wire format and prevents accidental reversion to single-line marshal")
+}
+
+// Audit fix #8 regression (docs/dev-session-2026-04-25-poc-setup.md).
+// Pre-fix: workdir was rooted at <root>/worlds and Targets was ["**"], so
+// nothing under server/ was tracked and a fresh host could not pull-and-
+// run. Fix: workdir = project root, Targets = config.DefaultCommitTargets
+// allowlist. The allowlist deliberately omits operational dirs (refs/,
+// objects/, logs/, remote-mock/), the user-local settings file, and the
+// server's regenerated caches (server/logs, server/usercache.json,
+// server/.cache) so they never enter a ref or get pruned by a downstream
+// Apply.
+//
+// This test passes the production allowlist as Targets over a workdir
+// that mirrors the post-#8 layout. Reverting the allowlist to ["**"] or
+// dropping a server/ subtree will fail this test loudly.
+func TestCommitter_DefaultCommitTargets_CapturePlaySurface_ExcludeOperationalDirs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	workdir := newFSBundle(t)
+	blobs := newFSBundle(t)
+
+	workdir.put(t, "worlds/world/level.dat", []byte("level"))
+	workdir.put(t, "worlds/world/region/r.0.0.mca", []byte("region"))
+	workdir.put(t, "server/server.jar", []byte("jar"))
+	workdir.put(t, "server/server.properties", []byte("props"))
+	workdir.put(t, "server/eula.txt", []byte("eula"))
+	workdir.put(t, "server/start.bat", []byte("bat"))
+	workdir.put(t, "server/user_jvm_args.txt", []byte("jvm"))
+	workdir.put(t, "server/libraries/net/neoforged/neoforge/win_args.txt", []byte("args"))
+	workdir.put(t, "server/mods/cool-mod.jar", []byte("mod"))
+	workdir.put(t, "server/config/cool-mod.toml", []byte("cfg"))
+	workdir.put(t, "server/defaultconfigs/cool-mod.toml", []byte("dcfg"))
+	workdir.put(t, "server/ops.json", []byte("[]"))
+	workdir.put(t, "server/whitelist.json", []byte("[]"))
+	workdir.put(t, "server/banned-ips.json", []byte("[]"))
+	workdir.put(t, "server/banned-players.json", []byte("[]"))
+
+	workdir.put(t, "server/logs/latest.log", []byte("log"))
+	workdir.put(t, "server/usercache.json", []byte("uc"))
+	workdir.put(t, "server/usernamecache.json", []byte("unc"))
+	workdir.put(t, "server/.cache/forge_versioning.json", []byte("cache"))
+	workdir.put(t, "refs/2026-04-22T10-00-00.000Z.json", []byte("{}"))
+	workdir.put(t, "objects/abcdef0123456789", []byte("blob"))
+	workdir.put(t, "remote-mock/refs/2026-04-22T10-00-00.000Z.json", []byte("{}"))
+	workdir.put(t, "logs/20260422100000.log", []byte("session-log"))
+	workdir.put(t, "settings.json", []byte("{}"))
+
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).
+		WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z"))
+	id, err := committer.Commit(ctx, ports.CommitOpts{Targets: config.DefaultCommitTargets})
+
+	require.NoError(t, err,
+		"production allowlist over the real layout must succeed — at least one matched file (worlds/world/level.dat) is present so the empty-match guard does not trip")
+
+	ref, ok := blobs.decodeRef(t, id)
+	require.True(t, ok, "commit must write refs/{id}.json after a successful match")
+
+	mustInclude := []string{
+		"worlds/world/level.dat",
+		"worlds/world/region/r.0.0.mca",
+		"server/server.jar",
+		"server/server.properties",
+		"server/eula.txt",
+		"server/start.bat",
+		"server/user_jvm_args.txt",
+		"server/libraries/net/neoforged/neoforge/win_args.txt",
+		"server/mods/cool-mod.jar",
+		"server/config/cool-mod.toml",
+		"server/defaultconfigs/cool-mod.toml",
+		"server/ops.json",
+		"server/whitelist.json",
+		"server/banned-ips.json",
+		"server/banned-players.json",
+	}
+	for _, path := range mustInclude {
+		_, present := ref.Objects[path]
+		assert.Truef(t, present,
+			"audit fix #8: production allowlist must capture %q — fresh host needs the full play surface (worlds/+server runtime+config+identity files) to pull-and-run", path)
+	}
+
+	mustExclude := []string{
+		"server/logs/latest.log",
+		"server/usercache.json",
+		"server/usernamecache.json",
+		"server/.cache/forge_versioning.json",
+		"refs/2026-04-22T10-00-00.000Z.json",
+		"objects/abcdef0123456789",
+		"remote-mock/refs/2026-04-22T10-00-00.000Z.json",
+		"logs/20260422100000.log",
+		"settings.json",
+	}
+	for _, path := range mustExclude {
+		_, present := ref.Objects[path]
+		assert.Falsef(t, present,
+			"audit fix #8: production allowlist must NOT capture %q — operational dirs and host-local caches must never enter a ref or get destroyed by a downstream Apply prune", path)
+	}
 }
 
 // --- commit test fixtures ---

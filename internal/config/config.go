@@ -36,6 +36,36 @@ const (
 	LogsDir   = "logs"
 )
 
+// DefaultCommitTargets is the production allowlist of doublestar globs
+// passed to refs.Committer when the workdir is the project root. It scopes
+// what a commit captures and — via Apply — what a pull is allowed to
+// prune. Operational dirs (refs/, objects/, logs/, remote-mock/), the
+// settings file, and host-local server caches are deliberately absent so
+// they never enter the ref or get destroyed by a downstream Apply.
+//
+// Origin: docs/dev-session-2026-04-25-poc-setup.md audit fix #8 — pre-fix
+// targets=[]string{"**"} with workdir=worlds/ tracked nothing under
+// server/, so a fresh host could not pull-and-run.
+//
+// Editing this list is a behavioural change. Read the audit doc + run
+// the regression test in internal/core/refs/commit_test.go before
+// extending the scope.
+var DefaultCommitTargets = []string{
+	"worlds/**",
+	"server/server.jar",
+	"server/server.properties",
+	"server/eula.txt",
+	"server/start.bat",
+	"server/user_jvm_args.txt",
+	"server/libraries/**",
+	"server/mods/**",
+	"server/config/**",
+	"server/defaultconfigs/**",
+	"server/ops.json",
+	"server/whitelist.json",
+	"server/banned-*.json",
+}
+
 // File names and keys
 const (
 	ManifestFilename  = "manifest.json"

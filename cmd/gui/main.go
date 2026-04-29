@@ -199,20 +199,19 @@ func buildRuntime() (*guiRuntime, error) {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
 
-	worldsPath := filepath.Join(config.RootPath, config.WorldsDir)
-	if err := os.MkdirAll(worldsPath, config.DirPermission); err != nil {
-		return nil, fmt.Errorf("create worlds dir: %w", err)
-	}
-	worldsRoot, err := os.OpenRoot(worldsPath)
-	if err != nil {
-		return nil, fmt.Errorf("open worlds dir: %w", err)
-	}
-	rawWorkdir, err := adapters.NewFSRepository(worldsRoot, "workdir")
+	// Workdir is the project root. Scope is data-driven by commitTargets
+	// below — operational dirs (refs/, objects/, logs/, remote-mock/),
+	// settings.json, and server/.cache live under root but are absent from
+	// the allowlist, so the scanner ignores them and Apply never prunes
+	// them. Audit fix #8 (docs/dev-session-2026-04-25-poc-setup.md):
+	// pre-fix workdir was <root>/worlds and a fresh host could not pull-
+	// and-run because nothing under server/ was tracked.
+	rawWorkdir, err := adapters.NewFSRepository(workRoot, "workdir")
 	if err != nil {
 		return nil, fmt.Errorf("workdir storage: %w", err)
 	}
 	workdirStorage := observed.NewStorage(rawWorkdir, bus)
-	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
+	scanner := adapters.NewFullScanner(os.DirFS(config.RootPath))
 
 	// Refs V2 pipeline: ParallelRunner(10) shared by Pull (remote → local
 	// blob download concurrency) and Apply (local blob → workdir placement).
@@ -225,7 +224,7 @@ func buildRuntime() (*guiRuntime, error) {
 	headResolver := pulling.NewHeadResolver(remoteStorage)
 	committer := refs.NewCommitter(scanner, workdirStorage, localStorage, runner)
 	pusher := refs.NewPusher(localStorage, remoteStorage, runner)
-	commitTargets := []string{"**"}
+	commitTargets := config.DefaultCommitTargets
 
 	// TODO(ritual-gui-poc): fakerun stands in for the Minecraft server so
 	// the GUI loop can be exercised without a JRE. Replace with
