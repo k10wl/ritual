@@ -52,12 +52,20 @@ func NewTicker(counters *adapters.StorageCounters, bus ports.EventBus, interval 
 	return &Ticker{counters: counters, bus: bus, interval: interval}
 }
 
-// Run blocks until ctx is cancelled, emitting one Tick per interval. The
-// caller owns the goroutine; typically: `go ticker.Run(ctx)`.
+// Run blocks until ctx is cancelled, emitting one Tick per interval — but
+// only when storage activity has changed since the previous interval. After
+// activity stops, exactly one zero-delta tick fires as the "we're done"
+// marker, then the ticker goes silent until counters move again. Audit fix
+// #9 (docs/dev-session-2026-04-25-poc-setup.md): pre-fix every interval
+// emitted unconditionally, flooding the bus + on-disk log with zero-delta
+// lines during idle stages.
+//
+// The caller owns the goroutine; typically: `go ticker.Run(ctx)`.
 func (t *Ticker) Run(ctx context.Context) {
 	start := time.Now()
 	last := start
-	var lastIn, lastOut int64
+	var lastIn, lastOut, lastOps, lastFail int64
+	wasActive := false
 	ticker := time.NewTicker(t.interval)
 	defer ticker.Stop()
 
@@ -68,14 +76,22 @@ func (t *Ticker) Run(ctx context.Context) {
 		case now := <-ticker.C:
 			bin := t.counters.BytesIn.Load()
 			bout := t.counters.BytesOut.Load()
-			tick := snapshot(start, last, now, lastIn, lastOut, bin, bout,
-				t.counters.OpsComplete.Load(), t.counters.OpsFailed.Load())
+			ops := t.counters.OpsComplete.Load()
+			fail := t.counters.OpsFailed.Load()
+			active := bin != lastIn || bout != lastOut || ops != lastOps || fail != lastFail
+			if !active && !wasActive {
+				continue
+			}
+			tick := snapshot(start, last, now, lastIn, lastOut, bin, bout, ops, fail)
 			if t.bus != nil {
 				t.bus.Publish(tick)
 			}
 			last = now
 			lastIn = bin
 			lastOut = bout
+			lastOps = ops
+			lastFail = fail
+			wasActive = active
 		}
 	}
 }

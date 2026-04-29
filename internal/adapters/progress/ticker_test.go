@@ -130,6 +130,95 @@ func TestTicker_SnapshotReflectsCounters(t *testing.T) {
 	assert.Greater(t, tick.AvgMbpsOut, tick.AvgMbpsIn, "avg out is 2x in for this fixture")
 }
 
+// TestTicker_StableCounters_NoTicks locks audit fix #9 (POC session
+// docs/dev-session-2026-04-25-poc-setup.md): when no storage activity has
+// occurred, the ticker must NOT emit. Pre-fix the ticker emitted on every
+// interval regardless of counter movement, spamming the GUI log window
+// and the on-disk <root>/logs/<ts>.log with zero-delta noise during idle
+// stages (Acquiring, Running's body wait, Failed-with-retry-pending).
+func TestTicker_StableCounters_NoTicks(t *testing.T) {
+	counters := &adapters.StorageCounters{}
+	bus := adapters.NewEventBus(64)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	const interval = 20 * time.Millisecond
+	ticker := progress.NewTicker(counters, bus, interval)
+	ctx, cancel := context.WithTimeout(t.Context(), 6*interval)
+	defer cancel()
+	go ticker.Run(ctx)
+
+	var ticks []progress.Tick
+	for {
+		select {
+		case evt, ok := <-ch:
+			if !ok {
+				goto done
+			}
+			if tick, ok := evt.(progress.Tick); ok {
+				ticks = append(ticks, tick)
+			}
+		case <-ctx.Done():
+			goto done
+		}
+	}
+done:
+
+	assert.Empty(t, ticks,
+		"audit fix #9 regression: with counters never touched the ticker must publish ZERO Tick events across the entire window — pre-fix one Tick per interval flooded the bus + on-disk log with zero-delta lines an operator had to scroll past to find anything signal")
+}
+
+// TestTicker_OneFinalZeroDeltaAfterActivityStops locks the second half of
+// audit fix #9: after activity ceases the ticker must emit exactly one
+// zero-delta tick — the "we're done" marker — then go silent. This is the
+// signal a downstream reducer (projection) needs to flip the bar to 100%
+// and clear the throughput label without polling.
+func TestTicker_OneFinalZeroDeltaAfterActivityStops(t *testing.T) {
+	counters := &adapters.StorageCounters{}
+	bus := adapters.NewEventBus(64)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	const interval = 20 * time.Millisecond
+	ticker := progress.NewTicker(counters, bus, interval)
+	ctx, cancel := context.WithTimeout(t.Context(), 8*interval)
+	defer cancel()
+	go ticker.Run(ctx)
+
+	counters.BytesIn.Store(4096)
+	counters.OpsComplete.Store(1)
+
+	var ticks []progress.Tick
+	for {
+		select {
+		case evt, ok := <-ch:
+			if !ok {
+				goto done
+			}
+			if tick, ok := evt.(progress.Tick); ok {
+				ticks = append(ticks, tick)
+			}
+		case <-ctx.Done():
+			goto done
+		}
+	}
+done:
+
+	require.NotEmpty(t, ticks,
+		"audit fix #9 regression: with counters bumped before the first interval at least one active tick must publish — otherwise the projection never sees the in-flight bytes and the bar never moves")
+
+	last := ticks[len(ticks)-1]
+	assert.Equal(t, 0.0, last.NowMbpsIn,
+		"audit fix #9 regression: the LAST tick after activity stops must be the zero-delta marker (NowMbpsIn==0) — projection uses this to flip the label off the throughput line and the bar to its final state")
+
+	for i, tick := range ticks[:len(ticks)-1] {
+		if tick.NowMbpsIn == 0 {
+			t.Fatalf("audit fix #9 regression: only the FINAL tick (index %d) may be zero-delta — tick %d already had NowMbpsIn==0, meaning the gate is letting through interior idle ticks again",
+				len(ticks)-1, i)
+		}
+	}
+}
+
 func newFS(t *testing.T) ports.StorageRepository {
 	t.Helper()
 	dir := t.TempDir()
