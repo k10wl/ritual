@@ -30,6 +30,7 @@ import (
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/subsystems/lifecycle"
+	"ritual/internal/subsystems/logging"
 	"ritual/internal/subsystems/pipeline"
 	"ritual/internal/subsystems/retention"
 	"ritual/internal/gui/control"
@@ -123,6 +124,7 @@ func main() {
 	ctx := wailsApp.Context()
 	stopLifecycle := lifecycle.Attach(ctx, runtime.bus, runtime.entry)
 	defer stopLifecycle()
+	defer runtime.stopLogFile()
 	go runtime.projection.Run(ctx)
 	go runtime.logsink.Run(ctx)
 	go runtime.ticker.Run(ctx)
@@ -143,6 +145,7 @@ type guiRuntime struct {
 	viewEmitter *wailsViewEmitter
 	logEmitter  *wailsLogEmitter
 	ticker      *progress.Ticker
+	stopLogFile func()
 }
 
 func buildRuntime() (*guiRuntime, error) {
@@ -279,6 +282,15 @@ func buildRuntime() (*guiRuntime, error) {
 	proj := projection.New(bus, viewEmitter, addresses)
 	sink := logsink.New(bus, logEmitter)
 
+	// Audit fix #6 (docs/dev-session-2026-04-25-poc-setup.md): the
+	// in-memory logsink above feeds the GUI logs window only. Persist
+	// the same bus stream to <root>/logs/<ts>.log so a session leaves an
+	// on-disk record an operator can inspect after the GUI window is gone.
+	stopLogFile, err := logging.Build(bus, workRoot)
+	if err != nil {
+		return nil, fmt.Errorf("logging build: %w", err)
+	}
+
 	return &guiRuntime{
 		bus:         bus,
 		entry:       entry,
@@ -288,6 +300,7 @@ func buildRuntime() (*guiRuntime, error) {
 		viewEmitter: viewEmitter,
 		logEmitter:  logEmitter,
 		ticker:      remoteTicker,
+		stopLogFile: stopLogFile,
 	}, nil
 }
 

@@ -50,6 +50,27 @@ func CreateLogFile(workRoot *os.Root) (*os.File, func(), error) {
 	return f, func() { _ = f.Close() }, nil
 }
 
+// Build opens <workRoot>/logs/<ts>.log and subscribes a bus formatter
+// against it. Returned stop detaches the formatter, drains its goroutine,
+// and closes the file. One call wires the entire on-disk log story —
+// composition roots (cmd/gui, integration test setup) call Build so a
+// future drift between them cannot leave a session unlogged.
+//
+// Audit fix #6 (docs/dev-session-2026-04-25-poc-setup.md): pre-fix
+// CreateLogFile + Attach were separately exposed but the GUI composition
+// root never called either, so a session left no on-disk record.
+func Build(bus ports.EventBus, workRoot *os.Root) (func(), error) {
+	f, closeFile, err := CreateLogFile(workRoot)
+	if err != nil {
+		return nil, err
+	}
+	detach := Attach(bus, f)
+	return func() {
+		detach()
+		closeFile()
+	}, nil
+}
+
 func stamp() string { return time.Now().Format("15:04:05") }
 
 func write(w io.Writer, evt ports.Event) {

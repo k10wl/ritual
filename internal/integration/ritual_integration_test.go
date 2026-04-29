@@ -57,6 +57,7 @@ import (
 	"ritual/internal/core/stages/retaining"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/subsystems/lifecycle"
+	"ritual/internal/subsystems/logging"
 	"ritual/internal/subsystems/pipeline"
 	subretention "ritual/internal/subsystems/retention"
 	"strings"
@@ -322,6 +323,11 @@ func (r *testRitual) startRitualFull(t *testing.T, preflightChecks []checks.Chec
 		AcquireFn: locker.Acquire, InspectFn: locker.Inspect, ReleaseFn: locker.Release,
 		HeartbeatInterval: locker.HeartbeatInterval(),
 	})
+
+	loggingStop, err := logging.Build(r.bus, r.localRoot)
+	require.NoError(t, err, "logging.Build must succeed — startRitualFull mirrors cmd/gui's audit-fix-#6 wiring so every run lands a <root>/logs/<ts>.log")
+	t.Cleanup(loggingStop)
+
 	stop := lifecycle.Attach(r.ctx, r.bus, entry)
 	t.Cleanup(stop)
 	r.bus.Publish(ritual.StartRequested{})
@@ -818,6 +824,11 @@ func (r *testRitual) startRitualWithFlakyPuller(t *testing.T, flaky *failOnceInt
 		AcquireFn: locker.Acquire, InspectFn: locker.Inspect, ReleaseFn: locker.Release,
 		HeartbeatInterval: locker.HeartbeatInterval(),
 	})
+
+	loggingStop, err := logging.Build(r.bus, r.localRoot)
+	require.NoError(t, err, "logging.Build must succeed — startRitualWithFlakyPuller mirrors cmd/gui's audit-fix-#6 wiring so every run lands a <root>/logs/<ts>.log")
+	t.Cleanup(loggingStop)
+
 	stop := lifecycle.Attach(r.ctx, r.bus, entry)
 	t.Cleanup(stop)
 	r.bus.Publish(ritual.StartRequested{})
@@ -1144,6 +1155,57 @@ func countRetainStarts(events []ports.Event) int {
 		}
 	}
 	return n
+}
+
+// Audit fix #6 (docs/dev-session-2026-04-25-poc-setup.md). Pre-fix,
+// cmd/gui wired the in-memory logsink for the GUI logs window but never
+// called logging.Attach + logging.CreateLogFile, so a session left no
+// on-disk record. Operators triaging "Done but no ref" had nothing to
+// inspect after the GUI window closed. Fix wires logging.Build so every
+// run drops <root>/logs/<ts>.log capturing every bus event.
+//
+// Refs-first scenario: empty remote, no raw-world seeding. The pulling
+// stage's ErrNoHead bootstrap (audit fix #2) lets a fresh-storage first
+// run reach Commit+Push, producing the very first ref over a workdir the
+// server itself populated mid-run. That's the production shape — clone
+// the binary onto a clean host, click Start, get a ref out — and the
+// log file must accompany it.
+//
+// Integration story (not a subsystem unit test): the bus, the log file,
+// and the formatter must hold together across a real session.
+// startRitualFull mirrors cmd/gui's wiring; this test fails loudly if
+// either side drops the call.
+func TestIntegration_RunSession_PersistsLogFileWithBusEventsUnderRootLogsDir(t *testing.T) {
+	r := newRitual(t)
+
+	server := r.startRitual(t)
+	server.waitReady(t)
+	server.write("worlds/world/level.dat", []byte("first session content"))
+	server.exit(0)
+	server.stdin.Close()
+	r.waitDone(t)
+
+	logsDir := filepath.Join(r.localDir, config.LogsDir)
+	entries, err := os.ReadDir(logsDir)
+	require.NoErrorf(t, err,
+		"audit fix #6 regression: expected logs dir at %s after waitDone — startRitualFull must call logging.CreateLogFile so an operator can `cat` the run's bus history. Pre-fix the dir was never created because logging was wired only as the in-memory GUI sink", logsDir)
+
+	logFiles := []os.DirEntry{}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), config.LogExtension) {
+			logFiles = append(logFiles, e)
+		}
+	}
+	require.Lenf(t, logFiles, 1,
+		"audit fix #6 regression: exactly one <ts>.log must exist under %s after a single session — got %d. The naming convention is config.TimestampFormat + config.LogExtension; multiple files signal an unflushed prior run or a leaked Attach", logsDir, len(logFiles))
+
+	body, err := os.ReadFile(filepath.Join(logsDir, logFiles[0].Name()))
+	require.NoErrorf(t, err, "log file %s must be readable after the run finishes — Attach owns close on stop", logFiles[0].Name())
+
+	assert.NotEmptyf(t, body,
+		"audit fix #6 regression: log file %s must contain at least one bus-event line — empty file means logging.Attach received no events, so the formatter goroutine never ran or the bus subscription dropped", logFiles[0].Name())
+	assert.Containsf(t, string(body), "→",
+		"audit fix #6 regression: log file %s must contain at least one StateChangedInfo arrow line ('from → to') — that's the canonical pipeline progression marker the operator looks for first when triaging a session post-mortem", logFiles[0].Name())
 }
 
 func TestIntegration_ServerLifecycleEventsEmitted_StartingReadyStoppingStopped(t *testing.T) {
