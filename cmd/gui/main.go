@@ -184,6 +184,12 @@ func buildRuntime() (*guiRuntime, error) {
 	// verified) → counter (byte/op tap for the progress ticker) → observed
 	// (per-op lifecycle events). Observed is outermost so GUI events carry
 	// raw byte sizes; the ticker reads counter atomics to emit live Mbps.
+	//
+	// Compression is gated to the objects/ keyspace via PrefixRouter so
+	// human-readable JSON (refs/, lock, settings) hits raw FS untouched —
+	// audit fix #5 (docs/dev-session-2026-04-25-poc-setup.md): pre-fix
+	// refs went through the compressing decorator, leaving on-disk JSON
+	// unreadable to operators.
 	localCompressed, err := adapters.NewCompressingStorage(rawLocal)
 	if err != nil {
 		return nil, fmt.Errorf("local compressing storage: %w", err)
@@ -194,8 +200,10 @@ func buildRuntime() (*guiRuntime, error) {
 	}
 	localCounters := &adapters.StorageCounters{}
 	remoteCounters := &adapters.StorageCounters{}
-	localStorage := observed.NewStorage(adapters.NewCounterStorage(localCompressed, localCounters), bus)
-	remoteStorage := observed.NewStorage(adapters.NewCounterStorage(remoteCompressed, remoteCounters), bus)
+	localObjects := adapters.NewCounterStorage(localCompressed, localCounters)
+	remoteObjects := adapters.NewCounterStorage(remoteCompressed, remoteCounters)
+	localStorage := observed.NewStorage(adapters.NewPrefixRouter("objects/", localObjects, rawLocal), bus)
+	remoteStorage := observed.NewStorage(adapters.NewPrefixRouter("objects/", remoteObjects, rawRemote), bus)
 
 	settings, err := domain.LoadSettings()
 	if err != nil {
