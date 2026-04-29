@@ -2,7 +2,7 @@
 // the frontend decoupled from the binding directory layout.
 
 import { Events } from "@wailsio/runtime";
-import * as Control from "../bindings/ritual/internal/gui/services/controlservice";
+import * as Control from "../bindings/ritual/internal/gui/control/controlservice";
 import { ViewModel, Stage, JoinAddress } from "../bindings/ritual/internal/gui/projection/models";
 import { LogLine, Level } from "../bindings/ritual/internal/gui/logsink/models";
 

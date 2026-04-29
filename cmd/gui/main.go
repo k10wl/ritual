@@ -32,7 +32,6 @@ import (
 	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/subsystems/pipeline"
 	"ritual/internal/subsystems/retention"
-	"strings"
 	"ritual/internal/gui/control"
 	"ritual/internal/gui/logsink"
 	"ritual/internal/gui/netinfo"
@@ -223,7 +222,7 @@ func buildRuntime() (*guiRuntime, error) {
 	runner := adapters.NewParallelRunner(pullConcurrency)
 	puller := refs.NewPuller(remoteStorage, localStorage, runner)
 	applier := refs.NewApplier(localStorage, workdirStorage, scanner, runner)
-	headResolver := newRemoteHeadResolver(remoteStorage)
+	headResolver := pulling.NewHeadResolver(remoteStorage)
 	committer := refs.NewCommitter(scanner, workdirStorage, localStorage, runner)
 	pusher := refs.NewPusher(localStorage, remoteStorage, runner)
 	commitTargets := []string{"**"}
@@ -291,34 +290,6 @@ func buildRuntime() (*guiRuntime, error) {
 		logEmitter:  logEmitter,
 		ticker:      remoteTicker,
 	}, nil
-}
-
-// newRemoteHeadResolver builds a pulling.HeadResolver closure over remote.
-// List("refs/") → strip "refs/" prefix + ".json" suffix → lexicographic max
-// (timestamps sort as strings). Empty list → error; the chain routes to
-// onFail and the operator surfaces "no refs on remote".
-func newRemoteHeadResolver(remote ports.StorageRepository) pulling.HeadResolver {
-	return func(ctx context.Context) (domain.RefID, error) {
-		keys, err := remote.List(ctx, "refs/")
-		if err != nil {
-			return "", fmt.Errorf("list refs: %w", err)
-		}
-		var head string
-		for _, key := range keys {
-			name := strings.TrimPrefix(key, "refs/")
-			name = strings.TrimSuffix(name, ".json")
-			if name == "" {
-				continue
-			}
-			if name > head {
-				head = name
-			}
-		}
-		if head == "" {
-			return "", errors.New("no refs on remote")
-		}
-		return domain.RefID(head), nil
-	}
 }
 
 func waitTerminal(bus ports.EventBus, budget time.Duration) {

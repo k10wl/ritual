@@ -452,9 +452,9 @@ func (r *testRitual) remoteDivergenceCheck() checks.Check {
 // buildPullingVerbs constructs puller, applier, and head resolver wired
 // against the testRitual's local/remote storage. Workdir targets the
 // worlds directory; the applier materialises refs into it. The head
-// resolver returns an explicit "no refs" error when the remote has none,
-// matching production semantics — tests that don't seed a ref will see
-// the pulling stage route to onFail.
+// resolver surfaces ErrNoHead when the remote has no refs yet so the
+// pulling stage's onOK short-circuit lets a fresh-remote first run reach
+// commit+push and bootstrap the first ref.
 func (r *testRitual) buildPullingVerbs(worldsPath string, scanner ports.DirectoryScanner) (ports.Puller, ports.Applier, pulling.HeadResolver) {
 	worldsRoot, err := os.OpenRoot(worldsPath)
 	if err != nil {
@@ -467,24 +467,7 @@ func (r *testRitual) buildPullingVerbs(worldsPath string, scanner ports.Director
 	runner := adapters.NewSerialRunner()
 	puller := refs.NewPuller(r.remote, r.local, runner)
 	applier := refs.NewApplier(r.local, workdirStorage, scanner, runner)
-	resolver := func(ctx context.Context) (domain.RefID, error) {
-		keys, err := r.remote.List(ctx, "refs/")
-		if err != nil {
-			return "", fmt.Errorf("list refs: %w", err)
-		}
-		var head string
-		for _, key := range keys {
-			name := strings.TrimPrefix(key, "refs/")
-			name = strings.TrimSuffix(name, ".json")
-			if name == "" {
-				continue
-			}
-			if name > head {
-				head = name
-			}
-		}
-		return domain.RefID(head), nil
-	}
+	resolver := pulling.NewHeadResolver(r.remote)
 	return puller, applier, resolver
 }
 

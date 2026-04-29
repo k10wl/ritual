@@ -537,6 +537,27 @@ func TestCommitter_RejectsClockCollisionWithExistingRef(t *testing.T) {
 		"collision rejection must be byte-preserving: the ref on disk is still the first commit's ref, not a mutated hybrid — the collision path must not write ANYTHING at refs/{id}.json")
 }
 
+func TestCommitter_RefFileIsHumanReadableJSON_NotMinified(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	workdir := newFSBundle(t)
+	blobs := newFSBundle(t)
+	workdir.put(t, "worlds/level.dat", []byte("AAAA"))
+
+	committer := refs.NewCommitter(workdir.scanner(), workdir.storage, blobs.storage, serialRunner).
+		WithClock(commitFixedClock(t, "2026-04-22T10:00:00.000Z"))
+	id, err := committer.Commit(ctx, ports.CommitOpts{Targets: []string{"worlds/**"}})
+	require.NoError(t, err, "commit must succeed before the on-disk format can be inspected")
+
+	body := blobs.mustGet(t, "refs/"+string(id)+".json")
+
+	assert.Contains(t, string(body), "\n",
+		"POC fix #7 regression: refs/{id}.json on disk must be MarshalIndent-formatted (newline + 2-space indent) so an operator can `cat` the file and read it without reflowing — the v1 single-line `json.Marshal` form left users staring at an opaque one-liner")
+	assert.Contains(t, string(body), "\n  \"",
+		"POC fix #7 regression: indented refs JSON must use a 2-space indent for nested fields — matches the agreed wire format and prevents accidental reversion to single-line marshal")
+}
+
 // --- commit test fixtures ---
 
 func commitFixedClock(t *testing.T, rfc3339Milli string) func() time.Time {

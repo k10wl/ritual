@@ -52,6 +52,10 @@ func staticResolver(id domain.RefID) pulling.HeadResolver {
 	return func(_ context.Context) (domain.RefID, error) { return id, nil }
 }
 
+func noHeadResolver() pulling.HeadResolver {
+	return func(_ context.Context) (domain.RefID, error) { return "", pulling.ErrNoHead }
+}
+
 func failingResolver(err error) pulling.HeadResolver {
 	return func(_ context.Context) (domain.RefID, error) { return "", err }
 }
@@ -95,26 +99,26 @@ func TestPulling_RecordsPulledHeadOnRunStateForDownstreamParentResolution(t *tes
 		"Pulling stage must record the pulled head id on rs.ParentRefID after Apply succeeds so the committing stage's fresh-commit branch has a Parent to reference")
 }
 
-func TestPulling_LeavesParentRefIDEmptyWhenRemoteHasNoRefs(t *testing.T) {
+func TestPulling_OnErrNoHeadFromResolver_RoutesToOnOKWithoutCallingVerbs(t *testing.T) {
 	onOK := &sentinelStrategy{name: "ok"}
 	onFail := &sentinelStrategy{name: "fail"}
 	puller := &recordingPuller{}
 	applier := &recordingApplier{}
 
-	stage := pulling.New(puller, applier, staticResolver(""), onOK, onFail)
+	stage := pulling.New(puller, applier, noHeadResolver(), onOK, onFail)
 
 	rs := newRunState()
 	next, err := stage.Run(t.Context(), rs)
 
 	require.NoError(t, err)
 	assert.Empty(t, puller.calls,
-		"Pulling stage must short-circuit on empty head id so an empty-remote bootstrap does not issue pointless GETs")
+		"Pulling stage must short-circuit on ErrNoHead so an empty-storage bootstrap does not issue pointless GETs")
 	assert.Empty(t, applier.calls,
-		"Pulling stage must not call Apply when there is nothing on remote to materialise")
+		"Pulling stage must not call Apply when the resolver signals there is nothing to materialise")
 	assert.Equal(t, domain.RefID(""), rs.ParentRefID,
-		"Pulling stage must leave rs.ParentRefID empty when remote is empty so the committing stage creates a true root commit with no parent (spec §1073 permits empty Parent on initial commit)")
+		"Pulling stage must leave rs.ParentRefID empty on ErrNoHead so the committing stage creates a true root commit with no parent (spec §1073 permits empty Parent on initial commit)")
 	assert.Same(t, machine.Strategy[ritual.RunState](onOK), next,
-		"Pulling stage must route to onOK when remote is empty — bootstrap is success, not failure, so acquiring and running still proceed")
+		"Pulling stage must route to onOK on ErrNoHead — bootstrap is success, not failure, so acquiring and running still proceed")
 }
 
 func TestPulling_LeavesParentRefIDEmptyOnPullError(t *testing.T) {

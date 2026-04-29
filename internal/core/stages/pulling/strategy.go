@@ -9,6 +9,7 @@ package pulling
 
 import (
 	"context"
+	"errors"
 
 	"ritual/internal/core/domain"
 	"ritual/internal/core/machine"
@@ -17,8 +18,14 @@ import (
 )
 
 // HeadResolver picks the ref id to pull. The composition root builds
-// this as a closure over remote storage (List("refs/") → max timestamp).
+// this as a closure over storage (List("refs/") → max timestamp).
 type HeadResolver func(ctx context.Context) (domain.RefID, error)
+
+// ErrNoHead is the sentinel a HeadResolver returns when the storage carries
+// no refs yet. The pulling stage treats it as a no-op success so a later
+// Commit+Push can bootstrap the first ref. Real listing failures must wrap
+// a different error so they route to onFail unchanged.
+var ErrNoHead = errors.New("pulling: no head ref on storage")
 
 // Strategy implements the Pulling stage.
 type Strategy struct {
@@ -38,10 +45,10 @@ func New(puller ports.Puller, applier ports.Applier, resolve HeadResolver, onOK,
 func (*Strategy) Name() string { return ritual.StagePulling }
 
 // Run resolves HEAD, pulls it, then applies it. First failure records
-// rs.Err and routes to onFail. When the resolver returns an empty id the
-// stage treats the pull as a no-op success — there is nothing on remote
+// rs.Err and routes to onFail. When the resolver signals ErrNoHead the
+// stage treats the pull as a no-op success — there is nothing on storage
 // yet, the local workdir is authoritative, and the chain advances so a
-// later Commit+Push can bootstrap the remote.
+// later Commit+Push can bootstrap the first ref.
 func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strategy[ritual.RunState], error) {
 	publish(rs.Bus, ritual.StartInfo{Operation: "pull"})
 	if err := ctx.Err(); err != nil {
@@ -49,13 +56,13 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 		return s.onFail, nil //nolint:nilerr // error stored on RunState; onFail stage handles it
 	}
 	id, err := s.resolve(ctx)
+	if errors.Is(err, ErrNoHead) {
+		publish(rs.Bus, ritual.FinishInfo{Operation: "pull"})
+		return s.onOK, nil
+	}
 	if err != nil {
 		rs.Err = err
 		return s.onFail, nil
-	}
-	if id == "" {
-		publish(rs.Bus, ritual.FinishInfo{Operation: "pull"})
-		return s.onOK, nil
 	}
 	if err := s.puller.Pull(ctx, id); err != nil {
 		rs.Err = err

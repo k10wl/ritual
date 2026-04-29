@@ -291,7 +291,7 @@ func (c *Committer) writeRef(ctx context.Context, ref *domain.Ref) error {
 	if present {
 		return fmt.Errorf("refs.Committer.Commit: RefID %s collision — refs/{id}.json already exists; clock produced a duplicate millisecond RefID and silent overwrite would destroy the prior ref's lineage", ref.Timestamp)
 	}
-	body, err := json.Marshal(ref)
+	body, err := json.MarshalIndent(ref, "", "  ")
 	if err != nil {
 		return fmt.Errorf("refs.Committer.Commit: marshal ref %s: %w", ref.Timestamp, err)
 	}
