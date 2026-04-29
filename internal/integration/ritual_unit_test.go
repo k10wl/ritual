@@ -188,38 +188,6 @@ func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 	assert.Equal(t, 2, flaky.calls, "puller called twice: fail + retry")
 }
 
-// --- blockingCmdBuilder ---
-
-type blockingCmdBuilder struct {
-	ready chan struct{}
-}
-
-func (b *blockingCmdBuilder) Build(ctx context.Context, _ io.Reader, _ io.Writer) (*exec.Cmd, error) {
-	close(b.ready)
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
-func TestRitual_Stop_CancelsRunning(t *testing.T) {
-	bus := adapters.NewEventBus(128)
-	ch, unsub := bus.Subscribe()
-	defer unsub()
-
-	blocker := &blockingCmdBuilder{ready: make(chan struct{})}
-	defer setupRitual(t, bus,
-		fakeStorage{}, fakeStorage{},
-		nil, noopPuller{}, noopApplier{}, noopHead, nil, nil, nil, nil, nil,
-		blocker,
-		immediateReady{},
-	)()
-
-	bus.Publish(ritual.StartRequested{})
-	<-blocker.ready
-
-	bus.Publish(ritual.StopRequested{})
-	waitForStatus(t, ch, lifecycle.Done, 5*time.Second)
-}
-
 // Story #7 — Start is only rejected while Running. After terminal states
 // (Done, Failed), a fresh Start must begin a new pipeline — users retry by
 // starting again. Uses noop fakes so pipelines complete instantly.

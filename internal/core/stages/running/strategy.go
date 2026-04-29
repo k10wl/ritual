@@ -80,6 +80,14 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 		return fail(err)
 	}
 
+	// Subscribe BEFORE Build so any external observer that learns Build has
+	// run (in tests this is fakeServerCmdBuilder.ready firing during Build)
+	// is guaranteed to find this stage's sub already wired. Audit fix #4
+	// makes the bus path the only delivery channel for ritual.StopRequested
+	// during running, so a missed subscription = a missed stop.
+	sub, unsub := rs.Bus.Subscribe()
+	defer unsub()
+
 	cmd, err := s.cmd.Build(ctx, stdinR, outW)
 	if err != nil {
 		return fail(err)
@@ -117,7 +125,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 			signal(readyCh)
 		}
 	}()
-	go coordinate(coordDone, stdinW, outCh, rs.Bus, stopCh, readyCh, stoppingDetectedCh)
+	go coordinate(coordDone, stdinW, outCh, rs.Bus, sub, stopCh, readyCh, stoppingDetectedCh)
 
 	publish(rs.Bus, ServerStartingInfo{})
 
@@ -142,17 +150,18 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 
 // coordinate owns stdin writes and ServerStoppingInfo emission. Exits when
 // done closes (after cmd.Wait), which gives cmd.Cancel the whole run window
-// to deliver its stop signal.
+// to deliver its stop signal. The sub channel is owned and unsubscribed
+// by the caller — registration must happen BEFORE Build returns to close
+// the race where an external observer sees the server as ready and
+// publishes StopRequested before this goroutine has wired its subscription.
 func coordinate(
 	done <-chan struct{},
 	stdin io.Writer,
 	outCh <-chan string,
 	bus ports.EventBus,
+	sub <-chan ports.Event,
 	stopCh, readyCh, stoppingDetectedCh <-chan struct{},
 ) {
-	sub, unsub := bus.Subscribe()
-	defer unsub()
-
 	var ready, stopQueued bool
 	var stoppingOnce sync.Once
 	emitStopping := func() {
@@ -193,6 +202,14 @@ func coordinate(
 		case e, ok := <-sub:
 			if !ok {
 				return
+			}
+			if _, ok := e.(ritual.StopRequested); ok {
+				publish(bus, ServerStopRequestedInfo{})
+				if ready {
+					writeStop()
+				} else {
+					stopQueued = true
+				}
 			}
 			if _, ok := e.(SaveRequested); ok {
 				if writeStdin("save-all flush\n") == nil {

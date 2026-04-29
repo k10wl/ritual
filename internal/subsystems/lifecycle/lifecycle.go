@@ -113,14 +113,22 @@ func (c *controller) start(ctx context.Context) {
 	}()
 }
 
+// stop flags userStop so resolveStatus classifies a clean exit as Done
+// rather than Failed. It deliberately does NOT cancel runCtx — audit fix #4
+// (docs/dev-session-2026-04-25-poc-setup.md): cancelling here propagated
+// past the running stage and aborted Committing on its first storage call,
+// silently dropping the user's session. The running stage now subscribes
+// to ritual.StopRequested directly and writes stop\n itself; runCtx stays
+// alive so Committing+Pushing+Retaining+Unlocking complete.
+//
+// Trade-off captured in the audit: bus-driven stop only acts during the
+// running stage. A user stop during Pulling/Pushing is a no-op until
+// parent ctx ends (e.g., window-close budget). Acceptable per POC.
 func (c *controller) stop() {
 	if c.status != Running {
 		return
 	}
 	c.userStop.Store(true)
-	if c.cancel != nil {
-		c.cancel()
-	}
 }
 
 func (c *controller) retry(ctx context.Context) {

@@ -459,6 +459,112 @@ func TestRunning_OutsideStop_ForceKillFallback_StillStopped(t *testing.T) {
 	assert.True(t, stopped.Forced, "force-killed stop must set Forced=true so UI can distinguish from graceful")
 }
 
+// Audit fix #4 (docs/dev-session-2026-04-25-poc-setup.md). The bus-driven
+// stop path: ritual.StopRequested arrives on the bus mid-Running, ctx is
+// NOT cancelled (lifecycle.stop() under the fix only sets userStop), and
+// coordinate must subscribe to StopRequested directly to deliver stop\n.
+// Server exits cleanly, ServerStopRequestedInfo + ServerStoppedInfo fire,
+// strategy routes to onNext, ctx remains alive for downstream stages.
+func TestRunning_StopRequestedFromBus_StopsServerGracefullyWithoutCtxCancel(t *testing.T) {
+	if raceEnabled {
+		t.Skip("timing-sensitive: race-instrumented helper subprocess can exceed the tight grace period")
+	}
+	bus := adapters.NewEventBus(64)
+	events, stopCollect := collectEvents(t, bus)
+	defer stopCollect()
+
+	onNext := &sentinel{name: "NEXT"}
+	onCrash := &sentinel{name: "CRASH"}
+
+	strategy := running.New(
+		&helperCmdBuilder{mode: "outside_stop_respects"},
+		&stubReadiness{err: nil},
+		onNext,
+		onCrash,
+	)
+	strategy.SetStopGracePeriod(500 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 1*time.Second)
+	defer cancel()
+
+	time.AfterFunc(40*time.Millisecond, func() { bus.Publish(ritual.StopRequested{}) })
+
+	rs := &ritual.RunState{Bus: bus}
+	next, err := strategy.Run(ctx, rs)
+
+	require.NoError(t, err, "strategy.Run must not error on bus-driven graceful stop — coordinate handled the StopRequested without ctx cancellation")
+	assert.Nil(t, rs.Err, "rs.Err must stay nil — bus-driven stop is graceful, not a crash")
+	assert.Equal(t, machine.Strategy[ritual.RunState](onNext), next, "bus StopRequested + clean server exit must route to onNext so Committing/Pushing can run")
+	assert.False(t, onCrash.visited, "onCrash must not be visited when the server exited 0 after a bus stop")
+	assert.NoError(t, ctx.Err(),
+		"audit fix #4: ritual.StopRequested must NOT cancel ctx — coordinate subscribes to the event and writes stop\\n itself; ctx must remain alive so the next stage's first storage call doesn't abort with context.Canceled and silently drop the user's ref")
+
+	stopCollect()
+	assert.True(t, hasEvent[running.ServerStopRequestedInfo](*events),
+		"audit fix #4: coordinate must publish ServerStopRequestedInfo when ritual.StopRequested arrives on the bus — UI subscribes to flip 'Stopping…' immediately, separate from ServerStoppingInfo which only fires once stop\\n actually lands on stdin")
+	assert.True(t, hasEvent[running.ServerStoppingInfo](*events), "ServerStoppingInfo must fire once stop\\n was successfully written to the server's stdin")
+	assert.True(t, hasEvent[running.ServerStoppedInfo](*events), "ServerStoppedInfo must fire after the helper subprocess exits cleanly")
+	assert.False(t, hasEvent[running.ServerCrashedInfo](*events), "bus-driven stop followed by exit 0 is not a crash")
+
+	stopped := findEvent[running.ServerStoppedInfo](*events)
+	require.NotNil(t, stopped, "ServerStoppedInfo must be present")
+	assert.False(t, stopped.Forced, "graceful bus stop must leave Forced=false — process exited within grace period of its own accord")
+}
+
+// Audit fix #4 — coordinate must queue a bus-driven StopRequested when it
+// arrives before the server is ready (e.g., user clicks Stop during the
+// 30–90s NeoForge boot). The queued stop flushes once readiness fires, so
+// stop\n lands AFTER save-off, never before the server is listening on
+// stdin.
+func TestRunning_StopRequestedFromBus_BeforeReady_QueuedAndFlushedAfterReady(t *testing.T) {
+	if raceEnabled {
+		t.Skip("timing-sensitive: race-instrumented helper subprocess can exceed the tight grace period")
+	}
+	bus := adapters.NewEventBus(64)
+	events, stopCollect := collectEvents(t, bus)
+	defer stopCollect()
+
+	onNext := &sentinel{name: "NEXT"}
+	onCrash := &sentinel{name: "CRASH"}
+
+	gate := make(chan struct{})
+	strategy := running.New(
+		&helperCmdBuilder{mode: "ordered_stop"},
+		&gatedReadiness{gate: gate},
+		onNext,
+		onCrash,
+	)
+	strategy.SetStopGracePeriod(1 * time.Second)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 1*time.Second)
+	defer cancel()
+
+	time.AfterFunc(30*time.Millisecond, func() { bus.Publish(ritual.StopRequested{}) })
+	time.AfterFunc(80*time.Millisecond, func() { close(gate) })
+
+	rs := &ritual.RunState{Bus: bus}
+	next, err := strategy.Run(ctx, rs)
+
+	require.NoError(t, err, "queued bus stop must not error")
+	assert.Nil(t, rs.Err, "rs.Err must stay nil through the queued-stop path")
+	assert.Equal(t, machine.Strategy[ritual.RunState](onNext), next, "bus StopRequested queued before ready must still route to onNext after the server exits cleanly")
+	assert.False(t, onCrash.visited, "onCrash must not be visited on queued bus stop")
+	assert.NoError(t, ctx.Err(), "audit fix #4: bus StopRequested must not cancel ctx, even when queued")
+
+	stopCollect()
+	assert.True(t, hasEvent[running.ServerStopRequestedInfo](*events),
+		"audit fix #4: ServerStopRequestedInfo must fire as soon as ritual.StopRequested arrives, BEFORE readiness — the UI flips 'Stopping…' on user intent, not on stop\\n delivery")
+	assert.False(t, hasEvent[running.ServerCrashedInfo](*events), "queued bus stop is not a crash")
+
+	for _, e := range *events {
+		if out, ok := e.(running.ServerOutputInfo); ok {
+			assert.NotContains(t, out.Line, "[ORDER_FAIL]",
+				"queued bus StopRequested must wait for readiness before writing stop\\n — helper reports [ORDER_FAIL] when stop precedes save-off, which means the queue gate is broken")
+		}
+	}
+	assertLifecycleOrder(t, *events)
+}
+
 // Fix 2 — cmd.Cancel publishes ServerStopRequestedInfo so the UI can show
 // "Stopping…" (user intent) immediately, separate from ServerStoppingInfo
 // which only fires when stop\n is actually delivered to the server.

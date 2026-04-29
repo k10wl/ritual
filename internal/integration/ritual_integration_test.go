@@ -842,6 +842,45 @@ func TestIntegration_StopMidGame_LockReleased(t *testing.T) {
 	ritual.waitDone(t)
 }
 
+// Audit fix #4 (docs/dev-session-2026-04-25-poc-setup.md). Symptom: GUI Stop
+// during a live run silently dropped the user's session ref. Cause:
+// lifecycle.controller.stop() cancelled runCtx; the running stage exited
+// cleanly via cmd.Cancel + stop\n, but the very next stage (Committing) saw
+// a dead ctx and aborted on its first storage write. resolveStatus then
+// masked the failure as Done because userStop was set. The user saw "Done"
+// but no ref ever landed.
+//
+// Behaviour under the fix: bus ritual.StopRequested only sets userStop;
+// the running stage's coordinate() subscribes to the event itself and
+// writes stop\n. ctx stays alive so Committing+Pushing produce and upload
+// a fresh ref before the chain unlocks.
+func TestIntegration_StopRequestMidRunning_CommitsAndPushesRefBeforeDone(t *testing.T) {
+	r := newRitual(t)
+
+	seedRemoteWorld(t, r,
+		file("world/level.dat", []byte("seed")),
+	)
+
+	server := r.startRitual(t)
+	server.waitReady(t)
+	server.write("worlds/world/level.dat", []byte("user-edit before stop"))
+	time.Sleep(50 * time.Millisecond)
+
+	refsBefore, err := r.remote.List(r.ctx, "refs/")
+	require.NoError(t, err, "list remote refs before stop must succeed — setup failure before any test logic runs")
+
+	r.bus.Publish(ritual.StopRequested{})
+	time.Sleep(50 * time.Millisecond)
+	server.stdin.Close()
+	r.waitDone(t)
+
+	refsAfter, err := r.remote.List(r.ctx, "refs/")
+	require.NoError(t, err, "list remote refs after waitDone must succeed — the unlock stage already ran, the storage is reachable")
+
+	assert.Greater(t, len(refsAfter), len(refsBefore),
+		"audit fix #4 regression: ritual.StopRequested mid-Running must NOT cancel runCtx — Committing must run after the server exits and produce a new refs/{id}.json on remote. Pre-fix, lifecycle.stop() cancelled runCtx and Commit aborted on its first storage write, silently dropping the session while resolveStatus masked the failure as Done.")
+}
+
 func TestIntegration_FetchFails_RetrySucceeds(t *testing.T) {
 	ritual := newRitual(t)
 
