@@ -9,7 +9,14 @@ import (
 
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/ritual"
 )
+
+// PlanFn observes the byte/file budget of a transfer batch before any
+// blob streams. The composition root wires it to bus.Publish so a GUI
+// projection can populate the progress-bar denominator on the first
+// frame.
+type PlanFn func(ritual.PlanInfo)
 
 // Puller fetches a ref and every blob it references FROM one storage TO
 // another. Blobs already present at the destination are skipped. Pull is
@@ -35,6 +42,7 @@ type Puller struct {
 	from   ports.StorageRepository
 	to     ports.StorageRepository
 	runner ports.BlobRunner
+	onPlan PlanFn
 }
 
 // NewPuller wires a Puller. Pull reads from `from` and writes to `to`,
@@ -43,6 +51,13 @@ type Puller struct {
 func NewPuller(from, to ports.StorageRepository, runner ports.BlobRunner) *Puller {
 	return &Puller{from: from, to: to, runner: runner}
 }
+
+// OnPlan registers a callback that fires once per Pull, after the ref is
+// fetched and before the first blob streams. Wired by the composition
+// root to bus.Publish; tests pass a slice-appending closure. nil-callback
+// is the default — Pull stays silent. Idempotent: a second call replaces
+// the prior callback.
+func (p *Puller) OnPlan(fn PlanFn) { p.onPlan = fn }
 
 // Pull materialises the ref identified by id at the destination:
 // refs/{id}.json plus every referenced objects/{hash}. The destination
@@ -56,6 +71,13 @@ func (p *Puller) Pull(ctx context.Context, id domain.RefID) error {
 		return err
 	}
 	items, pathByHash := collectHashes(ref.Objects)
+	if p.onPlan != nil {
+		p.onPlan(ritual.PlanInfo{
+			Operation:  "pull",
+			BytesTotal: sumSizes(ref.Objects),
+			FilesTotal: len(items),
+		})
+	}
 	err = p.runner.Run(ctx, items, func(ctx context.Context, hash string) error {
 		if err := transferBlob(ctx, p.from, p.to, blobKey(hash)); err != nil {
 			return fmt.Errorf("pull %s: blob %s (%s): %w", id, hash, pathByHash[hash], err)
@@ -88,6 +110,22 @@ func (p *Puller) fetchRef(ctx context.Context, id domain.RefID) (*domain.Ref, []
 		return nil, nil, fmt.Errorf("pull %s: parse ref: %w", id, err)
 	}
 	return ref, raw, nil
+}
+
+// sumSizes totals the byte size of every object in a ref. Same-hash
+// duplicates count once because the unique-blob view is what hits the
+// network — the file count surfaced via FilesTotal matches.
+func sumSizes(objects map[string]domain.Object) int64 {
+	seen := make(map[string]struct{}, len(objects))
+	var total int64
+	for _, obj := range objects {
+		if _, ok := seen[obj.Hash]; ok {
+			continue
+		}
+		seen[obj.Hash] = struct{}{}
+		total += obj.Size
+	}
+	return total
 }
 
 func refKey(id domain.RefID) string { return "refs/" + string(id) + ".json" }

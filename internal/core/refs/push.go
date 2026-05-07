@@ -9,6 +9,7 @@ import (
 
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/ritual"
 )
 
 // Pusher uploads a ref and every blob it references FROM one storage TO
@@ -38,6 +39,7 @@ type Pusher struct {
 	from   ports.StorageRepository
 	to     ports.StorageRepository
 	runner ports.BlobRunner
+	onPlan PlanFn
 }
 
 // NewPusher wires a Pusher. Push reads from `from` and writes to `to`,
@@ -48,6 +50,13 @@ func NewPusher(from, to ports.StorageRepository, runner ports.BlobRunner) *Pushe
 	return &Pusher{from: from, to: to, runner: runner}
 }
 
+// OnPlan registers a callback that fires once per Push, after the local
+// ref is loaded and before the first blob streams. Wired by the
+// composition root to bus.Publish; tests pass a slice-appending closure.
+// nil-callback is the default — Push stays silent. Idempotent: a second
+// call replaces the prior callback.
+func (p *Pusher) OnPlan(fn PlanFn) { p.onPlan = fn }
+
 // Push uploads the ref identified by id to the destination: every
 // referenced objects/{hash} first (step 3 barrier), then refs/{id}.json
 // (step 5 commit).
@@ -57,6 +66,13 @@ func (p *Pusher) Push(ctx context.Context, id domain.RefID) error {
 		return err
 	}
 	items, pathByHash := collectHashes(ref.Objects)
+	if p.onPlan != nil {
+		p.onPlan(ritual.PlanInfo{
+			Operation:  "push",
+			BytesTotal: sumSizes(ref.Objects),
+			FilesTotal: len(items),
+		})
+	}
 	err = p.runner.Run(ctx, items, func(ctx context.Context, hash string) error {
 		if err := transferBlob(ctx, p.from, p.to, blobKey(hash)); err != nil {
 			return fmt.Errorf("push %s: blob %s (%s): %w", id, hash, pathByHash[hash], err)

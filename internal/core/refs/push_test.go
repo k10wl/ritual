@@ -23,6 +23,7 @@ import (
 
 	"ritual/internal/core/domain"
 	"ritual/internal/core/refs"
+	"ritual/internal/core/ritual"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -302,6 +303,36 @@ func TestPusher_SurfacesRefPutFailureAfterBlobsLanded(t *testing.T) {
 	assert.True(t, blobPresent,
 		"§Push crash-recovery 'all blobs uploaded, before manifest PUT': blobs already durable on remote must remain — the next Push sees them via Exists-gate and retries only the ref write")
 	assertNoRefOnRemote(t, remote.bundle, ref.Timestamp)
+}
+
+func TestPusher_OnPlan_AnnouncesByteAndFileBudgetSummedFromRefObjects(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	local := newFSBundle(t)
+	remote := newFSBundle(t)
+
+	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat":  []byte("AAAA"),
+		"worlds/region.mca": []byte("BBBBBBBB"),
+		"worlds/playerdata": []byte("CCCCCCCCCCCCCCCC"),
+	})
+	seedLocalForPush(t, local, ref, map[string][]byte{
+		"worlds/level.dat":  []byte("AAAA"),
+		"worlds/region.mca": []byte("BBBBBBBB"),
+		"worlds/playerdata": []byte("CCCCCCCCCCCCCCCC"),
+	})
+
+	var plans []ritual.PlanInfo
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
+	pusher.OnPlan(func(p ritual.PlanInfo) { plans = append(plans, p) })
+
+	require.NoError(t, pusher.Push(ctx, ref.Timestamp), "push must succeed against an empty remote so the plan-callback contract is exercised on the happy path — failure paths are covered by other tests")
+
+	require.Len(t, plans, 1, "OnPlan must fire exactly once per Push — duplicate plans would re-anchor the progress-bar denominator mid-run and confuse the user with a bar that resets")
+	assert.Equal(t, "push", plans[0].Operation, "PlanInfo.Operation must be 'push' so the projection can disambiguate from the Pulling-stage plan when both are observed in the same run")
+	assert.Equal(t, int64(4+8+16), plans[0].BytesTotal, "PlanInfo.BytesTotal must equal the sum of every referenced object's Size so the upload progress bar's denominator reflects the real network budget — without this the bar stays at 0%% the whole transfer")
+	assert.Equal(t, 3, plans[0].FilesTotal, "PlanInfo.FilesTotal must equal the unique-blob count so the GUI can render an 'N of M files' upload caption — same-hash duplicates collapse to one blob per Pusher's collectHashes contract")
 }
 
 // --- push fixtures (prefix-named to avoid collision with Pull/Commit/Apply helpers) ---

@@ -99,6 +99,9 @@ func (p *Projection) fold(evt ports.Event) bool {
 		p.state.ErrorText = ""
 	case progress.Tick:
 		return p.onTick(e)
+	case ritual.PlanInfo:
+		p.state.BytesTotal = e.BytesTotal
+		p.state.FilesTotal = e.FilesTotal
 	case lifecycle.StatusChanged:
 		p.onStatusChanged(e)
 	default:

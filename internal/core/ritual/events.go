@@ -10,6 +10,20 @@ type StartInfo struct{ Operation string }
 
 func (s StartInfo) String() string { return "start " + s.Operation }
 
+// PlanInfo announces the byte/file budget of a transfer batch (pull or
+// push) before any blob streams. Projections use BytesTotal as the
+// progress-bar denominator so the bar shows real percent on the first
+// Tick instead of staying at 0% until the run finishes.
+type PlanInfo struct {
+	Operation  string
+	BytesTotal int64
+	FilesTotal int
+}
+
+func (p PlanInfo) String() string {
+	return fmt.Sprintf("plan %s files=%d bytes=%d", p.Operation, p.FilesTotal, p.BytesTotal)
+}
+
 // UpdateInfo is a generic progress event with optional structured Data.
 type UpdateInfo struct {
 	Operation, Message string

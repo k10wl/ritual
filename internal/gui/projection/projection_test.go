@@ -191,6 +191,16 @@ func TestProjection_TickInPullingStage_UpdatesBytesDone(t *testing.T) {
 	assert.Equal(t, int64(500), final.BytesDone, "progress.Tick during Pulling must propagate BytesIn into ViewModel.BytesDone so the progress bar moves while bytes are streaming down from remote")
 }
 
+func TestProjection_PlanInfoDuringPulling_PopulatesBytesTotalAndFilesTotal(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(ritual.PlanInfo{Operation: "pull", BytesTotal: 6_000, FilesTotal: 3})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(6000), final.BytesTotal, "PlanInfo.BytesTotal must populate ViewModel.BytesTotal so the progress-bar denominator is non-zero before the first Tick — without it the bar stays at 0%% the whole transfer even though BytesDone climbs every second")
+	assert.Equal(t, 3, final.FilesTotal, "PlanInfo.FilesTotal must populate ViewModel.FilesTotal so the GUI can render an 'N of M files' caption alongside the byte bar")
+}
+
 func TestProjection_TickInPullingStage_RendersDownloadMbpsLabel(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})

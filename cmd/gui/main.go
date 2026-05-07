@@ -236,6 +236,13 @@ func buildRuntime() (*guiRuntime, error) {
 	pusher := refs.NewPusher(localStorage, remoteStorage, runner)
 	commitTargets := config.DefaultCommitTargets
 
+	// Wire pull/push plan callbacks into the bus so the projection can
+	// populate ViewModel.BytesTotal before the first progress.Tick lands —
+	// audit open item #1: without this the bar reads 0%% the whole transfer
+	// even though BytesDone climbs every second.
+	puller.OnPlan(func(p ritual.PlanInfo) { bus.Publish(p) })
+	pusher.OnPlan(func(p ritual.PlanInfo) { bus.Publish(p) })
+
 	// Real NeoForge launcher: settings.StartScript (default "start.bat")
 	// resolved relative to <root>/server/. Operators may override via
 	// settings.json — empty/missing falls back to domain.DefaultStartScript.

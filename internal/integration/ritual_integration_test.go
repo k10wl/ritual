@@ -475,6 +475,7 @@ func (r *testRitual) buildPullingVerbs(worldsPath string, scanner ports.Director
 	}
 	runner := adapters.NewSerialRunner()
 	puller := refs.NewPuller(r.remote, r.local, runner)
+	puller.OnPlan(func(p ritual.PlanInfo) { r.bus.Publish(p) })
 	applier := refs.NewApplier(r.local, workdirStorage, scanner, runner)
 	resolver := pulling.NewHeadResolver(r.remote)
 	return puller, applier, resolver
@@ -495,6 +496,7 @@ func (r *testRitual) buildCommittingVerbs(t *testing.T, worldsPath string, scann
 	runner := adapters.NewSerialRunner()
 	committer := refs.NewCommitter(scanner, workdirStorage, r.local, runner)
 	pusher := refs.NewPusher(r.local, r.remote, runner)
+	pusher.OnPlan(func(p ritual.PlanInfo) { r.bus.Publish(p) })
 	return committer, pusher, []string{"**"}
 }
 
@@ -817,6 +819,44 @@ func TestIntegration_LeaseExpired_TakesOverAndCompletes(t *testing.T) {
 
 	ritual.assertRemoteLockAbsent(t,
 		"stale lease should be taken over and released — crashed host's lock object is gone")
+}
+
+func TestIntegration_PullPlanInfo_PublishedBeforeFirstBlobLandsLocally(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("AAAA")),
+		file("world/region.mca", []byte("BBBBBBBB")),
+	)
+
+	server := ritual.startRitual(t)
+	plan := waitForPullPlanInfo(t, ritual.ch, time.Second)
+	server.waitReady(t)
+	server.exit(0)
+	server.stdin.Close()
+	ritual.waitDone(t)
+
+	assert.Equal(t, "pull", plan.Operation, "PlanInfo emitted from the pulling stage must carry Operation='pull' so the projection can disambiguate from the push-side plan when a single run reports both")
+	assert.Equal(t, int64(4+8), plan.BytesTotal, "PlanInfo.BytesTotal must equal the sum of every referenced object's Size — without this announced upfront the GUI bar's denominator stays zero and the bar reads 0%% the whole transfer even as bytes stream in")
+	assert.Equal(t, 2, plan.FilesTotal, "PlanInfo.FilesTotal must equal the unique-blob count — drives the GUI's 'N of M files' caption alongside the byte bar")
+}
+
+func waitForPullPlanInfo(t *testing.T, ch <-chan ports.Event, timeout time.Duration) ritual.PlanInfo {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for ritual.PlanInfo with Operation='pull' — the pulling stage should have announced BytesTotal upfront so the GUI bar shows real percent on the first Tick")
+		case e, ok := <-ch:
+			if !ok {
+				t.Fatal("event channel closed while waiting for PlanInfo")
+			}
+			if p, ok := e.(ritual.PlanInfo); ok && p.Operation == "pull" {
+				return p
+			}
+		}
+	}
 }
 
 func TestIntegration_LocalLockHeldBySameHost_BlocksAcquireAndSurfacesLocalHolder(t *testing.T) {

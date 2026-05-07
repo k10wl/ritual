@@ -33,6 +33,7 @@ import (
 
 	"ritual/internal/core/domain"
 	"ritual/internal/core/refs"
+	"ritual/internal/core/ritual"
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/stretchr/testify/assert"
@@ -326,6 +327,59 @@ func TestPuller_ResumesWhenBlobsAlreadyLocalButRefMissing(t *testing.T) {
 		"resumed pull's ref must carry the remote's object map verbatim — no re-interpretation across the crash boundary")
 	assert.Equal(t, 0, remote.getHits("objects/"+hashHex("AAAA")),
 		"resumed pull must not re-fetch blobs already present locally — Exists-gate holds across the crash-resume boundary, otherwise bandwidth amplifies on every retry")
+}
+
+func TestPuller_OnPlan_AnnouncesByteAndFileBudgetSummedFromRefObjects(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
+
+	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat":  []byte("AAAA"),
+		"worlds/region.mca": []byte("BBBBBBBB"),
+		"worlds/playerdata": []byte("CCCCCCCCCCCCCCCC"),
+	})
+	seedRemote(t, remote, ref, map[string][]byte{
+		"worlds/level.dat":  []byte("AAAA"),
+		"worlds/region.mca": []byte("BBBBBBBB"),
+		"worlds/playerdata": []byte("CCCCCCCCCCCCCCCC"),
+	})
+
+	var plans []ritual.PlanInfo
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
+	puller.OnPlan(func(p ritual.PlanInfo) { plans = append(plans, p) })
+
+	require.NoError(t, puller.Pull(ctx, ref.Timestamp), "pull must succeed against a complete remote so the plan-callback contract is exercised on the happy path — failure paths are covered by other tests")
+
+	require.Len(t, plans, 1, "OnPlan must fire exactly once per Pull — duplicate plans would re-anchor the progress-bar denominator mid-run and confuse the user with a bar that resets")
+	assert.Equal(t, "pull", plans[0].Operation, "PlanInfo.Operation must be 'pull' so the projection can disambiguate from the Pushing-stage plan when both are observed in the same run")
+	assert.Equal(t, int64(4+8+16), plans[0].BytesTotal, "PlanInfo.BytesTotal must equal the sum of every referenced object's Size so the progress-bar denominator reflects the real network budget — without this the bar stays at 0%% the whole transfer")
+	assert.Equal(t, 3, plans[0].FilesTotal, "PlanInfo.FilesTotal must equal the unique-blob count so the GUI can render an 'N of M files' caption — same-hash duplicates collapse to one blob per Puller's collectHashes contract")
+}
+
+func TestPuller_OnPlan_FiresEvenWhenAllBlobsAlreadyPresentLocally(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
+
+	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat": []byte("AAAA"),
+	})
+	seedRemote(t, remote, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
+	local.put(t, "objects/"+hashHex("AAAA"), []byte("AAAA"))
+
+	var plans []ritual.PlanInfo
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
+	puller.OnPlan(func(p ritual.PlanInfo) { plans = append(plans, p) })
+
+	require.NoError(t, puller.Pull(ctx, ref.Timestamp), "pull must succeed when blobs are already present locally — idempotent re-runs are part of the ACID contract")
+
+	require.Len(t, plans, 1, "OnPlan must fire even when no blobs need transferring — the GUI still renders a denominator (N bytes already on disk) so the bar resolves to 100%% instantly instead of 0%% indefinitely")
+	assert.Equal(t, int64(4), plans[0].BytesTotal, "PlanInfo.BytesTotal must announce the full ref budget regardless of skip-gate hits — the bar represents 'what the ref points at', not 'what we transferred this run'")
 }
 
 // --- test fixtures ---
