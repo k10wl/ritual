@@ -20,6 +20,22 @@ func TestDefaultSettings(t *testing.T) {
 	assert.Equal(t, config.DefaultMinRAMMB, settings.MinRAMMB, "default MinRAMMB must come from config defaults so manifest fallback parity holds")
 	assert.Equal(t, config.DefaultMinDiskMB, settings.MinDiskMB, "default MinDiskMB must come from config defaults so manifest fallback parity holds")
 	assert.Equal(t, config.DefaultMinJavaVersion, settings.MinJavaVersion, "default MinJavaVersion must come from config defaults so manifest fallback parity holds")
+	assert.Equal(t, "start.bat", settings.StartScript, "default StartScript must be 'start.bat' — NeoForge ships start.bat as the canonical Windows launcher and operators expect that filename without configuring anything")
+}
+
+func TestLoadSettings_BackfillsEmptyStartScript_ToStartBat(t *testing.T) {
+	tempDir := t.TempDir()
+	originalRootPath := config.RootPath
+	config.RootPath = tempDir
+	defer func() { config.RootPath = originalRootPath }()
+
+	pre := []byte(`{"port":25570,"memory":8192,"start_script":""}`)
+	require.NoError(t, os.WriteFile(filepath.Join(tempDir, SettingsFilename), pre, 0o644),
+		"seed a settings.json with an empty start_script so the loader's backfill is exercised")
+
+	loaded, err := LoadSettings()
+	require.NoError(t, err, "LoadSettings must succeed against a settings.json with an empty start_script — empty is treated as 'use default', not a hard error")
+	assert.Equal(t, "start.bat", loaded.StartScript, "an empty start_script on disk must be backfilled to 'start.bat' so a v2.0 settings.json (no field) and a deliberately-cleared field both produce a runnable launcher path")
 }
 
 func validSettings() *Settings {
@@ -151,6 +167,7 @@ func TestSettingsSavePrettyPrints(t *testing.T) {
 	settings := &Settings{
 		Port:           25565,
 		Memory:         4096,
+		StartScript:    DefaultStartScript,
 		MinRAMMB:       config.DefaultMinRAMMB,
 		MinDiskMB:      config.DefaultMinDiskMB,
 		MinJavaVersion: config.DefaultMinJavaVersion,
@@ -168,6 +185,7 @@ func TestSettingsSavePrettyPrints(t *testing.T) {
 	expected := fmt.Sprintf(`{
   "port": 25565,
   "memory": 4096,
+  "start_script": "start.bat",
   "min_ram_mb": %d,
   "min_disk_mb": %d,
   "min_java_version": %d,

@@ -1,21 +1,17 @@
 // Package main launches the Wails GUI with the embedded frontend.
 //
-// This is a POC composition root. The pipeline is wired against the
-// fakerun test fixture (cmd/fakerun) and a local-filesystem "remote"
-// store so the GUI is driveable end-to-end without a real Minecraft
-// server or R2 credentials. Every POC-only line is tagged
-// // TODO(ritual-gui-poc): so it is trivial to grep-and-swap when the
-// real cmd builder / R2 storage wiring lands.
+// Composition root. The pipeline runs the real NeoForge launcher
+// (settings.StartScript, default "start.bat") via
+// adapters.NewServerCmdBuilder and probes 127.0.0.1:<settings.Port>
+// via adapters.NewTCPReadinessCheck. The "remote" backend is still a
+// local-filesystem mock (rate-limited via ThrottledStorage) until the
+// R2 wiring lands.
 package main
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	ritualassets "ritual"
 	"ritual/internal/adapters"
@@ -241,19 +237,23 @@ func buildRuntime() (*guiRuntime, error) {
 	pusher := refs.NewPusher(localStorage, remoteStorage, runner)
 	commitTargets := config.DefaultCommitTargets
 
-	// TODO(ritual-gui-poc): fakerun stands in for the Minecraft server so
-	// the GUI loop can be exercised without a JRE. Replace with
-	// adapters.NewServerCmdBuilder once wiring is proven.
-	fakerunBin, err := locateFakerun()
-	if err != nil {
-		return nil, fmt.Errorf("locate fakerun: %w", err)
+	// Real NeoForge launcher: settings.StartScript (default "start.bat")
+	// resolved relative to <root>/server/. Operators may override via
+	// settings.json — empty/missing falls back to domain.DefaultStartScript.
+	serverPath := filepath.Join(config.RootPath, config.ServerDir)
+	if err := os.MkdirAll(serverPath, config.DirPermission); err != nil {
+		return nil, fmt.Errorf("create server dir: %w", err)
 	}
-	cmdBuilder := &fakerunCmdBuilder{bin: fakerunBin, root: config.RootPath}
+	serverRoot, err := os.OpenRoot(serverPath)
+	if err != nil {
+		return nil, fmt.Errorf("open server dir: %w", err)
+	}
+	cmdBuilder, err := adapters.NewServerCmdBuilder(serverRoot, settings.StartScript, settings.ToServerRuntime)
+	if err != nil {
+		return nil, fmt.Errorf("server cmd builder: %w", err)
+	}
 
-	// TODO(ritual-gui-poc): fakerun has no TCP listener, so readiness is
-	// declared immediately. Swap for adapters.NewTCPReadinessCheck bound
-	// to 127.0.0.1:<settings.Port> when the real server wires in.
-	readiness := immediateReady{}
+	readiness := adapters.NewTCPReadinessCheck(fmt.Sprintf("127.0.0.1:%d", settings.Port), bus)
 
 	localRets, remoteRets, err := retention.Build(localStorage, remoteStorage, bus)
 	if err != nil {
@@ -402,69 +402,3 @@ type wailsWindowControl struct{ win *application.WebviewWindow }
 func (c *wailsWindowControl) Show()  { c.win.Show() }
 func (c *wailsWindowControl) Focus() { c.win.Focus() }
 
-// fakerunCmdBuilder is the POC CmdBuilder. fakerun reads JSON instructions
-// from stdin and writes/deletes files under --root. The running stage
-// streams output but the body of the game loop is a real subprocess — so
-// lifecycle events (STARTING/STOPPING/STOPPED) fire exactly as they would
-// for a real server.
-type fakerunCmdBuilder struct {
-	bin  string
-	root string
-}
-
-func (b *fakerunCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io.Writer) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, b.bin, "--root", b.root)
-	cmd.Stdin = stdin
-	cmd.Stdout = stdout
-	cmd.Stderr = stdout
-	return cmd, nil
-}
-
-// immediateReady short-circuits the readiness probe. Fakerun has no TCP
-// socket; a real integration will dial the configured Minecraft port.
-type immediateReady struct{}
-
-func (immediateReady) Wait(context.Context) error { return nil }
-
-// locateFakerun looks for a prebuilt fakerun binary next to the GUI binary
-// and falls back to the Go build cache. On first launch the developer runs
-// `go build -o ./bin/fakerun ritual/cmd/fakerun` once; lookups are stable
-// thereafter.
-func locateFakerun() (string, error) {
-	exe, err := os.Executable()
-	if err == nil {
-		candidate := filepath.Join(filepath.Dir(exe), fakerunName())
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	if p, err := exec.LookPath("fakerun"); err == nil {
-		return p, nil
-	}
-	// TODO(ritual-gui-poc): last-ditch fallback — go run compiles on demand.
-	// Remove when the production cmd builder replaces fakerun.
-	if _, err := exec.LookPath("go"); err == nil {
-		cwd, _ := os.Getwd()
-		built := filepath.Join(cwd, "bin", fakerunName())
-		if err := buildFakerun(built); err == nil {
-			return built, nil
-		}
-	}
-	return "", errors.New("fakerun binary not found: run `go build -o bin/fakerun ritual/cmd/fakerun`")
-}
-
-func fakerunName() string {
-	if os.Getenv("GOOS") == "windows" || filepath.Ext(os.Args[0]) == ".exe" {
-		return "fakerun.exe"
-	}
-	return "fakerun"
-}
-
-func buildFakerun(out string) error {
-	if err := os.MkdirAll(filepath.Dir(out), config.DirPermission); err != nil {
-		return err
-	}
-	cmd := exec.Command("go", "build", "-o", out, "ritual/cmd/fakerun") //nolint:gosec // POC-only on-demand build
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}

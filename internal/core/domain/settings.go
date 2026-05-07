@@ -19,6 +19,7 @@ const SettingsFilename = "settings.json"
 type Settings struct {
 	Port            int            `json:"port"`
 	Memory          int            `json:"memory"`
+	StartScript     string         `json:"start_script"`
 	MinRAMMB        int            `json:"min_ram_mb"`
 	MinDiskMB       int            `json:"min_disk_mb"`
 	MinJavaVersion  int            `json:"min_java_version"`
@@ -26,11 +27,17 @@ type Settings struct {
 	RemoteRetention RetentionRules `json:"remote_retention"`
 }
 
+// DefaultStartScript is the launcher filename when settings.start_script is
+// empty or missing. NeoForge ships start.bat as the canonical Windows entry,
+// so operators get a runnable command without configuring anything.
+const DefaultStartScript = "start.bat"
+
 // DefaultSettings returns default settings values.
 func DefaultSettings() *Settings {
 	return &Settings{
 		Port:            25565,
 		Memory:          4096,
+		StartScript:     DefaultStartScript,
 		MinRAMMB:        config.DefaultMinRAMMB,
 		MinDiskMB:       config.DefaultMinDiskMB,
 		MinJavaVersion:  config.DefaultMinJavaVersion,
@@ -51,6 +58,9 @@ func (s *Settings) applyDefaults() {
 	}
 	if s.MinJavaVersion <= 0 {
 		s.MinJavaVersion = config.DefaultMinJavaVersion
+	}
+	if s.StartScript == "" {
+		s.StartScript = DefaultStartScript
 	}
 }
 
