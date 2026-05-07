@@ -169,6 +169,36 @@ func buildRuntime() (*guiRuntime, error) {
 	// Remote storage is selected by settings.RemoteR2: nil → throttled
 	// local-FS mock (alpha default), populated → real Cloudflare R2.
 	// Swap is a settings.json edit, not a code change.
+	//
+	// HOW TO FLIP MOCK → REAL R2 (alpha MQA workflow):
+	//
+	//   1. Run the GUI once with the default settings to materialise
+	//      <root>/settings.json on disk.
+	//   2. Stop the GUI. Open <root>/settings.json. Add a "remote_r2"
+	//      block alongside the existing fields:
+	//
+	//          {
+	//            "port": 25565,
+	//            ...
+	//            "remote_r2": {
+	//              "bucket": "<r2-bucket-name>",
+	//              "account_id": "<cloudflare-account-id>",
+	//              "access_key_id": "<r2-access-key-id>",
+	//              "secret_access_key": "<r2-secret-access-key>"
+	//            }
+	//          }
+	//
+	//   3. Restart the GUI. remote.Build observes settings.RemoteR2 != nil
+	//      and constructs adapters.NewR2Repository instead of the local
+	//      throttled mock. Logs will show storage events under
+	//      `store=r2::<bucket>` instead of `store=fs::remote`.
+	//
+	//   4. To revert to mock, delete (or rename) the "remote_r2" block
+	//      and restart. <root>/remote-mock/ is recreated fresh.
+	//
+	// No rebuild needed for either direction. No code change. No env vars.
+	// Plaintext credentials are alpha-stage acceptable; treat the
+	// settings.json file as a secret on disk.
 	rawRemote, err := remote.Build(context.Background(), settings, bus)
 	if err != nil {
 		return nil, fmt.Errorf("remote storage: %w", err)

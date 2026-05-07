@@ -7,6 +7,12 @@
 //
 // Single-port-out keeps this within the subsystem-extraction rules
 // (memory feedback_composition_root_shape).
+//
+// Flipping mock → real R2 is a settings.json edit, not a code change.
+// The cmd/gui/main.go callsite (search for "HOW TO FLIP MOCK → REAL R2")
+// carries the alpha MQA workflow with the exact JSON shape operators
+// must add to <root>/settings.json. Mirror any change to that comment
+// block back here so future agents land on consistent guidance.
 package remote
 
 import (
