@@ -2,6 +2,7 @@ package projection
 
 import (
 	"context"
+	"ritual/internal/adapters/progress"
 	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
@@ -91,6 +92,8 @@ func (p *Projection) fold(evt ports.Event) bool {
 		p.state.LockHolder = e.Holder
 		p.state.Label = e.Holder + " is playing"
 		p.state.ErrorText = ""
+	case progress.Tick:
+		p.state.BytesDone = e.BytesIn
 	case lifecycle.StatusChanged:
 		p.onStatusChanged(e)
 	default:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"ritual/internal/adapters"
+	"ritual/internal/adapters/progress"
 	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
@@ -179,6 +180,15 @@ func TestProjection_StatusDone_ResetsToIdle(t *testing.T) {
 	assert.Equal(t, projection.StageIdle, final.Stage, "successful Done terminal status must return the UI to Idle so the user can start another session")
 	assert.Zero(t, final.Progress, "Done reset must clear residual progress so the Idle screen is clean")
 	assert.Empty(t, final.ErrorText, "Done reset must clear any residual ErrorText so the Idle screen isn't haunted by a prior failure")
+}
+
+func TestProjection_TickInPullingStage_UpdatesBytesDone(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(progress.Tick{BytesIn: 500})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(500), final.BytesDone, "progress.Tick during Pulling must propagate BytesIn into ViewModel.BytesDone so the progress bar moves while bytes are streaming down from remote")
 }
 
 func TestProjection_Snapshot_ReturnsCurrentState(t *testing.T) {
