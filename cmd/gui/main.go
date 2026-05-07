@@ -135,7 +135,6 @@ func main() {
 type guiRuntime struct {
 	bus         ports.EventBus
 	entry       machine.Strategy[ritual.RunState]
-	locker      *observed.Locker
 	projection  *projection.Projection
 	logsink     *logsink.Sink
 	viewEmitter *wailsViewEmitter
@@ -260,8 +259,14 @@ func buildRuntime() (*guiRuntime, error) {
 		return nil, fmt.Errorf("retention: %w", err)
 	}
 
+	// Local + remote lock stack: lock.Both calls the local lease first so
+	// a same-host PID that already grabbed <root>/lock cannot pin a remote
+	// lease that no live process can release. Both sides reuse lock.Locker
+	// — no Windows API, no new adapter — per audit open item #0.
 	host, _ := os.Hostname()
-	locker := observed.NewLocker(lock.New(remoteStorage, host), bus)
+	localLocker := observed.NewLocker(lock.New(localStorage, host), bus)
+	remoteLocker := observed.NewLocker(lock.New(remoteStorage, host), bus)
+	locker := lock.NewBoth(localLocker, remoteLocker)
 	entry := pipeline.Build(pipeline.Deps{
 		Bus:               bus,
 		Checks:            nil, // no conditions for POC
@@ -306,7 +311,6 @@ func buildRuntime() (*guiRuntime, error) {
 	return &guiRuntime{
 		bus:         bus,
 		entry:       entry,
-		locker:      locker,
 		projection:  proj,
 		logsink:     sink,
 		viewEmitter: viewEmitter,
