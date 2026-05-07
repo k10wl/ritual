@@ -53,6 +53,7 @@ import (
 	"ritual/internal/core/refs"
 	"ritual/internal/core/retention"
 	"ritual/internal/core/ritual"
+	"ritual/internal/core/stages/acquiring"
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/retaining"
 	"ritual/internal/core/stages/running"
@@ -313,7 +314,9 @@ func (r *testRitual) startRitualFull(t *testing.T, preflightChecks []checks.Chec
 	committer, pusher, commitTargets := r.buildCommittingVerbs(t, worldsPath, scanner)
 
 	host, _ := os.Hostname()
-	locker := observed.NewLocker(lock.New(r.remote, host), r.bus)
+	localLocker := observed.NewLocker(lock.New(r.local, host), r.bus)
+	remoteLocker := observed.NewLocker(lock.New(r.remote, host), r.bus)
+	locker := lock.NewBoth(localLocker, remoteLocker)
 	entry := pipeline.Build(pipeline.Deps{
 		Bus: r.bus, Checks: preflightChecks,
 		Puller: puller, Applier: applier, HeadResolver: headResolver,
@@ -542,6 +545,39 @@ func seedExpiredRemoteLock(t *testing.T, r *testRitual, owner, sessionID string)
 	data, err := json.Marshal(payload)
 	require.NoError(t, err, "marshal expired lock payload")
 	require.NoError(t, r.remote.PutStream(r.ctx, lock.Key, bytes.NewReader(data)), "seed expired lock object")
+}
+
+func seedLiveLocalLock(t *testing.T, r *testRitual, owner, sessionID string) {
+	t.Helper()
+	now := time.Now()
+	payload := map[string]any{
+		"owner":       owner,
+		"sessionId":   sessionID,
+		"acquiredAt":  now.Format(time.RFC3339Nano),
+		"heartbeatAt": now.Format(time.RFC3339Nano),
+		"expiresAt":   now.Add(time.Hour).Format(time.RFC3339Nano),
+	}
+	data, err := json.Marshal(payload)
+	require.NoError(t, err, "marshal live local lock payload")
+	require.NoError(t, r.local.PutStream(r.ctx, lock.Key, bytes.NewReader(data)), "seed a live local lock so the second-instance-on-same-host scenario reproduces deterministically")
+}
+
+func waitForLockHeldInfo(t *testing.T, ch <-chan ports.Event, timeout time.Duration) acquiring.LockHeldInfo {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for acquiring.LockHeldInfo — Acquire should have surfaced the local holder before transitioning to Failed")
+		case e, ok := <-ch:
+			if !ok {
+				t.Fatal("event channel closed while waiting for LockHeldInfo")
+			}
+			if h, ok := e.(acquiring.LockHeldInfo); ok {
+				return h
+			}
+		}
+	}
 }
 
 func (r *testRitual) assertRemoteLockAbsent(t *testing.T, msg string) {
@@ -783,6 +819,22 @@ func TestIntegration_LeaseExpired_TakesOverAndCompletes(t *testing.T) {
 		"stale lease should be taken over and released — crashed host's lock object is gone")
 }
 
+func TestIntegration_LocalLockHeldBySameHost_BlocksAcquireAndSurfacesLocalHolder(t *testing.T) {
+	ritual := newRitual(t)
+
+	seedRemoteWorld(t, ritual,
+		file("world/level.dat", []byte("level")),
+	)
+	seedLiveLocalLock(t, ritual, "first-instance@same-host", "first-session")
+
+	ritual.startRitual(t)
+	held := waitForLockHeldInfo(t, ritual.ch, time.Second)
+	ritual.waitFailed(t)
+
+	assert.Equal(t, "first-instance@same-host", held.Holder, "LockHeldInfo must surface the local holder when a same-host PID already owns the local lease — that is the friendly 'another instance is already running on this machine' screen the GUI renders, not a generic acquire failure")
+	assert.Equal(t, "first-session", held.SessionID, "LockHeldInfo.SessionID must echo the seeded local session so the GUI can correlate the locked screen with the holder's lease record on disk")
+}
+
 func TestIntegration_ServerCrash_NoUploadLockReleased(t *testing.T) {
 	ritual := newRitual(t)
 
@@ -815,7 +867,9 @@ func (r *testRitual) startRitualWithFlakyPuller(t *testing.T, flaky *failOnceInt
 	committer, pusher, commitTargets := r.buildCommittingVerbs(t, worldsPath, scanner)
 
 	host, _ := os.Hostname()
-	locker := observed.NewLocker(lock.New(r.remote, host), r.bus)
+	localLocker := observed.NewLocker(lock.New(r.local, host), r.bus)
+	remoteLocker := observed.NewLocker(lock.New(r.remote, host), r.bus)
+	locker := lock.NewBoth(localLocker, remoteLocker)
 	entry := pipeline.Build(pipeline.Deps{
 		Bus:    r.bus,
 		Puller: flaky, Applier: applier, HeadResolver: headResolver,
