@@ -2,6 +2,7 @@ package projection
 
 import (
 	"context"
+	"fmt"
 	"ritual/internal/adapters/progress"
 	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/core/ports"
@@ -23,12 +24,16 @@ type AddressProvider interface {
 }
 
 // Projection subscribes to the bus and folds events into a single ViewModel.
+// pipelineStage tracks the most recent ritual stage name so onTick can gate
+// label mutation: a late progress.Tick arriving after the pipeline moved on
+// to Committing must not flip the label back to "Uploading — N Mbps".
 type Projection struct {
-	ch        <-chan ports.Event
-	unsub     func()
-	emitter   Emitter
-	addresses AddressProvider
-	state     ViewModel
+	ch            <-chan ports.Event
+	unsub         func()
+	emitter       Emitter
+	addresses     AddressProvider
+	state         ViewModel
+	pipelineStage string
 }
 
 // New subscribes to bus immediately and returns a Projection ready for Run.
@@ -93,7 +98,7 @@ func (p *Projection) fold(evt ports.Event) bool {
 		p.state.Label = e.Holder + " is playing"
 		p.state.ErrorText = ""
 	case progress.Tick:
-		p.state.BytesDone = e.BytesIn
+		return p.onTick(e)
 	case lifecycle.StatusChanged:
 		p.onStatusChanged(e)
 	default:
@@ -102,7 +107,31 @@ func (p *Projection) fold(evt ports.Event) bool {
 	return true
 }
 
+// onTick applies a network-progress snapshot to the ViewModel. Gated on
+// pipelineStage so a late Tick arriving after the pipeline moved on (e.g.
+// during Committing) does not overwrite the stage-set label or freeze a
+// stale BytesDone value. Mbps label only renders when speed > 0 — a "0.0
+// Mbps" caption would be misleading when nothing is moving.
+func (p *Projection) onTick(t progress.Tick) bool {
+	switch p.pipelineStage {
+	case ritual.StagePulling:
+		p.state.BytesDone = t.BytesIn
+		if t.NowMbpsIn > 0 {
+			p.state.Label = fmt.Sprintf("Downloading — %.1f Mbps", t.NowMbpsIn)
+		}
+	case ritual.StagePushing:
+		p.state.BytesDone = t.BytesOut
+		if t.NowMbpsOut > 0 {
+			p.state.Label = fmt.Sprintf("Uploading — %.1f Mbps", t.NowMbpsOut)
+		}
+	default:
+		return false
+	}
+	return true
+}
+
 func (p *Projection) onStateChanged(to string) {
+	p.pipelineStage = to
 	switch to {
 	case ritual.StageChecking, ritual.StagePulling, ritual.StageAcquiring:
 		p.state.Stage = StageDownloading

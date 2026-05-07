@@ -191,6 +191,44 @@ func TestProjection_TickInPullingStage_UpdatesBytesDone(t *testing.T) {
 	assert.Equal(t, int64(500), final.BytesDone, "progress.Tick during Pulling must propagate BytesIn into ViewModel.BytesDone so the progress bar moves while bytes are streaming down from remote")
 }
 
+func TestProjection_TickInPullingStage_RendersDownloadMbpsLabel(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(progress.Tick{BytesIn: 500, NowMbpsIn: 12.3})
+	})
+	assert.Equal(t, "Downloading — 12.3 Mbps", last(vms).Label, "live download Mbps must surface in the Pulling label so the user sees current network speed instead of the static 'Downloading…' caption set on stage entry")
+}
+
+func TestProjection_TickInPushingStage_DrivesBytesDoneFromBytesOutAndRendersUploadMbpsLabel(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
+		bus.Publish(progress.Tick{BytesOut: 700, NowMbpsOut: 8.0})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(700), final.BytesDone, "during Pushing the progress bar must consume BytesOut (not BytesIn) so the bar reflects bytes leaving toward remote, not bytes that streamed in earlier")
+	assert.Equal(t, "Uploading — 8.0 Mbps", final.Label, "Pushing label must render live upload Mbps so the user sees current network speed instead of the static 'Uploading…' caption set on stage entry")
+}
+
+func TestProjection_TickDuringCommitting_DoesNotMutateLabelOrBytesDone(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
+		bus.Publish(progress.Tick{BytesOut: 100, NowMbpsOut: 5.0})
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StageCommitting})
+		bus.Publish(progress.Tick{BytesOut: 200, NowMbpsOut: 9.0})
+	})
+	final := last(vms)
+	assert.Equal(t, "Snapshotting…", final.Label, "a late Tick arriving during Committing must not flip the label back to 'Uploading — N Mbps' — Committing is local refs work, not network upload, and the stage-set label must win over stale network ticks")
+	assert.Equal(t, int64(100), final.BytesDone, "BytesDone must freeze at the last Pushing-stage value once Committing starts so the bar doesn't keep moving on stale upload counters during local refs work")
+}
+
+func TestProjection_TickWithZeroMbps_LeavesStageLabelUntouched(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(progress.Tick{BytesIn: 250, NowMbpsIn: 0})
+	})
+	assert.Equal(t, "Downloading…", last(vms).Label, "a Tick with zero NowMbpsIn must keep the stage-entry 'Downloading…' label rather than overwriting it with a misleading '0.0 Mbps' caption — speed shows only when actually moving")
+}
+
 func TestProjection_Snapshot_ReturnsCurrentState(t *testing.T) {
 	bus := adapters.NewEventBus(16)
 	rec := &recorder{}
