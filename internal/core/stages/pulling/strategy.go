@@ -55,7 +55,9 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 		rs.Err = err
 		return s.onFail, nil //nolint:nilerr // error stored on RunState; onFail stage handles it
 	}
-	id, err := s.resolve(ctx)
+	stopCtx, stopCancel := watchStop(ctx, rs.Bus)
+	defer stopCancel()
+	id, err := s.resolve(stopCtx)
 	if errors.Is(err, ErrNoHead) {
 		publish(rs.Bus, ritual.FinishInfo{Operation: "pull"})
 		return s.onOK, nil
@@ -64,17 +66,49 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 		rs.Err = err
 		return s.onFail, nil
 	}
-	if err := s.puller.Pull(ctx, id); err != nil {
+	if err := s.puller.Pull(stopCtx, id); err != nil {
 		rs.Err = err
 		return s.onFail, nil
 	}
-	if err := s.applier.Apply(ctx, id); err != nil {
+	if err := s.applier.Apply(stopCtx, id); err != nil {
 		rs.Err = err
 		return s.onFail, nil
 	}
 	rs.ParentRefID = id
 	publish(rs.Bus, ritual.FinishInfo{Operation: "pull"})
 	return s.onOK, nil
+}
+
+// watchStop returns a child ctx that is cancelled the moment a
+// ritual.StopRequested event arrives on the bus. Unblocks long-running
+// Pull/Apply calls so the user does not have to wait for an in-flight
+// blob batch to drain after pressing Stop. The returned cancel must be
+// deferred so the watcher goroutine exits when Run returns even if no
+// stop was requested.
+func watchStop(parent context.Context, bus ports.EventBus) (context.Context, context.CancelFunc) {
+	stopCtx, cancel := context.WithCancel(parent)
+	if bus == nil {
+		return stopCtx, cancel
+	}
+	sub, unsub := bus.Subscribe()
+	go func() {
+		defer unsub()
+		for {
+			select {
+			case <-stopCtx.Done():
+				return
+			case e, ok := <-sub:
+				if !ok {
+					return
+				}
+				if _, ok := e.(ritual.StopRequested); ok {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return stopCtx, cancel
 }
 
 func publish(bus ports.EventBus, e ports.Event) {

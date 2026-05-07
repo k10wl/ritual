@@ -273,5 +273,48 @@ func TestPulling_PublishesBatchLifecycleEventsOnTheBus(t *testing.T) {
 	}
 }
 
+type blockingPuller struct {
+	started chan struct{}
+}
+
+func (p *blockingPuller) Pull(ctx context.Context, _ domain.RefID) error {
+	close(p.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestPulling_StopRequestedMidPull_AbortsFastAndRoutesOnFail(t *testing.T) {
+	bus := adapters.NewEventBus(16)
+	puller := &blockingPuller{started: make(chan struct{})}
+	applier := &recordingApplier{}
+	onOK := &sentinelStrategy{name: "ok"}
+	onFail := &sentinelStrategy{name: "fail"}
+	stage := pulling.New(puller, applier, staticResolver("2026-04-23T10-00-00.000Z"), onOK, onFail)
+	rs := &ritual.RunState{Bus: bus}
+
+	type result struct {
+		next machine.Strategy[ritual.RunState]
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		next, err := stage.Run(t.Context(), rs)
+		done <- result{next, err}
+	}()
+
+	<-puller.started
+	bus.Publish(ritual.StopRequested{})
+
+	select {
+	case r := <-done:
+		require.NoError(t, r.err, "Pulling stage must never return a Go error — failures travel via onFail per stage contract")
+		assert.Equal(t, machine.Strategy[ritual.RunState](onFail), r.next, "ritual.StopRequested arriving mid-pull must abort the transfer and route to onFail — without this the user is stuck waiting up to 20s after pressing Stop while the in-flight blob batch drains naturally (audit open item #3)")
+		assert.ErrorIs(t, rs.Err, context.Canceled, "rs.Err must carry context.Canceled so the Failed handler can recognise this as a user-initiated abort instead of a real network failure")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Pulling stage did not abort within 200ms of ritual.StopRequested — bus subscription missing or local stop-ctx never cancelled")
+	}
+}
+
 var _ ports.Puller = (*recordingPuller)(nil)
 var _ ports.Applier = (*recordingApplier)(nil)
+var _ ports.Puller = (*blockingPuller)(nil)

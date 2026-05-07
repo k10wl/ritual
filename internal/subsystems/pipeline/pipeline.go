@@ -60,6 +60,7 @@ func Build(d Deps) machine.Strategy[ritual.RunState] {
 	unlock := unlocking.New(d.ReleaseFn, nil)
 	pruneRemote := retaining.New(d.RemoteRetentions, d.Bus, failRetRemote, unlock)
 	push := pushing.New(d.Pusher, pruneRemote, failPush)
+	push.OnStop(unlock)
 	pruneLocal := retaining.New(d.LocalRetentions, d.Bus, failRetLocal, push)
 	commit := committing.New(d.Committer, d.CommitOpts, pruneLocal, failCommit)
 	run := running.New(d.CmdBuilder, d.Readiness, commit, unlock)

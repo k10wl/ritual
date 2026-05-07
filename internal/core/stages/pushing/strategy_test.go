@@ -119,6 +119,79 @@ func TestPushing_SkipsPushWhenRefIDEmpty(t *testing.T) {
 		"Pushing stage must route to onOK when rs.RefID is empty so remote retention still runs (idempotent GC over whatever prior sessions left)")
 }
 
+type blockingPusher struct {
+	started chan struct{}
+}
+
+func (p *blockingPusher) Push(ctx context.Context, _ domain.RefID) error {
+	close(p.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestPushing_StopRequestedMidPush_AbortsFastAndRoutesToOnStopBypassingFailEdge(t *testing.T) {
+	bus := adapters.NewEventBus(16)
+	pusher := &blockingPusher{started: make(chan struct{})}
+	onOK := &sentinelStrategy{name: "ok"}
+	onFail := &sentinelStrategy{name: "fail"}
+	onStop := &sentinelStrategy{name: "stop"}
+	stage := pushing.New(pusher, onOK, onFail)
+	stage.OnStop(onStop)
+	rs := &ritual.RunState{Bus: bus, RefID: "2026-04-25T10-00-00.000Z"}
+
+	type result struct {
+		next machine.Strategy[ritual.RunState]
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		next, err := stage.Run(t.Context(), rs)
+		done <- result{next, err}
+	}()
+
+	<-pusher.started
+	bus.Publish(ritual.StopRequested{})
+
+	select {
+	case r := <-done:
+		require.NoError(t, r.err, "Pushing stage must never return a Go error — outcomes travel via onOK / onFail / onStop edges")
+		assert.Same(t, machine.Strategy[ritual.RunState](onStop), r.next, "ritual.StopRequested arriving mid-push must route to the onStop edge — production wires this to unlocking so the held lock is released even though the user-cancelled run never finishes the upload (audit open item #3). Routing to onFail instead would terminate the run with the lock still held, blocking the next session")
+		assert.ErrorIs(t, rs.Err, context.Canceled, "rs.Err must carry context.Canceled so the unlocking handler can recognise this as a user-initiated abort instead of a real network failure")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Pushing stage did not abort within 200ms of ritual.StopRequested — bus subscription missing or local stop-ctx never cancelled")
+	}
+}
+
+func TestPushing_StopRequestedMidPush_FallsBackToOnFailWhenOnStopUnset(t *testing.T) {
+	bus := adapters.NewEventBus(16)
+	pusher := &blockingPusher{started: make(chan struct{})}
+	onOK := &sentinelStrategy{name: "ok"}
+	onFail := &sentinelStrategy{name: "fail"}
+	stage := pushing.New(pusher, onOK, onFail)
+	rs := &ritual.RunState{Bus: bus, RefID: "id"}
+
+	type result struct {
+		next machine.Strategy[ritual.RunState]
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		next, err := stage.Run(t.Context(), rs)
+		done <- result{next, err}
+	}()
+
+	<-pusher.started
+	bus.Publish(ritual.StopRequested{})
+
+	select {
+	case r := <-done:
+		require.NoError(t, r.err)
+		assert.Same(t, machine.Strategy[ritual.RunState](onFail), r.next, "when OnStop is unset Push errors caused by stop-ctx cancellation must fall back to the onFail edge — preserves the pre-fix contract for callers that have not opted into the dedicated stop routing yet")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Pushing stage did not return within 200ms of ritual.StopRequested fallback path")
+	}
+}
+
 func TestPushing_PublishesBatchLifecycleEventsOnTheBus(t *testing.T) {
 	onOK := &sentinelStrategy{name: "ok"}
 	onFail := &sentinelStrategy{name: "fail"}
