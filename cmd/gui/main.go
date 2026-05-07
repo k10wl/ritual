@@ -166,40 +166,30 @@ func buildRuntime() (*guiRuntime, error) {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
 
-	// Remote storage is selected by settings.RemoteR2: nil → throttled
-	// local-FS mock (alpha default), populated → real Cloudflare R2.
-	// Swap is a settings.json edit, not a code change.
-	//
 	// HOW TO FLIP MOCK → REAL R2 (alpha MQA workflow):
 	//
-	//   1. Run the GUI once with the default settings to materialise
-	//      <root>/settings.json on disk.
-	//   2. Stop the GUI. Open <root>/settings.json. Add a "remote_r2"
-	//      block alongside the existing fields:
+	//   1. Export the four R2 credentials in the shell that launches
+	//      the GUI:
+	//          set RITUAL_R2_BUCKET=<r2-bucket-name>
+	//          set RITUAL_R2_ACCOUNT_ID=<cloudflare-account-id>
+	//          set RITUAL_R2_ACCESS_KEY_ID=<r2-access-key-id>
+	//          set RITUAL_R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
 	//
-	//          {
-	//            "port": 25565,
-	//            ...
-	//            "remote_r2": {
-	//              "bucket": "<r2-bucket-name>",
-	//              "account_id": "<cloudflare-account-id>",
-	//              "access_key_id": "<r2-access-key-id>",
-	//              "secret_access_key": "<r2-secret-access-key>"
-	//            }
-	//          }
+	//   2. Change the line below from `remote.ModeMock` to
+	//      `remote.ModeR2` and rebuild. This is a CODE-LEVEL toggle —
+	//      do NOT commit credentials to settings.json or any source
+	//      file. Env vars stay in the operator's shell or CI secret
+	//      store; a leaked repo cannot expose them.
 	//
-	//   3. Restart the GUI. remote.Build observes settings.RemoteR2 != nil
-	//      and constructs adapters.NewR2Repository instead of the local
-	//      throttled mock. Logs will show storage events under
-	//      `store=r2::<bucket>` instead of `store=fs::remote`.
+	//   3. Logs will show storage events under `store=r2::<bucket>`
+	//      instead of `store=fs::remote`. Boot fails fast with
+	//      ErrR2EnvIncomplete when any of the four env vars is missing.
 	//
-	//   4. To revert to mock, delete (or rename) the "remote_r2" block
-	//      and restart. <root>/remote-mock/ is recreated fresh.
-	//
-	// No rebuild needed for either direction. No code change. No env vars.
-	// Plaintext credentials are alpha-stage acceptable; treat the
-	// settings.json file as a secret on disk.
-	rawRemote, err := remote.Build(context.Background(), settings, bus)
+	//   4. Revert by changing the constant back to `remote.ModeMock`
+	//      and rebuilding. <root>/remote-mock/ is recreated fresh.
+	const remoteMode = remote.ModeMock
+
+	rawRemote, err := remote.Build(context.Background(), remoteMode, bus)
 	if err != nil {
 		return nil, fmt.Errorf("remote storage: %w", err)
 	}

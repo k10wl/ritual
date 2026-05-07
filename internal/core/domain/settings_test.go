@@ -23,35 +23,6 @@ func TestDefaultSettings(t *testing.T) {
 	assert.Equal(t, "start.bat", settings.StartScript, "default StartScript must be 'start.bat' — NeoForge ships start.bat as the canonical Windows launcher and operators expect that filename without configuring anything")
 }
 
-func TestDefaultSettings_RemoteR2IsNil_DefaultIsMockMode(t *testing.T) {
-	settings := DefaultSettings()
-	assert.Nil(t, settings.RemoteR2, "RemoteR2 must default to nil so a freshly-installed alpha picks the local-FS mock remote without configuring anything — operators flip to real R2 by writing the four credential fields into settings.json")
-}
-
-func TestLoadSettings_RemoteR2RoundTrips_AllFourCredentialFieldsSurvive(t *testing.T) {
-	tempDir := t.TempDir()
-	originalRootPath := config.RootPath
-	config.RootPath = tempDir
-	defer func() { config.RootPath = originalRootPath }()
-
-	saved := DefaultSettings()
-	saved.RemoteR2 = &R2Config{
-		Bucket:          "ritual-alpha",
-		AccountID:       "acc-123",
-		AccessKeyID:     "ak-456",
-		SecretAccessKey: "sk-789",
-	}
-	require.NoError(t, saved.Save(), "Save must succeed against a settings struct carrying a populated RemoteR2 — round-trip is the contract operators rely on after editing settings.json")
-
-	loaded, err := LoadSettings()
-	require.NoError(t, err, "LoadSettings must succeed against the just-written file — corrupt JSON would block startup")
-	require.NotNil(t, loaded.RemoteR2, "RemoteR2 must survive a Save→Load cycle so the factory can detect 'real R2 configured' on the next boot")
-	assert.Equal(t, "ritual-alpha", loaded.RemoteR2.Bucket, "Bucket must round-trip verbatim — typos here surface as 404s the operator will struggle to debug")
-	assert.Equal(t, "acc-123", loaded.RemoteR2.AccountID, "AccountID must round-trip verbatim — drives the R2 endpoint URL via R2EndpointFormat")
-	assert.Equal(t, "ak-456", loaded.RemoteR2.AccessKeyID, "AccessKeyID must round-trip verbatim — half the auth pair")
-	assert.Equal(t, "sk-789", loaded.RemoteR2.SecretAccessKey, "SecretAccessKey must round-trip verbatim — the other half; alpha stage accepts plaintext, future revisions can layer encryption")
-}
-
 func TestLoadSettings_BackfillsEmptyStartScript_ToStartBat(t *testing.T) {
 	tempDir := t.TempDir()
 	originalRootPath := config.RootPath
