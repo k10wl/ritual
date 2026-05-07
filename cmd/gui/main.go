@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -28,6 +29,7 @@ import (
 	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/subsystems/logging"
 	"ritual/internal/subsystems/pipeline"
+	"ritual/internal/subsystems/remote"
 	"ritual/internal/subsystems/retention"
 	"ritual/internal/gui/control"
 	"ritual/internal/gui/logsink"
@@ -152,32 +154,25 @@ func buildRuntime() (*guiRuntime, error) {
 		return nil, fmt.Errorf("open root: %w", err)
 	}
 
-	// TODO(ritual-gui-poc): remote storage is a local sibling directory so
-	// the whole pipeline is driveable without R2 credentials. Swap for a
-	// real remote adapter (adapters.NewR2Repository) when productionizing.
-	mockRemoteDir := filepath.Join(config.RootPath, "remote-mock")
-	if err := os.MkdirAll(mockRemoteDir, config.DirPermission); err != nil {
-		return nil, fmt.Errorf("create mock remote: %w", err)
-	}
-	remoteRoot, err := os.OpenRoot(mockRemoteDir)
-	if err != nil {
-		return nil, fmt.Errorf("open mock remote: %w", err)
-	}
-
 	bus := adapters.NewEventBus(4096)
 
 	rawLocal, err := adapters.NewFSRepository(workRoot, "local")
 	if err != nil {
 		return nil, fmt.Errorf("local storage: %w", err)
 	}
-	rawRemoteFS, err := adapters.NewFSRepository(remoteRoot, "remote")
+
+	settings, err := domain.LoadSettings()
 	if err != nil {
-		return nil, fmt.Errorf("mock remote storage: %w", err)
+		return nil, fmt.Errorf("load settings: %w", err)
 	}
-	// Throttle the mock remote to ~100 Mbps (12.5 MB/s) so the dev loop
-	// reflects realistic push/pull pacing instead of native disk speed —
-	// audit fix #12 (docs/dev-session-2026-04-25-poc-setup.md).
-	rawRemote := adapters.NewThrottledStorage(rawRemoteFS, 12_500_000)
+
+	// Remote storage is selected by settings.RemoteR2: nil → throttled
+	// local-FS mock (alpha default), populated → real Cloudflare R2.
+	// Swap is a settings.json edit, not a code change.
+	rawRemote, err := remote.Build(context.Background(), settings, bus)
+	if err != nil {
+		return nil, fmt.Errorf("remote storage: %w", err)
+	}
 
 	// Blob-store decorator stack: raw FS → compressing (silent, integrity
 	// verified) → counter (byte/op tap for the progress ticker) → observed
@@ -203,11 +198,6 @@ func buildRuntime() (*guiRuntime, error) {
 	remoteObjects := adapters.NewCounterStorage(remoteCompressed, remoteCounters)
 	localStorage := observed.NewStorage(adapters.NewPrefixRouter("objects/", localObjects, rawLocal), bus)
 	remoteStorage := observed.NewStorage(adapters.NewPrefixRouter("objects/", remoteObjects, rawRemote), bus)
-
-	settings, err := domain.LoadSettings()
-	if err != nil {
-		return nil, fmt.Errorf("load settings: %w", err)
-	}
 
 	// Workdir is the project root. Scope is data-driven by commitTargets
 	// below — operational dirs (refs/, objects/, logs/, remote-mock/),

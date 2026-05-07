@@ -25,6 +25,20 @@ type Settings struct {
 	MinJavaVersion  int            `json:"min_java_version"`
 	LocalRetention  RetentionRules `json:"local_retention"`
 	RemoteRetention RetentionRules `json:"remote_retention"`
+	RemoteR2        *R2Config      `json:"remote_r2,omitempty"`
+}
+
+// R2Config carries the credentials needed to wire adapters.NewR2Repository
+// at composition time. Nil-valued in DefaultSettings — operators populate
+// the four fields in settings.json to flip the remote-storage factory
+// from local-FS mock to real Cloudflare R2. Plaintext storage is
+// alpha-stage acceptable; future revisions can layer encryption without
+// changing the on-disk shape.
+type R2Config struct {
+	Bucket          string `json:"bucket"`
+	AccountID       string `json:"account_id"`
+	AccessKeyID     string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
 }
 
 // DefaultStartScript is the launcher filename when settings.start_script is
