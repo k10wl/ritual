@@ -175,10 +175,14 @@ func buildRuntime() (*guiRuntime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("local storage: %w", err)
 	}
-	rawRemote, err := adapters.NewFSRepository(remoteRoot, "remote")
+	rawRemoteFS, err := adapters.NewFSRepository(remoteRoot, "remote")
 	if err != nil {
 		return nil, fmt.Errorf("mock remote storage: %w", err)
 	}
+	// Throttle the mock remote to ~100 Mbps (12.5 MB/s) so the dev loop
+	// reflects realistic push/pull pacing instead of native disk speed —
+	// audit fix #12 (docs/dev-session-2026-04-25-poc-setup.md).
+	rawRemote := adapters.NewThrottledStorage(rawRemoteFS, 12_500_000)
 
 	// Blob-store decorator stack: raw FS → compressing (silent, integrity
 	// verified) → counter (byte/op tap for the progress ticker) → observed
