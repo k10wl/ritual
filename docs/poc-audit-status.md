@@ -34,7 +34,7 @@ Read it via `git show origin/testing:docs/dev-session-2026-04-25-poc-setup.md`.
 
 | # | Item | Status |
 |---|------|--------|
-| 0 | No local process lock — `cmd/gui/main.go:251` wires `lock.New(remoteStorage, host)` only | open both branches |
+| 0 | No local process lock — `cmd/gui/main.go:251` wires `lock.New(remoteStorage, host)` only | **closed on `feat/delta-sync` `a44c476`** — `lock.Both` stacks local + remote leases at the cmd/gui composition root; reuses the existing `lock.Locker` primitive (no Windows API, no new adapter, no new port). Integration tests still wire single remote-only locker — follow-up pass will lift them for parity |
 | 1 | Progress bar reads 0% — push/pull never emit a `PlanInfo{BytesTotal}` event upfront | open both branches |
 | 2 | Pre-existing integration timeouts: `TestIntegration_ChangesUploaded_RefAppearsOnRemote`, `TestIntegration_ServerLifecycleEventsEmitted_StartingReadyStoppingStopped` (1s `waitDone` budget) | open both branches; not session-introduced |
 | 3 | Stop only graceful in Running stage; Pulling/Pushing aborts wait the 20s window-close budget | open both branches (fix #4 covers Running only) |
