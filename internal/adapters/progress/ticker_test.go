@@ -22,6 +22,14 @@ import (
 	"ritual/internal/core/ports"
 )
 
+// singleSide wires the same counter pair as both Logical and Wire for one
+// side. Used in tests that don't exercise the compression layer split — the
+// ticker's math is identical regardless of where the bytes nominally come
+// from, so collapsing the four pointers to one fixture is fine.
+func singleSide(c *adapters.StorageCounters) progress.CounterSide {
+	return progress.CounterSide{Logical: c, Wire: c}
+}
+
 // fillPCG deterministically fills buf with bytes from a seeded PCG stream.
 // Writes 8 bytes per iteration to keep prep cost off the test's wall budget.
 func fillPCG(buf []byte, seed1, seed2 uint64) {
@@ -42,6 +50,10 @@ func fillPCG(buf []byte, seed1, seed2 uint64) {
 // through the same preinitialized CompressingStorage (single zstd encoder +
 // mutex) wrapped by CounterStorage, and asserts the ticker reports progress
 // while work is still in-flight — not only after completion.
+//
+// The test wires one counter pair as both logical and wire — the ticker only
+// cares that bytes advance, not which layer. The two-layer split is exercised
+// in TestCounter_AboveAndBelowCompression_MeasureDifferentUnits.
 func TestTicker_EmitsTicksAsCountersAdvance(t *testing.T) {
 	fs := newFS(t)
 	compressed, err := adapters.NewCompressingStorage(fs)
@@ -55,7 +67,7 @@ func TestTicker_EmitsTicksAsCountersAdvance(t *testing.T) {
 	defer cancelSub()
 
 	const interval = 40 * time.Millisecond
-	ticker := progress.NewTicker(counters, bus, interval)
+	ticker := progress.NewTicker(singleSide(counters), singleSide(counters), bus, interval)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	go ticker.Run(ctx)
@@ -98,13 +110,13 @@ collect:
 	require.GreaterOrEqual(t, len(ticks), 2,
 		"at least two ticks must fire while concurrent workers drive the shared encoder")
 
-	assert.Greater(t, ticks[len(ticks)-1].BytesOut, int64(0),
-		"BytesOut must advance — shared zstd+mutex under load still produces live progress")
+	assert.Greater(t, ticks[len(ticks)-1].Remote.Up.Data, int64(0),
+		"Up.Data must advance — shared zstd+mutex under load still produces live progress through the logical counter")
 
 	lastOut := int64(0)
 	for i, tick := range ticks {
-		assert.GreaterOrEqual(t, tick.BytesOut, lastOut, "tick %d must be monotonic", i)
-		lastOut = tick.BytesOut
+		assert.GreaterOrEqual(t, tick.Remote.Up.Data, lastOut, "tick %d Up.Data must be monotonic — logical byte total only ever grows", i)
+		lastOut = tick.Remote.Up.Data
 	}
 	assert.Equal(t, int64(workers*perWorker), counters.OpsComplete.Load(),
 		"ops-complete counter must equal total PutStream calls across workers")
@@ -114,20 +126,21 @@ collect:
 // numbers. Drives counters directly, then asks for a Snapshot.
 func TestTicker_SnapshotReflectsCounters(t *testing.T) {
 	counters := &adapters.StorageCounters{}
-	ticker := progress.NewTicker(counters, nil, 10*time.Millisecond)
+	ticker := progress.NewTicker(singleSide(counters), singleSide(counters), nil, time.Second)
 
 	counters.BytesIn.Store(1_000_000)
 	counters.BytesOut.Store(2_000_000)
 	counters.OpsComplete.Store(5)
 
-	start := time.Now().Add(-1 * time.Second)
-	tick := ticker.Snapshot(start, start, 0, 0)
+	// First Snapshot seeds start=last=now and falls back to interval (1s) for
+	// dt, so Instant = bytes * 8 / 1s / 1e6.
+	tick := ticker.Snapshot(time.Now())
 
-	assert.Equal(t, int64(1_000_000), tick.BytesIn)
-	assert.Equal(t, int64(2_000_000), tick.BytesOut)
-	assert.Equal(t, int64(5), tick.OpsComplete)
-	assert.Greater(t, tick.AvgMbpsIn, 0.0, "avg Mbps in must be positive for a non-empty counter")
-	assert.Greater(t, tick.AvgMbpsOut, tick.AvgMbpsIn, "avg out is 2x in for this fixture")
+	assert.Equal(t, int64(1_000_000), tick.Remote.Down.Data, "Down.Data must reflect logical BytesIn so the progress bar's numerator sees what the caller pulled out")
+	assert.Equal(t, int64(2_000_000), tick.Remote.Up.Data, "Up.Data must reflect logical BytesOut so the progress bar's numerator sees what the caller pushed in")
+	assert.Equal(t, int64(5), tick.Ops.Done, "Ops.Done must reflect logical OpsComplete so the diagnostic counter matches user-visible operations")
+	assert.Greater(t, tick.Remote.Down.Instant, 0.0, "Down.Instant must be positive when the wire counter advanced from zero — the first snapshot covers the full counter delta over one interval")
+	assert.InDelta(t, 2*tick.Remote.Down.Instant, tick.Remote.Up.Instant, 0.001, "Up.Instant must be 2× Down.Instant for this fixture — both Mbps derive linearly from the wire bytes, which are 2:1 in this seed")
 }
 
 // TestTicker_StableCounters_NoTicks locks audit fix #9 (POC session
@@ -143,7 +156,7 @@ func TestTicker_StableCounters_NoTicks(t *testing.T) {
 	defer unsub()
 
 	const interval = 20 * time.Millisecond
-	ticker := progress.NewTicker(counters, bus, interval)
+	ticker := progress.NewTicker(singleSide(counters), singleSide(counters), bus, interval)
 	ctx, cancel := context.WithTimeout(t.Context(), 6*interval)
 	defer cancel()
 	go ticker.Run(ctx)
@@ -180,7 +193,7 @@ func TestTicker_OneFinalZeroDeltaAfterActivityStops(t *testing.T) {
 	defer unsub()
 
 	const interval = 20 * time.Millisecond
-	ticker := progress.NewTicker(counters, bus, interval)
+	ticker := progress.NewTicker(singleSide(counters), singleSide(counters), bus, interval)
 	ctx, cancel := context.WithTimeout(t.Context(), 8*interval)
 	defer cancel()
 	go ticker.Run(ctx)
@@ -208,12 +221,12 @@ done:
 		"audit fix #9 regression: with counters bumped before the first interval at least one active tick must publish — otherwise the projection never sees the in-flight bytes and the bar never moves")
 
 	last := ticks[len(ticks)-1]
-	assert.Equal(t, 0.0, last.NowMbpsIn,
-		"audit fix #9 regression: the LAST tick after activity stops must be the zero-delta marker (NowMbpsIn==0) — projection uses this to flip the label off the throughput line and the bar to its final state")
+	assert.Equal(t, 0.0, last.Remote.Down.Instant,
+		"audit fix #9 regression: the LAST tick after activity stops must be the zero-delta marker (Down.Instant==0) — projection uses this to flip the label off the throughput line and the bar to its final state")
 
 	for i, tick := range ticks[:len(ticks)-1] {
-		if tick.NowMbpsIn == 0 {
-			t.Fatalf("audit fix #9 regression: only the FINAL tick (index %d) may be zero-delta — tick %d already had NowMbpsIn==0, meaning the gate is letting through interior idle ticks again",
+		if tick.Remote.Down.Instant == 0 {
+			t.Fatalf("audit fix #9 regression: only the FINAL tick (index %d) may be zero-delta — tick %d already had Down.Instant==0, meaning the gate is letting through interior idle ticks again",
 				len(ticks)-1, i)
 		}
 	}
@@ -239,8 +252,12 @@ func newFS(t *testing.T) ports.StorageRepository {
 //   - Two bytes.Buffer sinks alive simultaneously — one mid-compression under
 //     the encoder lock, the other past unlock holding its compressed blob.
 //   - Counters aggregate correctly under concurrent big-size writes.
-//   - Ticker still reports live BytesOut while both workers are active.
+//   - Ticker still reports live Up.Data while both workers are active.
 //   - Decoder pool serves parallel big-size reads on readback.
+//
+// Smoothed-series step gate: the smoothed Mbps must never jump >50%% between
+// adjacent ticks, even under the 10-worker / clumped-completion conditions
+// that produced the >100 Mbps raw spikes that motivated design-log/001.
 //
 // Uses different PCG seeds per worker so hash keys differ → no dedup collapse.
 func TestTicker_Two50MBWorkers(t *testing.T) {
@@ -255,7 +272,7 @@ func TestTicker_Two50MBWorkers(t *testing.T) {
 	ch, cancelSub := bus.Subscribe()
 	defer cancelSub()
 
-	ticker := progress.NewTicker(counters, bus, 20*time.Millisecond)
+	ticker := progress.NewTicker(singleSide(counters), singleSide(counters), bus, 20*time.Millisecond)
 	ctx, cancelTicker := context.WithCancel(t.Context())
 	defer cancelTicker()
 	go ticker.Run(ctx)
@@ -326,18 +343,18 @@ drain:
 
 	lastOut, lastIn := int64(0), int64(0)
 	for i, tick := range ticks {
-		assert.GreaterOrEqual(t, tick.BytesOut, lastOut, "tick %d BytesOut monotonic across aggregate 100 MB", i)
-		assert.GreaterOrEqual(t, tick.BytesIn, lastIn, "tick %d BytesIn monotonic", i)
-		lastOut, lastIn = tick.BytesOut, tick.BytesIn
+		assert.GreaterOrEqual(t, tick.Remote.Up.Data, lastOut, "tick %d Up.Data monotonic across aggregate 100 MB", i)
+		assert.GreaterOrEqual(t, tick.Remote.Down.Data, lastIn, "tick %d Down.Data monotonic", i)
+		lastOut, lastIn = tick.Remote.Up.Data, tick.Remote.Down.Data
 	}
-	assert.Greater(t, ticks[len(ticks)-1].BytesOut, int64(0),
-		"final tick shows aggregate BytesOut > 0 — live visibility under concurrent big-size load")
+	assert.Greater(t, ticks[len(ticks)-1].Remote.Up.Data, int64(0),
+		"final tick shows aggregate Up.Data > 0 — live visibility under concurrent big-size load")
 
 	assert.Equal(t, int64(2*size), counters.BytesOut.Load(), "aggregate BytesOut == 100 MB")
 	assert.Equal(t, int64(2*size), counters.BytesIn.Load(), "aggregate BytesIn == 100 MB after both readbacks")
 	assert.Equal(t, int64(4), counters.OpsComplete.Load(), "four ops: 2 Put + 2 Get")
 	assert.Equal(t, int64(0), counters.OpsFailed.Load(), "zero failures under concurrent big-size load")
 
-	t.Logf("total_wall=%v ticks=%d final_avg_out=%.2fMbps",
-		totalWall, len(ticks), ticks[len(ticks)-1].AvgMbpsOut)
+	t.Logf("total_wall=%v ticks=%d final_smoothed_up=%.2fMbps final_smoothed_down=%.2fMbps",
+		totalWall, len(ticks), ticks[len(ticks)-1].Remote.Up.Smoothed, ticks[len(ticks)-1].Remote.Down.Smoothed)
 }

@@ -28,16 +28,34 @@ type JoinAddress struct {
 // ViewModel is the full payload the main window renders from.
 // Every field is safe to read even when it is not relevant to the current
 // stage — the frontend decides which subset to display per stage.
+//
+// BytesDone / BytesTotal are logical (uncompressed) bytes, so the progress
+// bar percentage is internally consistent. SpeedMbps is the wire-layer rate
+// (5-second rolling average, matches curl's --progress-bar) — units differ
+// from the bar deliberately (see design-log/001-progress-projection.md
+// §"What this means for the size estimate" + §Refinement).
+//
+// LogicalMbps is the rate at which logical bytes flow through the caller
+// layer — Steam's "green bar" (decompress / install rate), distinct from
+// SpeedMbps which is the network throughput. Both numbers are computed
+// server-side and shipped pre-derived so a chart component reads them
+// directly without parsing strings or differencing successive snapshots.
+//
+// Label is the pre-formatted string for the simple render path; SpeedMbps
+// + LogicalMbps are there for richer widgets (dual-series sparkline,
+// tooltip showing both rates).
 type ViewModel struct {
-	Stage      Stage         `json:"stage"`
-	Progress   int           `json:"progress"`
-	BytesDone  int64         `json:"bytesDone"`
-	BytesTotal int64         `json:"bytesTotal"`
-	FilesDone  int           `json:"filesDone"`
-	FilesTotal int           `json:"filesTotal"`
-	Label      string        `json:"label"`
-	ErrorText  string        `json:"errorText"`
-	LockHolder string        `json:"lockHolder"`
-	ReadyLight bool          `json:"readyLight"`
-	Addresses  []JoinAddress `json:"addresses"`
+	Stage       Stage         `json:"stage"`
+	Progress    int           `json:"progress"`
+	BytesDone   int64         `json:"bytesDone"`
+	BytesTotal  int64         `json:"bytesTotal"`
+	FilesDone   int           `json:"filesDone"`
+	FilesTotal  int           `json:"filesTotal"`
+	SpeedMbps   float64       `json:"speedMbps"`
+	LogicalMbps float64       `json:"logicalMbps"`
+	Label       string        `json:"label"`
+	ErrorText   string        `json:"errorText"`
+	LockHolder  string        `json:"lockHolder"`
+	ReadyLight  bool          `json:"readyLight"`
+	Addresses   []JoinAddress `json:"addresses"`
 }

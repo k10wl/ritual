@@ -194,30 +194,44 @@ func buildRuntime() (*guiRuntime, error) {
 		return nil, fmt.Errorf("remote storage: %w", err)
 	}
 
-	// Blob-store decorator stack: raw FS → compressing (silent, integrity
-	// verified) → counter (byte/op tap for the progress ticker) → observed
-	// (per-op lifecycle events). Observed is outermost so GUI events carry
-	// raw byte sizes; the ticker reads counter atomics to emit live Mbps.
+	// Blob-store decorator stack — two counter layers around compression
+	// (design-log/001-progress-projection.md). Outside-in:
 	//
-	// Compression is gated to the objects/ keyspace via PrefixRouter so
-	// human-readable JSON (refs/, lock, settings) hits raw FS untouched —
-	// audit fix #5 (docs/dev-session-2026-04-25-poc-setup.md): pre-fix
-	// refs went through the compressing decorator, leaving on-disk JSON
-	// unreadable to operators.
-	localCompressed, err := adapters.NewCompressingStorage(rawLocal)
+	//   caller ─► Counter(logical) ─► Compressing ─► Counter(wire) ─► rawFS
+	//
+	// Logical counter (above compression) sees uncompressed bytes the caller
+	// asked for / handed in — drives BytesTotal / BytesDone for the progress
+	// bar (matches PlanInfo, which sums FileEntry.Size in logical bytes).
+	//
+	// Wire counter (below compression) sees the bytes that physically cross
+	// the backend boundary — drives the smoothed speed label (and matches an
+	// operator's mental model of uplink/downlink).
+	//
+	// PrefixRouter's "else" branch (refs/, lock, settings) points at the
+	// wire-counter-wrapped raw, so every byte that touches the backend lands
+	// in the wire counter regardless of which route it took. Compression
+	// stays gated to objects/ — human-readable JSON keeps hitting raw FS
+	// untouched (audit fix #5).
+	localWire := &adapters.StorageCounters{}
+	remoteWire := &adapters.StorageCounters{}
+	localBackend := adapters.NewCounterStorage(rawLocal, localWire)
+	remoteBackend := adapters.NewCounterStorage(rawRemote, remoteWire)
+
+	localCompressed, err := adapters.NewCompressingStorage(localBackend)
 	if err != nil {
 		return nil, fmt.Errorf("local compressing storage: %w", err)
 	}
-	remoteCompressed, err := adapters.NewCompressingStorage(rawRemote)
+	remoteCompressed, err := adapters.NewCompressingStorage(remoteBackend)
 	if err != nil {
 		return nil, fmt.Errorf("remote compressing storage: %w", err)
 	}
-	localCounters := &adapters.StorageCounters{}
-	remoteCounters := &adapters.StorageCounters{}
-	localObjects := adapters.NewCounterStorage(localCompressed, localCounters)
-	remoteObjects := adapters.NewCounterStorage(remoteCompressed, remoteCounters)
-	localStorage := observed.NewStorage(adapters.NewPrefixRouter("objects/", localObjects, rawLocal), bus)
-	remoteStorage := observed.NewStorage(adapters.NewPrefixRouter("objects/", remoteObjects, rawRemote), bus)
+
+	localLogical := &adapters.StorageCounters{}
+	remoteLogical := &adapters.StorageCounters{}
+	localObjects := adapters.NewCounterStorage(localCompressed, localLogical)
+	remoteObjects := adapters.NewCounterStorage(remoteCompressed, remoteLogical)
+	localStorage := observed.NewStorage(adapters.NewPrefixRouter("objects/", localObjects, localBackend), bus)
+	remoteStorage := observed.NewStorage(adapters.NewPrefixRouter("objects/", remoteObjects, remoteBackend), bus)
 
 	// Workdir is the project root. Scope is data-driven by commitTargets
 	// below — operational dirs (refs/, objects/, logs/, remote-mock/),
@@ -303,11 +317,16 @@ func buildRuntime() (*guiRuntime, error) {
 		HeartbeatInterval: locker.HeartbeatInterval(),
 	})
 
-	// Progress ticker over remote counters — downloads dominate user-visible
-	// throughput during Pull. Local counters stay wired for a future ticker
-	// when Apply/Commit traffic surfacing is added.
-	_ = localCounters
-	remoteTicker := progress.NewTicker(remoteCounters, bus, time.Second)
+	// Progress ticker over both storage sides. Remote side captures the
+	// network throughput (Pull/Push). Local side captures Apply (read from
+	// local objects/ → workdir) and Commit (workdir → local objects/) so
+	// disk-side activity is visible alongside network activity in every
+	// Tick — same cadence, same log block, single source of timing.
+	remoteTicker := progress.NewTicker(
+		progress.CounterSide{Logical: remoteLogical, Wire: remoteWire},
+		progress.CounterSide{Logical: localLogical, Wire: localWire},
+		bus, time.Second,
+	)
 
 	viewEmitter := newWailsViewEmitter()
 	logEmitter := &wailsLogEmitter{}

@@ -185,10 +185,10 @@ func TestProjection_StatusDone_ResetsToIdle(t *testing.T) {
 func TestProjection_TickInPullingStage_UpdatesBytesDone(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
-		bus.Publish(progress.Tick{BytesIn: 500})
+		bus.Publish(progress.Tick{Remote: progress.Side{Down: progress.Stream{Data: 500}}})
 	})
 	final := last(vms)
-	assert.Equal(t, int64(500), final.BytesDone, "progress.Tick during Pulling must propagate BytesIn into ViewModel.BytesDone so the progress bar moves while bytes are streaming down from remote")
+	assert.Equal(t, int64(500), final.BytesDone, "progress.Tick during Pulling must propagate Remote.Down.Data (logical bytes) into ViewModel.BytesDone so the progress bar moves while bytes stream down from remote — Data is uncompressed so the bar's numerator matches PlanInfo.BytesTotal's denominator")
 }
 
 func TestProjection_PlanInfoDuringPulling_PopulatesBytesTotalAndFilesTotal(t *testing.T) {
@@ -204,27 +204,27 @@ func TestProjection_PlanInfoDuringPulling_PopulatesBytesTotalAndFilesTotal(t *te
 func TestProjection_TickInPullingStage_RendersDownloadMbpsLabel(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
-		bus.Publish(progress.Tick{BytesIn: 500, NowMbpsIn: 12.3})
+		bus.Publish(progress.Tick{Remote: progress.Side{Down: progress.Stream{Data: 500, Average: 12.3}}})
 	})
-	assert.Equal(t, "Downloading — 12.3 Mbps", last(vms).Label, "live download Mbps must surface in the Pulling label so the user sees current network speed instead of the static 'Downloading…' caption set on stage entry")
+	assert.Equal(t, "Downloading — 12.3 Mbps", last(vms).Label, "live download Mbps must surface in the Pulling label from Down.Average — the 5-second rolling wire rate (curl --progress-bar convention, design-log/001 §Refinement) instead of the EWMA or raw Instant")
 }
 
-func TestProjection_TickInPushingStage_DrivesBytesDoneFromBytesOutAndRendersUploadMbpsLabel(t *testing.T) {
+func TestProjection_TickInPushingStage_DrivesBytesDoneFromUpDataAndRendersUploadMbpsLabel(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
-		bus.Publish(progress.Tick{BytesOut: 700, NowMbpsOut: 8.0})
+		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 700, Average: 8.0}}})
 	})
 	final := last(vms)
-	assert.Equal(t, int64(700), final.BytesDone, "during Pushing the progress bar must consume BytesOut (not BytesIn) so the bar reflects bytes leaving toward remote, not bytes that streamed in earlier")
-	assert.Equal(t, "Uploading — 8.0 Mbps", final.Label, "Pushing label must render live upload Mbps so the user sees current network speed instead of the static 'Uploading…' caption set on stage entry")
+	assert.Equal(t, int64(700), final.BytesDone, "during Pushing the progress bar must consume Up.Data (not Down.Data) so the bar reflects bytes leaving toward remote, not bytes that streamed in earlier")
+	assert.Equal(t, "Uploading — 8.0 Mbps", final.Label, "Pushing label must render live upload Mbps from Up.Average so the user sees the 5-second rolling wire rate, calmer than Steam's per-second raw delta and more honest than the EWMA's asymptotic tail")
 }
 
 func TestProjection_TickDuringCommitting_DoesNotMutateLabelOrBytesDone(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
-		bus.Publish(progress.Tick{BytesOut: 100, NowMbpsOut: 5.0})
+		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 100, Average: 5.0}}})
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StageCommitting})
-		bus.Publish(progress.Tick{BytesOut: 200, NowMbpsOut: 9.0})
+		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 200, Average: 9.0}}})
 	})
 	final := last(vms)
 	assert.Equal(t, "Snapshotting…", final.Label, "a late Tick arriving during Committing must not flip the label back to 'Uploading — N Mbps' — Committing is local refs work, not network upload, and the stage-set label must win over stale network ticks")
@@ -234,9 +234,40 @@ func TestProjection_TickDuringCommitting_DoesNotMutateLabelOrBytesDone(t *testin
 func TestProjection_TickWithZeroMbps_LeavesStageLabelUntouched(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
-		bus.Publish(progress.Tick{BytesIn: 250, NowMbpsIn: 0})
+		bus.Publish(progress.Tick{Remote: progress.Side{Down: progress.Stream{Data: 250, Average: 0}}})
 	})
-	assert.Equal(t, "Downloading…", last(vms).Label, "a Tick with zero NowMbpsIn must keep the stage-entry 'Downloading…' label rather than overwriting it with a misleading '0.0 Mbps' caption — speed shows only when actually moving")
+	assert.Equal(t, "Downloading…", last(vms).Label, "a Tick with zero Down.Average must keep the stage-entry 'Downloading…' label rather than overwriting it with a misleading '0.0 Mbps' caption — speed shows only when the rolling-window value exceeds the 0.5 Mbps floor")
+}
+
+func TestProjection_TickInPullingStage_PopulatesSpeedMbpsRegardlessOfFloor(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(progress.Tick{Remote: progress.Side{Down: progress.Stream{Data: 250, Average: 0.2}}})
+	})
+	final := last(vms)
+	assert.InDelta(t, 0.2, final.SpeedMbps, 0.001, "SpeedMbps must always reflect Down.Average so the frontend has the raw wire-rate number even when the label is floored — frontend widgets (sparklines, tooltips) consume SpeedMbps directly without parsing the label string")
+	assert.Equal(t, "Downloading…", final.Label, "the 0.5 Mbps label floor still applies: the structured number flows through, but the user-visible caption stays on the stage-entry label until the rolling-window value rises above the flicker threshold")
+}
+
+func TestProjection_LogicalDrivesProgress_AverageDrivesLabel(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(ritual.PlanInfo{Operation: "pull", BytesTotal: 1024 * 1024 * 1024, FilesTotal: 100})
+		bus.Publish(progress.Tick{
+			Remote: progress.Side{
+				Down: progress.Stream{
+					Data: 200 * 1024 * 1024, Transfer: 80 * 1024 * 1024,
+					Instant: 180, Average: 42, Smoothed: 38, DataAverage: 110,
+				},
+			},
+		})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(200*1024*1024), final.BytesDone, "BytesDone must read from Down.Data (LOGICAL bytes) so it lines up with PlanInfo.BytesTotal which is also logical — the bar would lie about completion if numerator and denominator used different units")
+	assert.Equal(t, int64(1024*1024*1024), final.BytesTotal, "BytesTotal must carry the logical-byte plan budget so progress = Down.Data / BytesTotal is the user-facing 'fraction of my world transferred'")
+	assert.Equal(t, "Downloading — 42.0 Mbps", final.Label, "Label must read from Down.Average (5-second rolling WIRE rate) — the raw Instant 180 would have flickered to the user, the rolling average absorbs the burst and shows the steady-state throughput")
+	assert.InDelta(t, 42.0, final.SpeedMbps, 0.001, "SpeedMbps must equal Down.Average so the frontend gets the same number the label is formatted from — no string parsing needed for sparklines or tooltips")
+	assert.InDelta(t, 110.0, final.LogicalMbps, 0.001, "LogicalMbps must equal Down.DataAverage — the logical (decompress/install) rate for the chart's second series. Drives Steam's 'green bar' equivalent: distinct from network throughput, often higher on compressible payloads")
 }
 
 func TestProjection_Snapshot_ReturnsCurrentState(t *testing.T) {

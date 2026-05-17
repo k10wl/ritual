@@ -110,22 +110,41 @@ func (p *Projection) fold(evt ports.Event) bool {
 	return true
 }
 
-// onTick applies a network-progress snapshot to the ViewModel. Gated on
+// onTick applies a network-progress snapshot to the ViewModel. Pure picker:
+// the ticker already derived everything, projection chooses which series
+// drives the visible state for the current pipeline stage. Gated on
 // pipelineStage so a late Tick arriving after the pipeline moved on (e.g.
 // during Committing) does not overwrite the stage-set label or freeze a
-// stale BytesDone value. Mbps label only renders when speed > 0 — a "0.0
-// Mbps" caption would be misleading when nothing is moving.
+// stale BytesDone value.
+//
+// BytesDone reads from Stream.Data (logical, matches PlanInfo.BytesTotal).
+// Label and SpeedMbps read from Stream.Average — 5-second rolling wire
+// rate, matches curl's --progress-bar convention (design-log/001
+// §Refinement). LogicalMbps reads from Stream.DataAverage — drives the
+// chart's second series (decompress/install rate).
+//
+// The 0.5 Mbps floor on the LABEL suppresses "0.0 Mbps" flicker when
+// nothing is moving; the stage-set label ("Downloading…") stays visible
+// until real activity crosses the floor. SpeedMbps / LogicalMbps are
+// always set so frontend charts have the raw numbers regardless of label
+// state.
+const speedLabelFloorMbps = 0.5
+
 func (p *Projection) onTick(t progress.Tick) bool {
 	switch p.pipelineStage {
 	case ritual.StagePulling:
-		p.state.BytesDone = t.BytesIn
-		if t.NowMbpsIn > 0 {
-			p.state.Label = fmt.Sprintf("Downloading — %.1f Mbps", t.NowMbpsIn)
+		p.state.BytesDone = t.Remote.Down.Data
+		p.state.SpeedMbps = t.Remote.Down.Average
+		p.state.LogicalMbps = t.Remote.Down.DataAverage
+		if t.Remote.Down.Average > speedLabelFloorMbps {
+			p.state.Label = fmt.Sprintf("Downloading — %.1f Mbps", t.Remote.Down.Average)
 		}
 	case ritual.StagePushing:
-		p.state.BytesDone = t.BytesOut
-		if t.NowMbpsOut > 0 {
-			p.state.Label = fmt.Sprintf("Uploading — %.1f Mbps", t.NowMbpsOut)
+		p.state.BytesDone = t.Remote.Up.Data
+		p.state.SpeedMbps = t.Remote.Up.Average
+		p.state.LogicalMbps = t.Remote.Up.DataAverage
+		if t.Remote.Up.Average > speedLabelFloorMbps {
+			p.state.Label = fmt.Sprintf("Uploading — %.1f Mbps", t.Remote.Up.Average)
 		}
 	default:
 		return false

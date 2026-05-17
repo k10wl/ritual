@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"os"
 	"sync"
 	"testing"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -148,4 +151,67 @@ func TestCounterStorage_Concurrent(t *testing.T) {
 	want := int64(workers * perWorker * len(payload))
 	assert.Equal(t, want, counters.BytesOut.Load(), "atomic increments must not race under concurrent writers")
 	assert.Equal(t, int64(workers*perWorker), counters.OpsComplete.Load())
+}
+
+// TestCounter_AboveAndBelowCompression_MeasureDifferentUnits proves the
+// design-log/001-progress-projection.md core claim: a CounterStorage placed
+// ABOVE CompressingStorage measures the caller-side (uncompressed/logical)
+// bytes, while one placed BELOW measures the backend-side (compressed/wire)
+// bytes. Position is the entire definition — there is no "wire" mode on the
+// counter; the decorator just sees whatever bytes pass through its layer.
+//
+// Fixture: 1 MiB of highly compressible payload through the full stack
+//
+//	caller ─► Counter(logical) ─► Compressing ─► Counter(wire) ─► rawFS
+//
+// After PutStream: logical.BytesOut == 1 MiB (what the caller handed in),
+// 0 < wire.BytesOut < 1 MiB (zstd ate it; some bytes still hit the FS).
+// After GetStream + drain: mirror on the In counters.
+//
+// Without this assertion, a misplaced counter would silently change what
+// the GUI's "Mbps" label means without any test catching the swap.
+func TestCounter_AboveAndBelowCompression_MeasureDifferentUnits(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	require.NoError(t, err)
+	fs, err := NewFSRepository(root)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = fs.Close() })
+
+	wire := &StorageCounters{}
+	backend := NewCounterStorage(fs, wire)
+
+	compressed, err := NewCompressingStorage(backend)
+	require.NoError(t, err)
+
+	logical := &StorageCounters{}
+	top := NewCounterStorage(compressed, logical)
+
+	const size = 1 << 20 // 1 MiB
+	payload := bytes.Repeat([]byte("compress-me-please-"), size/19+1)[:size]
+
+	key := fmt.Sprintf("objects/%016x", xxhash.Sum64(payload))
+	require.NoError(t, top.PutStream(t.Context(), key, bytes.NewReader(payload)))
+
+	assert.Equal(t, int64(size), logical.BytesOut.Load(),
+		"logical counter (above compression) must see exactly 1 MiB on PutStream — it taps the caller's body before zstd touches it, so it matches PlanInfo.BytesTotal which is also uncompressed")
+	wireOut := wire.BytesOut.Load()
+	assert.Greater(t, wireOut, int64(0),
+		"wire counter (below compression) must see SOME bytes on PutStream — zero would mean the compressed blob never reached the FS layer at all")
+	assert.Less(t, wireOut, int64(size),
+		"wire counter must see FEWER bytes than logical on a compressible payload — that's the entire point of placing the counter below compression: it tracks what physically crossed the backend boundary, not what the caller handed in")
+
+	rc, err := top.GetStream(t.Context(), key)
+	require.NoError(t, err)
+	got, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	require.NoError(t, rc.Close())
+	require.Equal(t, size, len(got), "readback must produce the full payload — compression must be transparent at the caller layer")
+
+	assert.Equal(t, int64(size), logical.BytesIn.Load(),
+		"logical counter must see exactly 1 MiB on GetStream — the caller drained 1 MiB of uncompressed bytes through this layer")
+	wireIn := wire.BytesIn.Load()
+	assert.Greater(t, wireIn, int64(0),
+		"wire counter must see SOME bytes on GetStream — zero would mean the FS layer never returned a compressed blob")
+	assert.Less(t, wireIn, int64(size),
+		"wire counter must see fewer bytes than logical on readback — the compressed on-disk blob is smaller than the uncompressed body the caller consumed")
 }

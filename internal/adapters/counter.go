@@ -11,10 +11,24 @@ import (
 // StorageCounters holds byte + op totals tapped by CounterStorage. All fields
 // are safe for concurrent read/increment via the atomic.Int64 methods.
 //
-// Byte counters are wire-level: they advance for every byte pulled from a
-// GetStream body or pushed to a PutStream body, including bytes retransmitted
-// during an R2 retry (matches the POC r2sim convention — retry bytes count
-// against the shared uplink budget).
+// Byte counters are layer-dependent — the decorator measures whichever bytes
+// flow through the layer it is installed at:
+//
+//   - Above CompressingStorage → caller-side / logical bytes (uncompressed).
+//     Drives BytesTotal / BytesDone for the progress bar — the units that
+//     match PlanInfo.BytesTotal.
+//   - Below CompressingStorage → backend-side / wire bytes (compressed).
+//     Drives the smoothed speed label — the units that match an operator's
+//     mental model of uplink/downlink.
+//
+// One counter pair per layer per side; install both for full visibility
+// (see design-log/001-progress-projection.md §"Two counter layers" and the
+// composition root in cmd/gui/main.go).
+//
+// Retry bytes: when an inner adapter rewinds its body and retries (e.g. R2
+// over a transient 5xx), every retransmitted byte advances the counter at
+// whichever layer the retry happens through. A counter below the retrying
+// adapter sees the retry traffic; one above it does not.
 type StorageCounters struct {
 	BytesIn     atomic.Int64
 	BytesOut    atomic.Int64
