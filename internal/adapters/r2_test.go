@@ -283,6 +283,50 @@ func TestR2Repository_GetStream_PropagatesError(t *testing.T) {
 	assert.True(t, strings.Contains(err.Error(), "failed to get object"), "error wraps operation: %v", err)
 }
 
+func TestR2Repository_GetStreamRange_Offset0SetsNoRangeHeader(t *testing.T) {
+	mockClient := new(MockS3Client)
+	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
+
+	mockClient.On("GetObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
+		Body: io.NopCloser(bytes.NewReader([]byte("full"))),
+	}, nil).Run(func(args mock.Arguments) {
+		in := args.Get(1).(*s3.GetObjectInput)
+		assert.Nil(t, in.Range, "offset=0 must request the whole object — no Range header")
+	}).Once()
+
+	rc, err := repo.GetStreamRange(context.Background(), "k", 0)
+	require.NoError(t, err)
+	defer rc.Close()
+	got, _ := io.ReadAll(rc)
+	assert.Equal(t, []byte("full"), got, "offset=0 returns the entire body verbatim")
+	mockClient.AssertExpectations(t)
+}
+
+func TestR2Repository_GetStreamRange_PositiveOffsetSetsByteRangeHeader(t *testing.T) {
+	mockClient := new(MockS3Client)
+	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)
+
+	mockClient.On("GetObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
+		Body: io.NopCloser(bytes.NewReader([]byte("from-mid"))),
+	}, nil).Run(func(args mock.Arguments) {
+		in := args.Get(1).(*s3.GetObjectInput)
+		require.NotNil(t, in.Range, "offset>0 must populate Range header")
+		assert.Equal(t, "bytes=1024-", *in.Range, "Range header must encode the resume offset as bytes=N-")
+	}).Once()
+
+	rc, err := repo.GetStreamRange(context.Background(), "k", 1024)
+	require.NoError(t, err)
+	defer rc.Close()
+	got, _ := io.ReadAll(rc)
+	assert.Equal(t, []byte("from-mid"), got, "partial-content body delivered to caller")
+	mockClient.AssertExpectations(t)
+}
+
+func TestR2Repository_SatisfiesRangeGetter(t *testing.T) {
+	repo := NewR2RepositoryWithClient(new(MockS3Client), "test-bucket", nil)
+	var _ RangeGetter = repo
+}
+
 func TestR2Repository_PutStream_ForwardsBodyToSDK(t *testing.T) {
 	mockClient := new(MockS3Client)
 	repo := NewR2RepositoryWithClient(mockClient, "test-bucket", nil)

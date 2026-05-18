@@ -425,6 +425,77 @@ func TestCompressingStorage_ConcurrentPushPull(t *testing.T) {
 	}
 }
 
+// TestCompressingStorage_EncoderPoolNoSerialization pins the invariant that
+// concurrent PutStream calls run in parallel — no shared encoder lock. The
+// regression class it guards: replacing the encoder pool with a single
+// encoder + mutex would force N slow bodies to drain sequentially, multiplying
+// wall time by N. The test injects per-blob read latency D and asserts the
+// total wall time stays well under N*D.
+func TestCompressingStorage_EncoderPoolNoSerialization(t *testing.T) {
+	dec, _ := newCompressingOnFS(t)
+
+	const N = 10
+	const D = 50 * time.Millisecond
+	payloads := make([][]byte, N)
+	for i := range payloads {
+		p := make([]byte, 4096+i*7)
+		for j := range p {
+			p[j] = byte(i + j)
+		}
+		payloads[i] = p
+	}
+
+	start := time.Now()
+	errs := make(chan error, N)
+	var wg sync.WaitGroup
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			body := &slowReader{src: bytes.NewReader(payloads[i]), delay: D}
+			errs <- dec.PutStream(t.Context(), keyFor(payloads[i]), body)
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	elapsed := time.Since(start)
+
+	for err := range errs {
+		require.NoError(t, err, "concurrent PutStream must not fail")
+	}
+
+	ceiling := 2 * D
+	assert.Less(t, elapsed, ceiling,
+		"wall=%s exceeded ceiling=%s for N=%d concurrent slow-body pushes — encoder lock likely regressed (serialized N*D=%s)",
+		elapsed, ceiling, N, time.Duration(N)*D)
+
+	for i, want := range payloads {
+		rc, err := dec.GetStream(t.Context(), keyFor(want))
+		require.NoError(t, err)
+		got, err := io.ReadAll(rc)
+		require.NoError(t, err)
+		require.NoError(t, rc.Close(), "integrity must hold for blob %d", i)
+		assert.Equal(t, want, got, "blob %d roundtrip mismatch — pooled encoders leaked state across goroutines", i)
+	}
+}
+
+// slowReader emits its source bytes only after a fixed delay on the first Read.
+// Models a slow upstream body (e.g. an R2 GetStream that meters bytes) without
+// fighting the io.CopyBuffer chunk size.
+type slowReader struct {
+	src   io.Reader
+	delay time.Duration
+	done  bool
+}
+
+func (s *slowReader) Read(p []byte) (int, error) {
+	if !s.done {
+		time.Sleep(s.delay)
+		s.done = true
+	}
+	return s.src.Read(p)
+}
+
 func TestCompressingStorage_RandomPayloadRoundtrip(t *testing.T) {
 	dec, _ := newCompressingOnFS(t)
 	payload := make([]byte, 128*1024)

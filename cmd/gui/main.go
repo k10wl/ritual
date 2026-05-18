@@ -193,6 +193,13 @@ func buildRuntime() (*guiRuntime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("remote storage: %w", err)
 	}
+	// Decorate every remote backend (R2 and mock) with retry on classified
+	// transient errors. R2 needs it for mid-stream body EOFs the SDK can't
+	// recover from (design-log/004); mock pays nothing because the default
+	// classifier rejects mock-side terminal errors. Wrap *under* the
+	// counter layers so retried bytes count toward wire traffic and the
+	// speed metric stays honest (design-log/004 §Q4).
+	rawRemote = adapters.NewRetryingStorage(rawRemote, adapters.DefaultRetryPolicy(), bus)
 
 	// Blob-store decorator stack — two counter layers around compression
 	// (design-log/001-progress-projection.md). Outside-in:

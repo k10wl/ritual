@@ -26,27 +26,22 @@ const bufferSize = 64 * 1024
 // PutStream and zstd-decode + xxhash integrity check on GetStream. Designed
 // for the `objects/{hash}` keyspace: the key's basename is the expected xxhash.
 //
-// Resource reuse follows the POC r2sim pattern. Push: one encoder serialised
-// by encMu, Reset(sink) per call. Pull: a sync.Pool of decoders, each Reset
-// per call and returned on body Close — parallel Gets run without contention
-// and without per-call 1 MB decoder allocation.
+// Resource reuse is symmetric across directions: a sync.Pool of encoders for
+// PutStream and a sync.Pool of decoders for GetStream. Each pooled instance is
+// Reset to its sink/source per call and returned on completion — parallel
+// pushes and pulls run without contention and without per-call 1 MB encoder
+// or decoder allocation.
 type CompressingStorage struct {
 	inner   ports.StorageRepository
-	enc     *zstd.Encoder
-	encMu   sync.Mutex
 	bufPool sync.Pool
+	encPool sync.Pool
 	decPool sync.Pool
 }
 
-// NewCompressingStorage builds a V2 decorator around inner. One zstd encoder
-// is held for the decorator's lifetime and reset per PutStream call (serialised
-// by encMu).
+// NewCompressingStorage builds a V2 decorator around inner. Encoders and
+// decoders are created on demand and retained by their pools across calls.
 func NewCompressingStorage(inner ports.StorageRepository) (*CompressingStorage, error) {
-	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
-	if err != nil {
-		return nil, fmt.Errorf("failed to build zstd encoder: %w", err)
-	}
-	c := &CompressingStorage{inner: inner, enc: enc}
+	c := &CompressingStorage{inner: inner}
 	c.bufPool.New = func() any {
 		b := make([]byte, bufferSize)
 		return &b
@@ -115,13 +110,15 @@ func (c *CompressingStorage) PutStream(ctx context.Context, key string, body io.
 		_ = os.Remove(tmp.Name())
 	}()
 
-	c.encMu.Lock()
-	c.enc.Reset(tmp)
+	enc, err := c.acquireEncoder(tmp)
+	if err != nil {
+		return fmt.Errorf("failed to acquire zstd encoder for %s: %w", key, err)
+	}
 	bufPtr := c.bufPool.Get().(*[]byte)
-	_, copyErr := io.CopyBuffer(c.enc, body, *bufPtr)
+	_, copyErr := io.CopyBuffer(enc, body, *bufPtr)
 	c.bufPool.Put(bufPtr)
-	closeErr := c.enc.Close()
-	c.encMu.Unlock()
+	closeErr := enc.Close()
+	c.releaseEncoder(enc)
 	if copyErr != nil {
 		return fmt.Errorf("failed to compress %s: %w", key, copyErr)
 	}
@@ -163,6 +160,26 @@ func (c *CompressingStorage) GetStream(ctx context.Context, key string) (io.Read
 		hasher:   xxhash.New(),
 		release:  func() { c.releaseDecoder(dec) },
 	}, nil
+}
+
+// acquireEncoder returns a ready-to-use zstd.Encoder bound to sink. Reuses a
+// pooled encoder when available; otherwise creates a fresh one. The pool grows
+// naturally up to the concurrent-PutStream high-water mark.
+func (c *CompressingStorage) acquireEncoder(sink io.Writer) (*zstd.Encoder, error) {
+	if v := c.encPool.Get(); v != nil {
+		enc := v.(*zstd.Encoder)
+		enc.Reset(sink)
+		return enc, nil
+	}
+	return zstd.NewWriter(sink, zstd.WithEncoderLevel(zstd.SpeedDefault))
+}
+
+// releaseEncoder detaches the sink and returns the encoder to the pool.
+// Reset(io.Discard) keeps the internal window and match tables allocated while
+// breaking the reference to the caller-owned sink.
+func (c *CompressingStorage) releaseEncoder(enc *zstd.Encoder) {
+	enc.Reset(io.Discard)
+	c.encPool.Put(enc)
 }
 
 // acquireDecoder returns a ready-to-use zstd.Decoder bound to src. Reuses a

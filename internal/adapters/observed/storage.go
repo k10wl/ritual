@@ -2,6 +2,7 @@ package observed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"ritual/internal/core/ports"
@@ -119,17 +120,25 @@ func (o *observedStorage) Exists(ctx context.Context, key string) (bool, error) 
 }
 
 // countingReadCloser tallies bytes streamed through a ReadCloser and invokes
-// onClose exactly once, when the caller closes the body.
+// onClose exactly once, when the caller closes the body. A mid-stream Read
+// error is captured (any non-nil err that isn't io.EOF) and joined with
+// closeErr in the published event — without this, body-phase failures (e.g.
+// R2's io.ErrUnexpectedEOF during a long GET) were silently dropped and
+// surfaced one decorator up, mis-attributing the failure to the wrong layer.
 type countingReadCloser struct {
-	inner   io.ReadCloser
-	n       int64
-	closed  bool
-	onClose func(n int64, err error)
+	inner       io.ReadCloser
+	n           int64
+	closed      bool
+	lastReadErr error
+	onClose     func(n int64, err error)
 }
 
 func (c *countingReadCloser) Read(p []byte) (int, error) {
 	read, err := c.inner.Read(p)
 	c.n += int64(read)
+	if err != nil && !errors.Is(err, io.EOF) {
+		c.lastReadErr = err
+	}
 	return read, err
 }
 
@@ -138,9 +147,9 @@ func (c *countingReadCloser) Close() error {
 		return c.inner.Close()
 	}
 	c.closed = true
-	err := c.inner.Close()
-	c.onClose(c.n, err)
-	return err
+	closeErr := c.inner.Close()
+	c.onClose(c.n, errors.Join(c.lastReadErr, closeErr))
+	return closeErr
 }
 
 // countingReader is the fallback tap for non-seekable bodies: records

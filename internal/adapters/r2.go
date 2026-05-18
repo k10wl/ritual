@@ -123,11 +123,24 @@ func (r *R2Repository) WithPrefix(prefix string) *R2Repository {
 // GetStream retrieves object body by key as a streaming reader. Caller closes
 // the returned ReadCloser. Retries handled by SDK.
 func (r *R2Repository) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
+	return r.GetStreamRange(ctx, key, 0)
+}
+
+// GetStreamRange retrieves the object body starting at offset. offset=0 issues
+// a regular GetObject (200 OK); offset>0 sets the HTTP `Range: bytes=N-` header
+// and the server responds with a 206 Partial Content body. Satisfies the
+// RangeGetter capability checked by RetryingStorage for zero-cost mid-stream
+// resume on transient body EOFs.
+func (r *R2Repository) GetStreamRange(ctx context.Context, key string, offset int64) (io.ReadCloser, error) {
 	key = filepath.ToSlash(key)
-	result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
+	in := &s3.GetObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
-	})
+	}
+	if offset > 0 {
+		in.Range = aws.String(fmt.Sprintf("bytes=%d-", offset))
+	}
+	result, err := r.client.GetObject(ctx, in)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object %s: %w", key, err)
 	}

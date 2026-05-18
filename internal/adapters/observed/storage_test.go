@@ -151,6 +151,42 @@ func TestObservedStorage_GetStream_PublishesOnClose(t *testing.T) {
 	assert.NoError(t, evt.Err)
 }
 
+func TestObservedStorage_GetStream_BodyShortReadSurfacesOnEvent(t *testing.T) {
+	inner, bus, ch, cancel := setup(t)
+	defer cancel()
+	bodyErr := io.ErrUnexpectedEOF
+	inner.GetStreamFunc = func(_ context.Context, _ string) (io.ReadCloser, error) {
+		return io.NopCloser(&shortBody{tail: bodyErr}), nil
+	}
+	s := observed.NewStorage(inner, bus)
+
+	rc, err := s.GetStream(t.Context(), "k")
+	require.NoError(t, err, "open succeeds; the failure is mid-stream")
+
+	_, _ = io.ReadAll(rc)
+	require.NoError(t, rc.Close())
+
+	evt := recvOne(t, ch).(observed.StorageGetStreamInfo)
+	assert.ErrorIs(t, evt.Err, bodyErr,
+		"body-phase short read must surface on the storage.getstream row — without this, log mis-attributes to the layer above")
+}
+
+// shortBody returns one chunk then a non-EOF error. Models the R2 mid-stream
+// EOF shape — caller sees bytes then a transient terminator.
+type shortBody struct {
+	tail error
+	done bool
+}
+
+func (s *shortBody) Read(p []byte) (int, error) {
+	if s.done {
+		return 0, s.tail
+	}
+	s.done = true
+	n := copy(p, []byte("partial"))
+	return n, nil
+}
+
 func TestObservedStorage_GetStream_FailureBeforeBody(t *testing.T) {
 	inner, bus, ch, cancel := setup(t)
 	defer cancel()
