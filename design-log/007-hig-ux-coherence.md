@@ -952,3 +952,111 @@ via controls) + `Cycle` (lifecycle morph demo).
 **Deps (final):** `gsap`, `lucide`, `svgpath` — all used, all typed,
 no `@types/*` stubs or ambient declarations.
 
+## Revision — 2026-05-20 — Idle zoom: camera framing on `state === "idle"`
+
+The IDLE dial spends most of its life with `arc = 0` and a single play
+glyph. The outer ring at radius 100 inside a 280px frame leaves the
+glyph and label visually small relative to the available canvas. The
+ring carries zero information until progress starts, yet it competes
+for the eye.
+
+**Decision:** treat IDLE as a *zoomed-in* framing of the dial — glyph
+and copy enlarged, ring faded out — and zoom *out* on every transition
+to a non-idle state to reveal the progress ring already mid-motion.
+Reverse on return to IDLE.
+
+**Trigger:** strictly `state === "idle"`. Not `arc === 0` (`fail` can
+have `arc = 0` and must stay full-view to preserve "you saw a failure
+happen here" continuity). `prep`, `run`, `final`, `fail` are all
+full-view.
+
+**Path A — pure scale on a `.cluster` wrapper.** Wrap the existing
+`glyph-slot + label + sub` triple in a single `.cluster` element. Tween
+two GSAP targets on every `state` change:
+
+- `.cluster` `scale`: `1.35` (idle) ↔ `1.0` (non-idle). `transform-origin: 50% 42%`
+  keeps the glyph optically anchored while the label grows downward.
+- `.rings` `opacity`: `0` (idle) ↔ `1` (non-idle).
+
+Duration `0.3s`. Eases: `power3.out` for the shrink (toward active),
+`power2.inOut` symmetric otherwise. `prefers-reduced-motion: reduce`
+short-circuits to `gsap.set` (snap).
+
+**Why pure scale, not real type-scale:** simplest end state — one
+transform, one transform-origin, zero extra CSS rules. Risk:
+antialiasing softens text at 1.35×; if it reads soft in browser,
+upgrade to a type-scale variant (separate `font-size` + glyph-slot
+size rules in `[state="idle"]`, GSAP tweens between actual sizes,
+~15 LOC more). Cheap experiment first.
+
+**Initial paint:** `firstUpdated()` calls `gsap.set()` based on
+current `state` so cold-loaded IDLE stories render already zoomed
+without a paint-flash transition.
+
+**Trade-offs:**
+
+| Choice | Gain | Cost |
+|--------|------|------|
+| Zoom keyed to `state === "idle"` only | One simple predicate; clear semantic | `fail` (which carries `arc` history) explicitly *not* re-zoomed even when interactive again — deliberate |
+| Pure scale (no type-scale) | One transform, no font-size juggling | Text may render slightly soft at rest in idle — re-evaluate after live check |
+| `0.3s` duration | Reads as "stage change" not "blink" | Slightly longer than the `MORPH_S` (0.22s) glyph morph — they overlap naturally |
+| Single `.cluster` wrapper | All animated subtree under one transform | One extra DOM node inside `.hit` |
+
+**Verification.** Idle story: glyph + label visually large, ring
+invisible. Cycle story: ring fades in as state leaves idle, glyph +
+label shrink to nominal size; reverse on the cycle's idle re-entry.
+
+**Follow-up — empty-sub collapse + first-render gate.** Two related
+layout shifts surfaced on cold entry:
+
+1. Empty `.sub` reserved an 18px line box (via `line-height: 18px`),
+   pushing the glyph upward in idle.
+2. `animateHeight()` ran on first `updated()` with `prev = 0`, tweening
+   label height `0 → ~24px` and visibly shoving everything.
+
+Fixes:
+- `.sub[data-empty]` — when the `sub` prop is empty the element gets a
+  reflected attribute that zeroes `margin-top`, `line-height`, and
+  `height`. No conditional render (keeps the DOM stable for
+  transitions to/from non-empty).
+- `animateHeight()` short-circuits when `prev <= 0`. Subsequent
+  transitions (real prev captured by `willUpdate`) still animate
+  cleanly.
+
+## Revision — 2026-05-20 — Hover / active: lift + halo + pointer-tracked spotlight
+
+Dial had no hover/active treatment — primary CTA read flat. Added a
+three-layer interaction signal on `.dial`, gated on `:has(.hit:hover:not(:disabled))`
+so PREP / FINAL (disabled) stay inert:
+
+1. **Translate-lift.** `transform: translateY(-1px)` on hover, snaps to
+   `translateY(0) scale(0.985)` on `:active`. Doesn't conflict with
+   GSAP zoom (different element, different transform target) or with
+   the RUN breath keyframes (those animate box-shadow, not transform).
+2. **Halo amplification — outside RUN.** Hover boosts the outer halo
+   shadow ~30% (color, spread, alpha) via
+   `:host(:not([state="run"])) .dial:has(.hit:hover:not(:disabled))`.
+   RUN is excluded because its breath keyframes own the box-shadow
+   slot — adding a `:hover` override would lose to the keyframe.
+3. **Pointer-tracked specular highlight (creative layer).** A `.dial::after`
+   pseudo-element with `radial-gradient(circle 140px at var(--mx) var(--my), …)`
+   and `mix-blend-mode: screen`. The host writes `--mx` / `--my` (as
+   `%`) from a `pointermove` listener on `.hit`. Effect: a soft moving
+   "spotlight" tracks the cursor across the dial face — reads as a
+   polished physical object catching ambient light. Activates on
+   hover (opacity 0 → 1 via `--motion-fast`), fades on leave.
+
+**No JS for the lift/active/halo** — pure CSS via `:has()`. Browser
+support universal as of mid-2024.
+
+**Reduced motion.** `prefers-reduced-motion: reduce` collapses `.dial`
+transitions in the existing block; hover/active styling still applies
+but snaps instantly. Acceptable — state, not animation.
+
+**Why this composes:**
+- Cluster zoom (GSAP): owns `.cluster` transform.
+- Hover/active: own `.dial` transform.
+- Breath (CSS keyframe): owns `.dial` box-shadow during RUN.
+- Halo amp (CSS hover): owns `.dial` box-shadow *outside* RUN — no overlap.
+- Spotlight: owns `.dial::after` opacity + background. Independent layer.
+
