@@ -82,6 +82,10 @@ export class DecoderV2 extends LitElement {
             this.emitSettled();
             return;
         }
+        // Invariant for the diff that follows: this.cells aligned 1:1 with
+        // settledText. Drop any "dying" cells (target === "") left over from
+        // previous delete groups so oldIdx → this.cells[oldIdx] is correct.
+        this.cells = this.cells.filter((c) => c.target !== "");
         const prev = this.settledText;
         const groups = groupEdits(diffMatrix(prev, next));
 
@@ -107,12 +111,19 @@ export class DecoderV2 extends LitElement {
 
     private applyGroup(g: EditGroup, out: Cell[]) {
         if (g.op === "match") {
-            for (const e of g.edits) out.push(this.cells[e.oldIdx]);
+            for (const e of g.edits) {
+                const cell = this.cells[e.oldIdx];
+                if (cell) out.push(cell);
+            }
             return;
         }
         if (g.op === "replace") {
             for (const e of g.edits) {
                 const cell = this.cells[e.oldIdx];
+                if (!cell) {
+                    out.push(new Cell(e.ch, /\s/.test(e.ch) ? e.ch : ""));
+                    continue;
+                }
                 cell.retarget(e.ch);
                 out.push(cell);
             }
@@ -128,6 +139,7 @@ export class DecoderV2 extends LitElement {
         // delete
         for (const e of g.edits) {
             const cell = this.cells[e.oldIdx];
+            if (!cell) continue;
             cell.retarget("");
             out.push(cell);
         }
