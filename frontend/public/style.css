@@ -17,6 +17,19 @@
     -webkit-user-select: none;
     -moz-user-select: none;
     -ms-user-select: none;
+
+    /* #007 dial state palette */
+    --state-idle:   #2563eb;
+    --state-prep:   #f59e0b;
+    --state-run:    #10b981;
+    --state-final:  #14b8a6;
+    --state-fail:   #ef4444;
+    --dial-track:   rgba(255, 255, 255, 0.08);
+    --dial-glow:    rgba(16, 185, 129, 0.35);
+
+    /* #007 motion */
+    --motion-fast:  120ms cubic-bezier(.2, .0, .0, 1);
+    --motion-base:  220ms cubic-bezier(.2, .0, .0, 1);
 }
 
 @font-face {

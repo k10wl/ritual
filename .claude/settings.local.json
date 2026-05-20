@@ -24,7 +24,12 @@
       "Bash(gofumpt)",
       "Bash(golangci-lint fmt *)",
       "Bash(awk -F. '{print $NF}')",
-      "Bash(git --no-pager diff go.mod)"
+      "Bash(git --no-pager diff go.mod)",
+      "Bash(tokf raw *)",
+      "mcp__plugin_context7_context7__query-docs",
+      "Bash(npx tsc *)",
+      "mcp__plugin_playwright_playwright__browser_resize",
+      "mcp__plugin_playwright_playwright__browser_evaluate"
     ],
     "deny": [],
     "ask": []
