@@ -4,7 +4,7 @@ import { gsap } from "gsap";
 import { MorphSVGPlugin } from "gsap/MorphSVGPlugin";
 import { Play, Square, X as XIcon, Download, Upload } from "lucide";
 import svgpath from "svgpath";
-import "./decoder-text";
+import "./decoder-v2";
 
 gsap.registerPlugin(MorphSVGPlugin);
 
@@ -330,10 +330,10 @@ export class RitualDial extends LitElement {
                             </svg>
                         </div>
                         <div class="label">
-                            <decoder-text .text=${this.label}></decoder-text>
+                            <decoder-v2 .text=${this.label}></decoder-v2>
                         </div>
                         <div class="sub" ?data-empty=${!this.sub}>
-                            <decoder-text .text=${this.sub || ""}></decoder-text>
+                            <decoder-v2 .text=${this.sub || ""}></decoder-v2>
                         </div>
                     </div>
                 </button>

@@ -43,7 +43,6 @@ export class DecoderCycleDemo extends LitElement {
 interface Args {
     text: string;
     duration: number;
-    chars: string;
 }
 
 export default {
@@ -52,21 +51,10 @@ export default {
     argTypes: {
         text: { control: { type: "text" } },
         duration: { control: { type: "range", min: 0.1, max: 3, step: 0.05 } },
-        chars: { control: { type: "text" } },
     },
     args: {
         text: "Ready to play",
         duration: 0.8,
-        chars:
-            "!<>-_\\/[]{}()=+*^?#@$%&|~`:;,.\"'" +
-            "0123456789" +
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
-            "abcdefghijklmnopqrstuvwxyz" +
-            "█▓▒░▄▀■□▪▫◆◇◢◣◤◥●○◐◑◒◓" +
-            "←→↑↓↔↕⇄⇅⇆⇇⇈⇉⇋⇌" +
-            "±×÷≈≠≤≥∞∂∆∇∑∏∫√" +
-            "¢£¥€₿§¶©®™" +
-            "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン",
     },
 };
 
@@ -75,7 +63,6 @@ export const Playground = (a: Args) => html`
         style="font-size: 22px; font-weight: 600; color: #e5e7eb;"
         .text=${a.text}
         .duration=${a.duration}
-        .chars=${a.chars}
     ></decoder-text>
 `;
 
