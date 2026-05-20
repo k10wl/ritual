@@ -74,3 +74,6 @@ build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
 
 # Local Claude rules (per-developer)
 .claude/rules/
+
+*storybook.log
+storybook-static
