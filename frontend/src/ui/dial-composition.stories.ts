@@ -19,6 +19,7 @@ const RUN_ADDRESSES = [
 const TOTAL_BYTES = 980 * 1024 * 1024;
 const TRANSFER_S = 6;
 const HOLD_S = 1.4;
+const RUN_HOLD_S = 3;
 const ETA_CADENCE_MS = 500;
 const EWMA_ALPHA = 0.18;
 
@@ -46,6 +47,23 @@ export class DialCompositionCycle extends LitElement {
     private lastEtaAt = 0;
     private lastSampleAt = 0;
     private lastBytes = 0;
+    private uptimeTimer = 0;
+    private runStartedAt = 0;
+
+    private startUptime() {
+        this.runStartedAt = performance.now();
+        this.sub = formatEta(0);
+        this.uptimeTimer = window.setInterval(() => {
+            const elapsed = Math.floor((performance.now() - this.runStartedAt) / 1000);
+            this.sub = formatEta(elapsed);
+        }, 1000);
+    }
+
+    private stopUptime() {
+        if (!this.uptimeTimer) return;
+        clearInterval(this.uptimeTimer);
+        this.uptimeTimer = 0;
+    }
 
     private resetTransfer() {
         this.bytesDone = 0;
@@ -91,18 +109,20 @@ export class DialCompositionCycle extends LitElement {
         tl.to({}, { duration: DIAL_TELEMETRY_EXIT_TOTAL_S });
         tl.call(() => {
             this.state = "run"; this.glyph = "stop";
-            this.label = "Ready to play"; this.sub = "Hold to stop";
+            this.label = "Ready to play";
             this.showTelemetry = false;
             this.showAddresses = true;
             this.arc = 1;
+            this.startUptime();
         });
-        tl.to({}, { duration: HOLD_S });
+        tl.to({}, { duration: RUN_HOLD_S });
         tl.call(() => {
             const ra = this.renderRoot.querySelector<RunAddresses>("run-addresses");
             ra?.playExit();
         });
         tl.to({}, { duration: RUN_ADDRESSES_EXIT_TOTAL_S });
         tl.call(() => {
+            this.stopUptime();
             this.state = "final"; this.glyph = "upload";
             this.label = "Saving"; this.sub = formatEta(null);
             this.showTelemetry = true;
@@ -124,6 +144,7 @@ export class DialCompositionCycle extends LitElement {
         super.disconnectedCallback();
         this.tl?.kill();
         cancelAnimationFrame(this.rafId);
+        this.stopUptime();
     }
 
     private sampleLoop = () => {
@@ -272,8 +293,8 @@ export const RunWithAddresses = () => html`
             .arc=${1}
             glyph="stop"
             label="Ready to play"
-            sub="Hold to stop"
+            .sub=${formatEta(73)}
         ></ritual-dial>
-        <run-addresses .addresses=${RUN_ADDRESSES} .startOffset=${73}></run-addresses>
+        <run-addresses .addresses=${RUN_ADDRESSES}></run-addresses>
     </div>
 `;

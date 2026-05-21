@@ -11,7 +11,6 @@ const ALL_ADDRESSES = [
 
 interface Args {
     addressCount: number;
-    startOffset: number;
 }
 
 export default {
@@ -19,23 +18,15 @@ export default {
     component: "run-addresses",
     argTypes: {
         addressCount: { control: { type: "range", min: 0, max: ALL_ADDRESSES.length, step: 1 } },
-        startOffset: { control: { type: "range", min: 0, max: 3600 * 5, step: 1 } },
     },
-    args: { addressCount: 3, startOffset: 0 },
+    args: { addressCount: 3 },
 };
 
 export const Playground = (a: Args) => html`
     <div style="padding:24px; display:flex; justify-content:center;">
         <run-addresses
             .addresses=${ALL_ADDRESSES.slice(0, a.addressCount)}
-            .startOffset=${a.startOffset}
         ></run-addresses>
-    </div>
-`;
-
-export const LongUptime = () => html`
-    <div style="padding:24px; display:flex; justify-content:center;">
-        <run-addresses .addresses=${ALL_ADDRESSES.slice(0, 3)} .startOffset=${3725}></run-addresses>
     </div>
 `;
 

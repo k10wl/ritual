@@ -529,3 +529,68 @@ Mirrors `ritual-app.ts:36` `stageBody()`'s switch shape. Now
 telemetry actually unmounts on `showTelemetry=false`, so each
 prep / final mount gets a fresh element with a fresh
 `firstUpdated` → `playEnter`.
+
+### Iteration 2026-05-21 — time placement unified into dial `sub`
+
+Two time surfaces had drifted apart: ETA inside the dial `sub`
+during PREP/FINAL (13px, attached-to-progress pattern); server
+uptime above the address rows during RUN (15px mono, hero-counter
+pattern). Same `formatEta()` formatter, two anchors, two sizes.
+
+HIG read: Apple splits "time" by role (counter-as-content vs
+time-as-progress-metadata), but enforces a single anchor for
+recurring data of the same kind across an app (Foundations →
+Consistency / Layout). Within Ritual, both surfaces are "the time
+of this moment" — same role, one anchor wins.
+
+Picked dial `sub` as the canonical slot. It already morphs per
+stage and already carries ETA during transfers; promoting it to
+also carry uptime during RUN is the smallest move and keeps the
+eye on the dial cluster.
+
+| stage | dial `sub` |
+|---|---|
+| idle  | empty |
+| prep  | ETA `00:13` |
+| run   | uptime `00:03` |
+| final | ETA `00:08` |
+| fail  | "Tap to try again" (unchanged) |
+
+Changes:
+
+- `run-addresses.ts` — dropped `startOffset` prop, `uptime`
+  state, the 1 s ticker, the `.uptime` div + CSS. Stagger now
+  targets `.row` only; `RUN_ADDRESSES_EXIT_TOTAL_S` recomputed
+  against an explicit `STAGGER_SLOTS` constant.
+- `dial-composition.stories.ts` — RUN entry calls `startUptime()`
+  which writes `formatEta(elapsed)` into `sub` every 1 s; RUN exit
+  + `disconnectedCallback` call `stopUptime()`. RUN dwell split
+  out into its own `RUN_HOLD_S = 3` so the counter visibly ticks
+  `00:00 → 00:03` before addresses peel out (idle dwell stays at
+  `HOLD_S = 1.4`).
+- `run-addresses.stories.ts` — dropped `startOffset` arg + the
+  `LongUptime` story.
+- Static `RunWithAddresses` story uses `.sub=${formatEta(73)}` to
+  preview a representative uptime.
+
+"Hold to stop" gesture cue dropped from the cycle. Earlier
+revision (Iteration 3 above) had pinned it to `sub` deliberately;
+new rule is that `sub` carries time across all stages, so the
+gesture cue surrenders the slot. Discovery now rides on the
+ring-fill-on-press (`holdProgress` → `dashOffset` in
+`ritual-dial.ts:88-95`) — Apple-style no-label gesture, Steam's
+persistent-label pattern dropped for now. If first-time hosts
+miss it in live use, fallback is a hover/focus swap on `sub`
+("Hold to stop" appears on pointer-over the dial; uptime is the
+resting state). Not implemented yet — wait for live signal.
+
+### Verification
+
+1. `npx tsc --noEmit` clean.
+2. `Cycle` story: PREP `sub` shows ETA counting down, swap to
+   RUN flips `sub` to `00:00` and ticks `00:01 → 00:03`, swap to
+   FINAL flips back to ETA. No uptime line above the address
+   rows.
+3. Address rows still play their staggered enter/exit; dial sub
+   width holds via `<stable-num chars=6>` across the ETA → uptime
+   → ETA transitions.

@@ -5,7 +5,6 @@ import { MorphSVGPlugin } from "gsap/MorphSVGPlugin";
 import { Copy, Check } from "lucide";
 import svgpath from "svgpath";
 import "./decoder-v2";
-import { formatEta } from "./telemetry-format";
 import type { JoinAddress } from "../wails-api";
 
 gsap.registerPlugin(MorphSVGPlugin);
@@ -19,7 +18,8 @@ const ROW_ENTER_S = 0.36;
 const ROW_EXIT_S = 0.28;
 const ROW_STAGGER_S = 0.055;
 const ROW_SLIDE_PX = 12;
-export const RUN_ADDRESSES_EXIT_TOTAL_S = ROW_EXIT_S + ROW_STAGGER_S * 6;
+const STAGGER_SLOTS = 4;
+export const RUN_ADDRESSES_EXIT_TOTAL_S = ROW_EXIT_S + ROW_STAGGER_S * STAGGER_SLOTS;
 
 const reducedMotion = (): boolean =>
     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -55,11 +55,6 @@ const D_CHECK = compoundD(Check as LucideIcon);
 @customElement("run-addresses")
 export class RunAddresses extends LitElement {
     @property({ attribute: false }) addresses: JoinAddress[] = [];
-    @property({ type: Number, attribute: "start-offset" }) startOffset = 0;
-
-    @state() private uptime = 0;
-    private startedAt = 0;
-    private tickTimer = 0;
 
     @state() private copiedIndex: number | null = null;
     private morphBackTimer = 0;
@@ -76,23 +71,9 @@ export class RunAddresses extends LitElement {
         }
     }
 
-    connectedCallback() {
-        super.connectedCallback();
-        this.startedAt = performance.now();
-        this.uptime = this.startOffset;
-        this.tickTimer = window.setInterval(() => {
-            const elapsed = Math.floor((performance.now() - this.startedAt) / 1000);
-            this.uptime = this.startOffset + elapsed;
-        }, 1000);
-    }
-
     disconnectedCallback() {
         super.disconnectedCallback();
         this.clearTimers();
-        if (this.tickTimer) {
-            clearInterval(this.tickTimer);
-            this.tickTimer = 0;
-        }
     }
 
     firstUpdated() {
@@ -102,7 +83,7 @@ export class RunAddresses extends LitElement {
     private staggerTargets(): Element[] {
         const root = this.shadowRoot;
         if (!root) return [];
-        return [...root.querySelectorAll(".uptime, .row")];
+        return [...root.querySelectorAll(".row")];
     }
 
     private playEnter() {
@@ -237,7 +218,6 @@ export class RunAddresses extends LitElement {
     render() {
         if (!this.addresses.length) return html``;
         return html`
-            <div class="uptime" aria-label="Server uptime">${formatEta(this.uptime)}</div>
             <div class="list">
                 ${this.addresses.map((item, i) => this.renderRow(item, i))}
             </div>
@@ -253,17 +233,6 @@ export class RunAddresses extends LitElement {
             font-size: 12px;
             line-height: 16px;
             font-variant-numeric: tabular-nums;
-        }
-        .uptime {
-            display: block;
-            text-align: center;
-            color: rgba(232, 240, 255, 0.55);
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            font-size: 15px;
-            line-height: 20px;
-            font-variant-numeric: tabular-nums;
-            letter-spacing: 0.06em;
-            margin-bottom: 10px;
         }
         .list {
             display: flex;
