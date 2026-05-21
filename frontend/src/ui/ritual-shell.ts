@@ -32,7 +32,6 @@ export class RitualShell extends LitElement {
                 </filter>
             </svg>
             <div class="halo" aria-hidden="true"></div>
-            <slot name="banner"></slot>
             <section class="stage">
                 <slot></slot>
             </section>
@@ -109,7 +108,6 @@ export class RitualShell extends LitElement {
             .halo { animation: none; }
         }
 
-        ::slotted([slot="banner"]),
         .stage,
         ambient-footer {
             position: relative;
