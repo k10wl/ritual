@@ -9,6 +9,21 @@ const ALL_ADDRESSES = [
     new JoinAddress({ label: "Tailscale", address: "100.64.0.5:25565" }),
 ];
 
+const MANY_ADDRESSES = [
+    new JoinAddress({ label: "localhost", address: "127.0.0.1:25565" }),
+    new JoinAddress({ label: "Wi-Fi", address: "192.168.1.42:25565" }),
+    new JoinAddress({ label: "Ethernet", address: "10.0.0.7:25565" }),
+    new JoinAddress({ label: "Tailscale", address: "100.64.0.5:25565" }),
+    new JoinAddress({ label: "Docker", address: "172.17.0.1:25565" }),
+    new JoinAddress({ label: "Docker br1", address: "172.18.0.1:25565" }),
+    new JoinAddress({ label: "WireGuard", address: "10.8.0.3:25565" }),
+    new JoinAddress({ label: "Hotspot", address: "172.20.10.1:25565" }),
+    new JoinAddress({ label: "Bridge", address: "10.211.55.2:25565" }),
+    new JoinAddress({ label: "VPN", address: "10.99.1.4:25565" }),
+    new JoinAddress({ label: "Thunderbolt", address: "169.254.7.21:25565" }),
+    new JoinAddress({ label: "Cellular", address: "100.115.92.5:25565" }),
+];
+
 interface Args {
     addressCount: number;
 }
@@ -48,5 +63,11 @@ export const SingleLocalhost = () => html`
 export const FullList = () => html`
     <div style="padding:24px; display:flex; justify-content:center;">
         <run-addresses .addresses=${ALL_ADDRESSES}></run-addresses>
+    </div>
+`;
+
+export const Overflow = () => html`
+    <div style="padding:24px; display:flex; justify-content:center; height:80vh;">
+        <run-addresses .addresses=${MANY_ADDRESSES}></run-addresses>
     </div>
 `;

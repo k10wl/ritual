@@ -238,6 +238,8 @@ export class RunAddresses extends LitElement {
             display: flex;
             flex-direction: column;
             gap: 2px;
+            max-height: 40vh;
+            overflow-y: auto;
         }
         .row {
             display: grid;
