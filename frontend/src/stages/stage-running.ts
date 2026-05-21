@@ -130,7 +130,7 @@ export class StageRunning extends LitElement {
             font-size: 0.9rem;
         }
         code {
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-family: "Departure Mono", monospace;
             font-size: 0.95rem;
             overflow: hidden;
             text-overflow: ellipsis;

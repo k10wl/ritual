@@ -183,7 +183,7 @@ export class RitualLogs extends LitElement {
             height: 100vh;
             background: #0b0e13;
             color: #dcdfe4;
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-family: "Departure Mono", monospace;
             font-size: 0.85rem;
         }
         header {

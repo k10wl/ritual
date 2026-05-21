@@ -169,7 +169,7 @@ export class DecoderText extends LitElement {
     static styles = css`
         :host {
             display: inline-block;
-            font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+            font-family: "Departure Mono", monospace;
             font-variant-numeric: tabular-nums;
             white-space: pre-wrap;
             overflow-wrap: anywhere;

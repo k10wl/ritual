@@ -294,7 +294,7 @@ export class RunAddresses extends LitElement {
             text-overflow: ellipsis;
         }
         .address {
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-family: "Departure Mono", monospace;
             color: rgba(232, 240, 255, 0.95);
             letter-spacing: 0.01em;
             transition: color var(--motion-base, 220ms ease),

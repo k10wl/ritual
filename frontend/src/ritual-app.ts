@@ -68,7 +68,7 @@ export class RitualApp extends LitElement {
             flex-direction: column;
             min-height: 100vh;
             color: #f4f4f6;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+            font-family: "Departure Mono", monospace;
             background: radial-gradient(1200px 600px at 20% -10%, rgba(70, 110, 200, 0.25), transparent 60%),
                 radial-gradient(900px 500px at 110% 110%, rgba(180, 80, 150, 0.18), transparent 60%),
                 #0f131a;
