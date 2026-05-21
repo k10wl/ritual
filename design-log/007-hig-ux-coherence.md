@@ -1060,3 +1060,12 @@ but snaps instantly. Acceptable — state, not animation.
 - Halo amp (CSS hover): owns `.dial` box-shadow *outside* RUN — no overlap.
 - Spotlight: owns `.dial::after` opacity + background. Independent layer.
 
+## See also
+
+- **009 — Telemetry hierarchy** ([009-telemetry-hierarchy.md](009-telemetry-hierarchy.md))
+  refines RUN-stage UX: decoder restricted to identity (label / sub);
+  bytes / speed / ETA move to a plain tabular-nums layer with ETA
+  promoted to hero, speed + size demoted to a quiet secondary row.
+  ClearVPN borrowed for composition cadence; brand surface tracked
+  separately.
+

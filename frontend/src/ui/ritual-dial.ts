@@ -5,6 +5,7 @@ import { MorphSVGPlugin } from "gsap/MorphSVGPlugin";
 import { Play, Square, X as XIcon, Download, Upload } from "lucide";
 import svgpath from "svgpath";
 import "./decoder-v2";
+import "./stable-num";
 
 gsap.registerPlugin(MorphSVGPlugin);
 
@@ -294,6 +295,23 @@ export class RitualDial extends LitElement {
         });
     }
 
+    private renderSub() {
+        if (/\d/.test(this.sub)) return this.sub;
+        const isPlaceholder = !/[a-zA-Z]/.test(this.sub);
+        const idleMin = isPlaceholder ? 50 : 1400;
+        const idleMax = isPlaceholder ? 120 : 2800;
+        const idleRadius = isPlaceholder ? Math.max(1, this.sub.length) : 1;
+        return html`<decoder-v2
+            .text=${this.sub}
+            .splashRounds=${[3, 5]}
+            splash-radius="1"
+            splash-tick-ms="22"
+            idle-min-ms=${idleMin}
+            idle-max-ms=${idleMax}
+            idle-radius=${idleRadius}
+        ></decoder-v2>`;
+    }
+
     render() {
         return html`
             <div class="dial" data-state=${this.state}>
@@ -333,7 +351,9 @@ export class RitualDial extends LitElement {
                             <decoder-v2 .text=${this.label}></decoder-v2>
                         </div>
                         <div class="sub" ?data-empty=${!this.sub}>
-                            <decoder-v2 .text=${this.sub || ""}></decoder-v2>
+                            <stable-num chars="6" align="center">
+                                ${this.renderSub()}
+                            </stable-num>
                         </div>
                     </div>
                 </button>
@@ -513,6 +533,7 @@ export class RitualDial extends LitElement {
             margin-top: 4px;
             text-align: center;
             overflow: hidden;
+            font-variant-numeric: tabular-nums;
         }
         .sub[data-empty] {
             margin-top: 0;
