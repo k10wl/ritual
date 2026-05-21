@@ -83,6 +83,15 @@
     -ms-user-select: none;
 }
 
+/* registered globally for color interpolation across state swaps;
+   @property inside shadow-DOM adopted stylesheets does not drive
+   transitions in Chromium (--c jumps instead of tweening) */
+@property --c {
+    syntax: "<color>";
+    inherits: true;
+    initial-value: #2563eb;
+}
+
 body {
     margin: 0;
     display: flex;

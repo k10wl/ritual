@@ -706,6 +706,15 @@ Landed minimally — only what the dial needs from #002, not the full reset.
    inherits smooth color interpolation for free, with no per-property
    transition needed.
 
+   *Scope fix (2026-05-21):* `@property --c` declared inside Lit's
+   `static styles` (adopted stylesheet, shadow scope) parses fine and
+   surfaces as a `CSSPropertyRule`, but Chromium does **not** drive
+   transitions from a shadow-scoped registration — `--c` jumps
+   instantly. Moved registration to global `public/style.css`; halo,
+   arc, glyph now interpolate as designed. Verified via Playwright
+   sampling: `rgb(37,99,235) → rgb(22,159,162) → rgb(16,185,129)` over
+   ~220ms.
+
 5. **Glyph cross-fade via WAAPI + `willUpdate`/`updated`.** Two glyph
    layers (`.glyph.prev` + `.glyph.curr`) render simultaneously during
    transition. `willUpdate(changed)` sets `prevGlyph` to the outgoing

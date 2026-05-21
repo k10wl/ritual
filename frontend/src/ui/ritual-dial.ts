@@ -362,11 +362,6 @@ export class RitualDial extends LitElement {
     }
 
     static styles = css`
-        @property --c {
-            syntax: "<color>";
-            inherits: true;
-            initial-value: #2563eb;
-        }
         :host {
             display: flex;
             align-items: center;
