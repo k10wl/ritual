@@ -4,7 +4,7 @@ import { gsap } from "gsap";
 import { MorphSVGPlugin } from "gsap/MorphSVGPlugin";
 import { Play, Square, X as XIcon, Download, Upload } from "lucide";
 import svgpath from "svgpath";
-import "./decoder-v2";
+import "./decoder";
 import "./stable-num";
 
 gsap.registerPlugin(MorphSVGPlugin);
@@ -301,7 +301,7 @@ export class RitualDial extends LitElement {
         const idleMin = isPlaceholder ? 50 : 1400;
         const idleMax = isPlaceholder ? 120 : 2800;
         const idleRadius = isPlaceholder ? Math.max(1, this.sub.length) : 1;
-        return html`<decoder-v2
+        return html`<rune-decoder
             .text=${this.sub}
             .splashRounds=${[3, 5]}
             splash-radius="1"
@@ -309,7 +309,7 @@ export class RitualDial extends LitElement {
             idle-min-ms=${idleMin}
             idle-max-ms=${idleMax}
             idle-radius=${idleRadius}
-        ></decoder-v2>`;
+        ></rune-decoder>`;
     }
 
     render() {
@@ -348,7 +348,7 @@ export class RitualDial extends LitElement {
                             </svg>
                         </div>
                         <div class="label">
-                            <decoder-v2 .text=${this.label}></decoder-v2>
+                            <rune-decoder .text=${this.label}></rune-decoder>
                         </div>
                         <div class="sub" ?data-empty=${!this.sub}>
                             <stable-num chars="6" align="center">

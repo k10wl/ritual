@@ -2,7 +2,7 @@ import { LitElement, css, html, TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { gsap } from "gsap";
 import "./stable-num";
-import "./decoder-v2";
+import "./decoder";
 import { formatSize, formatSpeed } from "./telemetry-format";
 
 const NUMERIC_PLACEHOLDER = "·····";
@@ -19,7 +19,7 @@ function jitterStone(text: string, fast: boolean): TemplateResult {
     const idleMin = fast ? 50 : 1800;
     const idleMax = fast ? 120 : 3600;
     const idleRadius = fast ? Math.max(1, text.length) : 1;
-    return html`<decoder-v2
+    return html`<rune-decoder
         .text=${text}
         .splashRounds=${[3, 5]}
         splash-radius="1"
@@ -27,7 +27,7 @@ function jitterStone(text: string, fast: boolean): TemplateResult {
         idle-min-ms=${idleMin}
         idle-max-ms=${idleMax}
         idle-radius=${idleRadius}
-    ></decoder-v2>`;
+    ></rune-decoder>`;
 }
 
 @customElement("dial-telemetry")

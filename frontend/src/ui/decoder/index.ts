@@ -19,8 +19,8 @@ const reducedMotion = (): boolean =>
 
 export type Rounds = number | readonly [number, number];
 
-@customElement("decoder-v2")
-export class DecoderV2 extends LitElement {
+@customElement("rune-decoder")
+export class RuneDecoder extends LitElement {
     @property() text = "";
     @property({ type: Number }) seed: number | null = null;
 
@@ -230,6 +230,6 @@ export class DecoderV2 extends LitElement {
 
 declare global {
     interface HTMLElementTagNameMap {
-        "decoder-v2": DecoderV2;
+        "rune-decoder": RuneDecoder;
     }
 }

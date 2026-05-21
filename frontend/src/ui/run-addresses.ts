@@ -4,7 +4,7 @@ import { gsap } from "gsap";
 import { MorphSVGPlugin } from "gsap/MorphSVGPlugin";
 import { Copy, Check } from "lucide";
 import svgpath from "svgpath";
-import "./decoder-v2";
+import "./decoder";
 import type { JoinAddress } from "../wails-api";
 
 gsap.registerPlugin(MorphSVGPlugin);
@@ -183,7 +183,7 @@ export class RunAddresses extends LitElement {
                 @keydown=${(e: KeyboardEvent) => this.onKeyDown(index, e)}
             >
                 <span class="label">
-                    <decoder-v2
+                    <rune-decoder
                         .text=${item.label}
                         .splashRounds=${[3, 5]}
                         splash-radius="1"
@@ -191,10 +191,10 @@ export class RunAddresses extends LitElement {
                         idle-min-ms="6000"
                         idle-max-ms="14000"
                         idle-radius="1"
-                    ></decoder-v2>
+                    ></rune-decoder>
                 </span>
                 <span class="address">
-                    <decoder-v2
+                    <rune-decoder
                         .text=${item.address}
                         .splashRounds=${[3, 5]}
                         splash-radius="1"
@@ -202,7 +202,7 @@ export class RunAddresses extends LitElement {
                         idle-min-ms="6000"
                         idle-max-ms="14000"
                         idle-radius="1"
-                    ></decoder-v2>
+                    ></rune-decoder>
                 </span>
                 <span class="icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24" width="14" height="14"

@@ -1,6 +1,6 @@
 import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import "./decoder-v2";
+import "./decoder";
 
 const PHRASES = [
     "INITIALIZING",
@@ -12,8 +12,8 @@ const PHRASES = [
     "Tap to try again",
 ];
 
-@customElement("decoder-v2-cycle")
-export class DecoderV2Cycle extends LitElement {
+@customElement("rune-decoder-cycle")
+export class RuneDecoderCycle extends LitElement {
     @state() private i = 0;
     private timer = 0;
 
@@ -31,10 +31,10 @@ export class DecoderV2Cycle extends LitElement {
 
     render() {
         return html`
-            <decoder-v2
+            <rune-decoder
                 style="font-size: 22px; font-weight: 600; color: #e5e7eb;"
                 .text=${PHRASES[this.i]}
-            ></decoder-v2>
+            ></rune-decoder>
         `;
     }
 }
@@ -52,8 +52,8 @@ interface Args {
 }
 
 export default {
-    title: "Text / DecoderV2",
-    component: "decoder-v2",
+    title: "Text / Rune Decoder",
+    component: "rune-decoder",
     argTypes: {
         text: { control: { type: "text" } },
         splashCount: { control: { type: "range", min: 1, max: 5, step: 1 } },
@@ -79,7 +79,7 @@ export default {
 };
 
 export const Playground = (a: Args) => html`
-    <decoder-v2
+    <rune-decoder
         style="font-size: 22px; font-weight: 600; color: #e5e7eb;"
         .text=${a.text}
         .splashCount=${a.splashCount}
@@ -90,7 +90,7 @@ export const Playground = (a: Args) => html`
         .idleRadius=${a.idleRadius}
         .idleTickMs=${a.idleTickMs}
         .seed=${a.seed}
-    ></decoder-v2>
+    ></rune-decoder>
 `;
 
-export const Cycle = () => html`<decoder-v2-cycle></decoder-v2-cycle>`;
+export const Cycle = () => html`<rune-decoder-cycle></rune-decoder-cycle>`;
