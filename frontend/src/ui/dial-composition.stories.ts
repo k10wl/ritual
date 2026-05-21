@@ -4,6 +4,8 @@ import { gsap } from "gsap";
 import "./ritual-dial";
 import "./dial-telemetry";
 import "./run-addresses";
+import { RUN_ADDRESSES_EXIT_TOTAL_S, RunAddresses } from "./run-addresses";
+import { DIAL_TELEMETRY_EXIT_TOTAL_S, DialTelemetry } from "./dial-telemetry";
 import { formatEta } from "./telemetry-format";
 import { JoinAddress } from "../wails-api";
 import type { DialGlyph, DialState } from "./ritual-dial";
@@ -83,6 +85,11 @@ export class DialCompositionCycle extends LitElement {
         });
         tl.to(a, { v: 1, duration: TRANSFER_S, ease: "power1.inOut", onUpdate: driveProgress });
         tl.call(() => {
+            const tel = this.renderRoot.querySelector<DialTelemetry>("dial-telemetry");
+            tel?.playExit();
+        });
+        tl.to({}, { duration: DIAL_TELEMETRY_EXIT_TOTAL_S });
+        tl.call(() => {
             this.state = "run"; this.glyph = "stop";
             this.label = "Ready to play"; this.sub = "Hold to stop";
             this.showTelemetry = false;
@@ -90,6 +97,11 @@ export class DialCompositionCycle extends LitElement {
             this.arc = 1;
         });
         tl.to({}, { duration: HOLD_S });
+        tl.call(() => {
+            const ra = this.renderRoot.querySelector<RunAddresses>("run-addresses");
+            ra?.playExit();
+        });
+        tl.to({}, { duration: RUN_ADDRESSES_EXIT_TOTAL_S });
         tl.call(() => {
             this.state = "final"; this.glyph = "upload";
             this.label = "Saving"; this.sub = formatEta(null);
@@ -99,7 +111,11 @@ export class DialCompositionCycle extends LitElement {
             this.resetTransfer();
         });
         tl.to(a, { v: 1, duration: TRANSFER_S, ease: "power1.inOut", onUpdate: driveProgress });
-        tl.to({}, { duration: 0.4 });
+        tl.call(() => {
+            const tel = this.renderRoot.querySelector<DialTelemetry>("dial-telemetry");
+            tel?.playExit();
+        });
+        tl.to({}, { duration: DIAL_TELEMETRY_EXIT_TOTAL_S });
         this.tl = tl;
         this.rafId = requestAnimationFrame(this.sampleLoop);
     }
@@ -132,6 +148,20 @@ export class DialCompositionCycle extends LitElement {
         this.rafId = requestAnimationFrame(this.sampleLoop);
     };
 
+    private underSlotChild() {
+        if (this.showAddresses) {
+            return html`<run-addresses .addresses=${RUN_ADDRESSES}></run-addresses>`;
+        }
+        if (this.showTelemetry) {
+            return html`<dial-telemetry
+                .speedBps=${this.speedBps}
+                .bytesDone=${this.bytesDone}
+                .bytesTotal=${TOTAL_BYTES}
+            ></dial-telemetry>`;
+        }
+        return null;
+    }
+
     render() {
         return html`
             <div class="frame">
@@ -143,25 +173,23 @@ export class DialCompositionCycle extends LitElement {
                     .sub=${this.sub}
                 ></ritual-dial>
                 <div class="under-slot" ?data-shown=${this.showTelemetry || this.showAddresses}>
-                    ${this.showAddresses
-                        ? html`<run-addresses .addresses=${RUN_ADDRESSES}></run-addresses>`
-                        : html`<dial-telemetry
-                              .speedBps=${this.speedBps}
-                              .bytesDone=${this.bytesDone}
-                              .bytesTotal=${TOTAL_BYTES}
-                          ></dial-telemetry>`}
+                    ${this.underSlotChild()}
                 </div>
             </div>
         `;
     }
 
     static styles = css`
+        :host {
+            display: block;
+        }
         .frame {
             display: flex;
             flex-direction: column;
             align-items: center;
             gap: 1.25rem;
             padding: 1.5rem;
+            min-height: 480px;
         }
         .under-slot {
             opacity: 0;

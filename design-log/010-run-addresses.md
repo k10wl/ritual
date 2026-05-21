@@ -399,3 +399,133 @@ Additionally:
 4. Live in Storybook: clicking a row → icon morphs `copy → check`
    via MorphSVG, row plays `--state-run` breath + GSAP back.out
    bounce, decoder-v2 idle continues throughout.
+
+### Iteration 2026-05-21 — staggered entry & exit
+
+Once the cycle composition pinned the dial position (011 §Pivot
+to anchoring), the under-slot's content swap read as a hard cut
+into and out of the addresses block. The reserved column had room
+for a real entrance — `<run-addresses>` now plays a staggered
+slide-up on mount and a staggered slide-down on unmount.
+
+| Stage of life | Motion | Easing | Per-element duration | Stagger | Direction |
+|---|---|---|---|---|---|
+| Enter (mount) | `y: 12 → 0`, `opacity: 0 → 1` | `back.out(1.4)` | 360 ms | 55 ms, from start | uptime caption first, rows top-to-bottom |
+| Exit (about to unmount) | `y: 0 → 12`, `opacity: 1 → 0` | `power2.in` | 280 ms | 55 ms, from end | rows bottom-to-top, uptime caption last |
+
+The "from-end" stagger on exit gives the inverse of entry —
+visually the block "peels back" the way it arrived.
+
+Wiring:
+
+- `RunAddresses.firstUpdated()` → `playEnter()` runs the
+  `gsap.from` against `.uptime, .row` shadow children. Self-driven;
+  no parent coordination needed for entry.
+- `RunAddresses.playExit()` is a **public** method returning the
+  GSAP tween. Required because Lit removes the element from the DOM
+  synchronously when `showAddresses` flips false — to animate exit
+  we need the parent to **delay the unmount** until the tween
+  finishes.
+- Exposed constant `RUN_ADDRESSES_EXIT_TOTAL_S` =
+  `ROW_EXIT_S + ROW_STAGGER_S * 6` so the parent reserves a
+  safe wait window without coupling to the per-row duration.
+- `DialCompositionCycle`'s timeline inserts, between the run hold
+  and the swap to final: `tl.call(playExit)` →
+  `tl.to({}, { duration: RUN_ADDRESSES_EXIT_TOTAL_S })` →
+  `tl.call(swap-to-final)`. The element stays mounted during the
+  wait window, then unmounts cleanly with its rows already
+  invisible.
+- `prefers-reduced-motion`: both enter and exit short-circuit to
+  no-op (rows appear and disappear with the under-slot's existing
+  240 ms opacity fade).
+
+Why not also stagger out the prep-stage telemetry on the
+prep→run transition? Telemetry is a single short strip; a single
+240 ms slot fade already reads as one event. Staggering one
+element is an empty gesture. Scope kept to addresses.
+
+**Update later same day:** telemetry got the symmetric treatment
+after all — see next iteration.
+
+### Verification (entry & exit)
+
+1. `npx tsc --noEmit` clean.
+2. `Cycle` story: prep→run shows uptime caption rising in first,
+   rows cascading top-to-bottom in ~0.5 s.
+3. `Cycle` story: run→final shows rows peeling out bottom-to-top
+   in ~0.5 s, then telemetry fades in (slot fade unchanged).
+4. Reduced motion: rows appear / disappear without slide.
+5. Dial position is unchanged throughout — frame `min-height: 480
+   px` (011) holds the dial steady while rows slide in/out below.
+
+### Iteration 2026-05-21 — telemetry inverse stagger
+
+Once addresses had a real entrance, telemetry's silent swap on
+both transitions (idle→prep enter, prep→run exit, run→final enter,
+final→idle exit) felt mute by comparison. Promoted telemetry to
+the same orchestration with **inverted slide direction** so the
+two under-slot occupants read as a symmetric pair rather than the
+same motion twice.
+
+| Component | Slide vector | Stagger source | Interpretation |
+|---|---|---|---|
+| `<run-addresses>` | `y: +12 → 0` (from below) | top→bottom enter, bottom→top exit | "rune-stones rise from below the altar" |
+| `<dial-telemetry>` | `y: -12 → 0` (from above) | top→bottom enter, bottom→top exit | "measurements settle down from the dial above" |
+
+Both use the same durations (360 ms enter `back.out(1.4)`,
+280 ms exit `power2.in`) and 55 ms inter-row stagger — symmetry
+in tempo, inversion in direction. With telemetry's two rows, the
+exit window is short (`280 + 55*2 = 390 ms`); a constant
+`DIAL_TELEMETRY_EXIT_TOTAL_S` is exported alongside
+`RUN_ADDRESSES_EXIT_TOTAL_S` so the parent's wait reservations
+stay decoupled from the per-row tween shape.
+
+Cycle timeline gained two more `playExit → wait → swap` triplets:
+
+| Transition | What exits | Wait constant |
+|---|---|---|
+| prep → run | telemetry rows slide up | `DIAL_TELEMETRY_EXIT_TOTAL_S` |
+| run → final | address rows slide down | `RUN_ADDRESSES_EXIT_TOTAL_S` (existing) |
+| final → idle (loop) | telemetry rows slide up | `DIAL_TELEMETRY_EXIT_TOTAL_S` (replaces the trailing 0.4 s dwell) |
+
+`idle → prep` has no exit — idle's under-slot is empty — so prep's
+telemetry simply mounts and plays enter via `firstUpdated`.
+
+### Verification (telemetry stagger)
+
+1. `npx tsc --noEmit` clean.
+2. `Cycle` story: idle→prep shows two telemetry rows dropping in
+   from above; prep→run reverses — telemetry rows lift up and out,
+   then addresses rise in from below.
+3. run→final mirror: addresses peel out down, telemetry drops in
+   from above.
+4. final→idle (loop tail): telemetry rows lift out, then idle
+   shows blank under-slot.
+5. Reduced motion: both components short-circuit; under-slot
+   reverts to its 240 ms slot fade.
+
+### Bugfix 2026-05-21 — telemetry didn't re-enter after the first cycle
+
+Live cycle run showed prep telemetry invisible on the **second**
+iteration onward. Cause: the under-slot template was a two-branch
+ternary `showAddresses ? addresses : telemetry` — so the telemetry
+element was always the same Lit instance whenever
+`!showAddresses`, regardless of `showTelemetry`. After the
+final-stage `playExit` left it at `y: -12, opacity: 0`, the next
+prep reused that instance, `firstUpdated` did not refire, and the
+leftover transform kept it hidden.
+
+Fix: extract `underSlotChild()` with flat early returns —
+
+```ts
+private underSlotChild() {
+    if (this.showAddresses) return html`<run-addresses ...>`;
+    if (this.showTelemetry) return html`<dial-telemetry ...>`;
+    return null;
+}
+```
+
+Mirrors `ritual-app.ts:36` `stageBody()`'s switch shape. Now
+telemetry actually unmounts on `showTelemetry=false`, so each
+prep / final mount gets a fresh element with a fresh
+`firstUpdated` → `playEnter`.

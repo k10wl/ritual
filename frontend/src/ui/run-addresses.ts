@@ -15,6 +15,11 @@ const ICON_MORPH_S = 0.22;
 const BREATH_MS = 1000;
 const ICON_MORPH_MS = ICON_MORPH_S * 1000;
 const MORPH_BACK_DELAY_MS = BREATH_MS - ICON_MORPH_MS;
+const ROW_ENTER_S = 0.36;
+const ROW_EXIT_S = 0.28;
+const ROW_STAGGER_S = 0.055;
+const ROW_SLIDE_PX = 12;
+export const RUN_ADDRESSES_EXIT_TOTAL_S = ROW_EXIT_S + ROW_STAGGER_S * 6;
 
 const reducedMotion = (): boolean =>
     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -88,6 +93,44 @@ export class RunAddresses extends LitElement {
             clearInterval(this.tickTimer);
             this.tickTimer = 0;
         }
+    }
+
+    firstUpdated() {
+        this.playEnter();
+    }
+
+    private staggerTargets(): Element[] {
+        const root = this.shadowRoot;
+        if (!root) return [];
+        return [...root.querySelectorAll(".uptime, .row")];
+    }
+
+    private playEnter() {
+        if (reducedMotion()) return;
+        const targets = this.staggerTargets();
+        if (!targets.length) return;
+        gsap.from(targets, {
+            y: ROW_SLIDE_PX,
+            opacity: 0,
+            duration: ROW_ENTER_S,
+            ease: "back.out(1.4)",
+            stagger: ROW_STAGGER_S,
+            overwrite: true,
+        });
+    }
+
+    playExit(): gsap.core.Tween | undefined {
+        if (reducedMotion()) return undefined;
+        const targets = this.staggerTargets();
+        if (!targets.length) return undefined;
+        return gsap.to(targets, {
+            y: ROW_SLIDE_PX,
+            opacity: 0,
+            duration: ROW_EXIT_S,
+            ease: "power2.in",
+            stagger: { each: ROW_STAGGER_S, from: "end" },
+            overwrite: true,
+        });
     }
 
     private iconPathAt(index: number): SVGPathElement | null {
