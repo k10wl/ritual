@@ -11,23 +11,16 @@ export class AmbientFooter extends LitElement {
         return html`
             <nav>
                 <button @click=${() => this.emit("logs")}>log</button>
-                <span class="sep" aria-hidden="true">|</span>
-                <button @click=${() => this.emit("folder")}>dir</button>
             </nav>
         `;
     }
 
     static styles = css`
         :host {
-            position: fixed;
-            left: 0;
-            right: 0;
-            bottom: 0;
             display: flex;
-            justify-content: center;
-            padding: var(--space-2) 0 var(--space-1);
+            justify-content: flex-end;
+            padding: var(--space-2) var(--space-4);
             pointer-events: none;
-            z-index: 10;
             font-family: var(--font-mono);
             font-size: var(--fs-1);
             letter-spacing: 0.08em;
@@ -35,7 +28,6 @@ export class AmbientFooter extends LitElement {
         nav {
             display: inline-flex;
             align-items: center;
-            gap: var(--space-1);
             color: var(--text-faint);
             transition: color 320ms ease;
             pointer-events: auto;
@@ -62,9 +54,6 @@ export class AmbientFooter extends LitElement {
             outline: 1px solid var(--text-muted);
             outline-offset: 2px;
             border-radius: var(--radius-sm);
-        }
-        .sep {
-            color: var(--text-faint);
         }
     `;
 }

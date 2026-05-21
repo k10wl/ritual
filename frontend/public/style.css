@@ -92,11 +92,19 @@
     initial-value: #2563eb;
 }
 
+/* halo drift coordinates — registered so radial-gradient `at` values
+   can be animated through keyframes */
+@property --halo-ax { syntax: "<percentage>"; inherits: true; initial-value: -45%; }
+@property --halo-ay { syntax: "<percentage>"; inherits: true; initial-value: -40%; }
+@property --halo-bx { syntax: "<percentage>"; inherits: true; initial-value: 145%; }
+@property --halo-by { syntax: "<percentage>"; inherits: true; initial-value: -40%; }
+@property --halo-cx { syntax: "<percentage>"; inherits: true; initial-value: -45%; }
+@property --halo-cy { syntax: "<percentage>"; inherits: true; initial-value: 140%; }
+
 body {
     margin: 0;
     display: flex;
-    place-items: center;
-    place-content: center;
+    flex-direction: column;
     min-width: 320px;
     min-height: 100vh;
 }

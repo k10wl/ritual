@@ -187,6 +187,7 @@ export class DialCompositionCycle extends LitElement {
     render() {
         return html`
             <ritual-shell
+                .state=${this.state}
                 @ambient-action=${(e: CustomEvent<"logs" | "folder">) => console.log("ambient", e.detail)}
             >
                 <ritual-dial

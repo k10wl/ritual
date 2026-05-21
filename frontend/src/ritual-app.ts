@@ -1,7 +1,18 @@
 import { css, html, LitElement } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { getSnapshot, onView, openRootFolder, showLogs, Stage, ViewModel } from "./wails-api";
+import type { DialState } from "./ui/ritual-dial";
 import "./ui/ritual-shell";
+
+const stageToDial = (s: Stage): DialState => {
+    switch (s) {
+        case Stage.StageDownloading: return "prep";
+        case Stage.StageRunning:     return "run";
+        case Stage.StageUploading:   return "final";
+        case Stage.StageFailed:      return "fail";
+        default:                     return "idle";
+    }
+};
 
 import "./stages/stage-idle";
 import "./stages/stage-downloading";
@@ -55,6 +66,7 @@ export class RitualApp extends LitElement {
         const showBanner = this.vm.stage === Stage.StageFailed && this.vm.errorText !== "";
         return html`
             <ritual-shell
+                .state=${stageToDial(this.vm.stage)}
                 @ambient-action=${(e: CustomEvent<"logs" | "folder">) =>
                     e.detail === "logs" ? showLogs() : openRootFolder()}
             >
