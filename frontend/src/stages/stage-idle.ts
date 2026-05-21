@@ -62,61 +62,67 @@ export class StageIdle extends LitElement {
         .card {
             display: flex;
             flex-direction: column;
-            gap: 1rem;
-            padding: 2rem 1.5rem;
+            gap: var(--space-4);
+            padding: var(--space-6) var(--space-5);
+            background: var(--stone-base);
+            border: 1px solid var(--stone-edge);
+            border-radius: var(--radius-lg);
+            box-shadow: 0 1px 0 var(--stone-bevel) inset, 0 8px 24px var(--stone-groove);
         }
         h1 {
-            font-size: 2.4rem;
-            font-weight: 600;
+            font-size: var(--fs-6);
             margin: 0;
-            letter-spacing: -0.02em;
+            line-height: var(--lh-tight);
         }
         .tagline {
-            opacity: 0.7;
-            margin: -0.5rem 0 0.5rem;
+            color: var(--text-faint);
+            margin: calc(-1 * var(--space-2)) 0 var(--space-2);
         }
         .row {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 1rem;
-            font-size: 0.95rem;
+            gap: var(--space-4);
+            font-size: var(--fs-3);
         }
         .row span {
-            opacity: 0.85;
+            color: var(--text-muted);
         }
         input {
             width: 120px;
-            padding: 0.5rem 0.75rem;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.06);
+            padding: var(--space-2) var(--space-3);
+            border: 1px solid var(--stone-edge);
+            border-radius: var(--radius-md);
+            background: var(--stone-bevel);
             color: inherit;
-            font-size: 1rem;
+            font: inherit;
             outline: none;
         }
         input:focus {
-            border-color: rgba(120, 180, 255, 0.6);
-            background: rgba(255, 255, 255, 0.08);
+            border-color: var(--rune-hi);
+            background: var(--stone-edge);
         }
         button.primary {
-            margin-top: 0.5rem;
-            padding: 0.75rem 1rem;
+            margin-top: var(--space-2);
+            padding: var(--space-3) var(--space-4);
             border: none;
-            border-radius: 10px;
-            background: linear-gradient(180deg, #3d82ff, #2563eb);
-            color: white;
-            font-size: 1.05rem;
-            font-weight: 600;
+            border-radius: var(--radius-md);
+            background: var(--state-idle);
+            color: var(--text-strong);
+            font: inherit;
             cursor: pointer;
+        }
+        button.primary:hover:not(:disabled) {
+            background: var(--rune);
+            color: var(--stone-deep);
         }
         button.primary:disabled {
             opacity: 0.6;
             cursor: progress;
         }
         .err {
-            color: #ff9e9e;
-            font-size: 0.9rem;
+            color: var(--state-fail);
+            font-size: var(--fs-2);
             margin: 0;
         }
     `;

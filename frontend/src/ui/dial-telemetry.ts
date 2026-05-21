@@ -100,23 +100,22 @@ export class DialTelemetry extends LitElement {
             display: inline-flex;
             flex-direction: column;
             align-items: center;
-            gap: 0.15rem;
-            font-size: 0.78rem;
-            font-weight: 400;
+            gap: 2px;
+            font-size: var(--fs-2);
             font-variant-numeric: tabular-nums;
             letter-spacing: 0.04em;
-            color: rgba(232, 240, 255, 0.55);
+            color: var(--text-muted);
         }
         .row {
             display: inline-flex;
             align-items: baseline;
-            gap: 0.3rem;
+            gap: var(--space-1);
         }
         .unit {
-            opacity: 0.7;
+            color: var(--text-faint);
         }
         .sep {
-            opacity: 0.5;
+            color: var(--text-faint);
         }
     `;
 }

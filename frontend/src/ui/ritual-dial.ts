@@ -389,16 +389,16 @@ export class RitualDial extends LitElement {
             height: 280px;
             border-radius: 50%;
             background:
-                radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.10), transparent 55%),
+                radial-gradient(circle at 50% 0%, var(--stone-edge), transparent 55%),
                 radial-gradient(circle at 50% 100%,
                     color-mix(in srgb, var(--c) 18%, transparent),
                     transparent 65%),
-                linear-gradient(180deg, #1a2030 0%, #0c1018 100%);
+                linear-gradient(180deg, var(--stone-base) 0%, var(--stone-dark) 100%);
             box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.10),
-                inset 0 -1px 2px rgba(0, 0, 0, 0.45),
+                inset 0 1px 0 var(--stone-edge),
+                inset 0 -1px 2px var(--stone-groove),
                 0 28px 60px -18px var(--radiance),
-                0 0 0 1px rgba(255, 255, 255, 0.06);
+                0 0 0 1px var(--stone-bevel);
             transition: box-shadow var(--motion-base, 220ms ease),
                         background var(--motion-base, 220ms ease),
                         transform var(--motion-fast, 120ms ease);
@@ -424,10 +424,10 @@ export class RitualDial extends LitElement {
         }
         :host(:not([state="run"])) .dial:has(.hit:hover:not(:disabled)) {
             box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.12),
-                inset 0 -1px 2px rgba(0, 0, 0, 0.45),
+                inset 0 1px 0 var(--stone-edge),
+                inset 0 -1px 2px var(--stone-groove),
                 0 36px 80px -16px var(--radiance-hi),
-                0 0 0 1px color-mix(in srgb, var(--c) 18%, rgba(255, 255, 255, 0.06));
+                0 0 0 1px color-mix(in srgb, var(--c) 18%, var(--stone-bevel));
         }
         .dial:has(.hit:active:not(:disabled)) {
             transform: translateY(0) scale(0.985);
@@ -437,15 +437,15 @@ export class RitualDial extends LitElement {
         }
         @keyframes breathe {
             from { box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.10),
-                inset 0 -1px 2px rgba(0, 0, 0, 0.45),
+                inset 0 1px 0 var(--stone-edge),
+                inset 0 -1px 2px var(--stone-groove),
                 0 24px 50px -20px var(--radiance),
-                0 0 0 1px rgba(255, 255, 255, 0.06); }
+                0 0 0 1px var(--stone-bevel); }
             to   { box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.10),
-                inset 0 -1px 2px rgba(0, 0, 0, 0.45),
+                inset 0 1px 0 var(--stone-edge),
+                inset 0 -1px 2px var(--stone-groove),
                 0 36px 80px -16px var(--radiance-hi),
-                0 0 0 1px color-mix(in srgb, var(--c) 25%, rgba(255, 255, 255, 0.06)); }
+                0 0 0 1px color-mix(in srgb, var(--c) 25%, var(--stone-bevel)); }
         }
 
         .rings {
@@ -457,7 +457,7 @@ export class RitualDial extends LitElement {
         }
         .track {
             fill: none;
-            stroke: rgba(255, 255, 255, 0.05);
+            stroke: var(--dial-track);
             stroke-width: 8;
         }
         .arc {
@@ -487,7 +487,7 @@ export class RitualDial extends LitElement {
             justify-content: center;
             cursor: pointer;
             outline: none;
-            padding: 0 32px;
+            padding: 0 var(--space-6);
         }
         .hit:disabled { cursor: default; }
         .hit:focus-visible {
@@ -517,20 +517,18 @@ export class RitualDial extends LitElement {
                         filter var(--motion-base, 220ms ease);
         }
         .label {
-            font-size: 18px;
-            font-weight: 500;
+            font-size: var(--fs-4);
             line-height: 24px;
-            color: rgba(255, 255, 255, 0.95);
-            letter-spacing: -0.02em;
+            color: var(--text-strong);
             text-align: center;
             overflow: hidden;
         }
         .sub {
-            font-size: 13px;
+            font-size: var(--fs-2);
             line-height: 18px;
-            color: rgba(255, 255, 255, 0.55);
+            color: var(--text-muted);
             letter-spacing: 0.02em;
-            margin-top: 4px;
+            margin-top: var(--space-1);
             text-align: center;
             overflow: hidden;
             font-variant-numeric: tabular-nums;

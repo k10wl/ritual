@@ -229,7 +229,7 @@ export class RunAddresses extends LitElement {
             display: block;
             width: 100%;
             max-width: 380px;
-            color: rgba(232, 240, 255, 0.85);
+            color: var(--text);
             font-size: 12px;
             line-height: 16px;
             font-variant-numeric: tabular-nums;
@@ -240,6 +240,8 @@ export class RunAddresses extends LitElement {
             gap: 2px;
             max-height: 40vh;
             overflow-y: auto;
+            padding: var(--space-6);
+            margin: calc(-1 * var(--space-6));
         }
         .row {
             display: grid;
@@ -248,9 +250,9 @@ export class RunAddresses extends LitElement {
             gap: 10px;
             padding: 5px 10px;
             min-height: 28px;
-            border-radius: 7px;
-            background: rgba(255, 255, 255, 0.035);
-            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: var(--radius-sm);
+            background: var(--stone-bevel);
+            border: 1px solid var(--stone-bevel);
             cursor: pointer;
             outline: none;
             user-select: none;
@@ -260,18 +262,18 @@ export class RunAddresses extends LitElement {
             will-change: transform;
         }
         .row:hover {
-            background: rgba(255, 255, 255, 0.08);
-            border-color: rgba(255, 255, 255, 0.1);
+            background: var(--stone-edge);
+            border-color: var(--stone-edge);
         }
         .row:focus-visible {
             box-shadow: 0 0 0 2px color-mix(in srgb, var(--state-run) 60%, transparent);
         }
         .row:active {
-            background: rgba(255, 255, 255, 0.1);
+            background: var(--stone-edge);
         }
         .row.copied {
             border-color: color-mix(in srgb, var(--state-run) 60%, transparent);
-            background: color-mix(in srgb, var(--state-run) 10%, rgba(255, 255, 255, 0.04));
+            background: color-mix(in srgb, var(--state-run) 10%, var(--stone-bevel));
             box-shadow:
                 0 0 0 1px color-mix(in srgb, var(--state-run) 35%, transparent),
                 0 0 24px -4px color-mix(in srgb, var(--state-run) 55%, transparent);
@@ -286,16 +288,15 @@ export class RunAddresses extends LitElement {
                               0 0 16px -4px color-mix(in srgb, var(--state-run) 30%, transparent); }
         }
         .label {
-            color: rgba(232, 240, 255, 0.65);
-            font-weight: 500;
+            color: var(--text-muted);
             letter-spacing: 0.02em;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
         .address {
-            font-family: "Departure Mono", monospace;
-            color: rgba(232, 240, 255, 0.95);
+            font-family: var(--font-mono);
+            color: var(--text-strong);
             letter-spacing: 0.01em;
             transition: color var(--motion-base, 220ms ease),
                         text-shadow var(--motion-base, 220ms ease);
@@ -308,7 +309,7 @@ export class RunAddresses extends LitElement {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: rgba(232, 240, 255, 0.55);
+            color: var(--text-faint);
             transition: color var(--motion-base, 220ms ease);
         }
         .row.copied .icon {

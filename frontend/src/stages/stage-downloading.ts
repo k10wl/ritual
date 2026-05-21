@@ -33,47 +33,46 @@ export class StageDownloading extends LitElement {
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 1rem;
-            padding: 3rem 1.5rem;
+            gap: var(--space-4);
+            padding: var(--space-7) var(--space-5);
         }
         .spinner {
             width: 48px;
             height: 48px;
             border-radius: 50%;
-            border: 4px solid rgba(255, 255, 255, 0.1);
-            border-top-color: #3d82ff;
+            border: 4px solid var(--stone-edge);
+            border-top-color: var(--state-idle);
             animation: spin 0.9s linear infinite;
         }
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
         h2 {
-            font-size: 1.2rem;
-            font-weight: 500;
+            font-size: var(--fs-4);
             margin: 0;
-            opacity: 0.9;
+            color: var(--text-strong);
         }
         .bar {
             width: 100%;
             height: 6px;
-            border-radius: 3px;
-            background: rgba(255, 255, 255, 0.08);
+            border-radius: var(--radius-sm);
+            background: var(--stone-edge);
             overflow: hidden;
         }
         .fill {
             height: 100%;
-            background: linear-gradient(90deg, #3d82ff, #6aa7ff);
+            background: var(--state-idle);
             transition: width 200ms ease;
         }
         .bytes {
             margin: 0;
-            opacity: 0.7;
+            color: var(--text-muted);
             font-variant-numeric: tabular-nums;
-            font-size: 0.9rem;
+            font-size: var(--fs-2);
         }
         .sep {
-            margin: 0 0.35rem;
-            opacity: 0.4;
+            margin: 0 var(--space-1);
+            color: var(--text-faint);
         }
     `;
 }

@@ -41,31 +41,31 @@ export class StageLocked extends LitElement {
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 1rem;
-            padding: 3rem 1.5rem;
+            gap: var(--space-4);
+            padding: var(--space-7) var(--space-5);
             text-align: center;
         }
         .icon {
-            font-size: 3.5rem;
+            font-size: 56px;
         }
         h2 {
-            font-size: 1.4rem;
+            font-size: var(--fs-5);
             margin: 0;
-            font-weight: 600;
+            color: var(--text-strong);
         }
         .sub {
             margin: 0;
-            opacity: 0.7;
+            color: var(--text-muted);
             max-width: 26ch;
         }
         button {
-            margin-top: 0.6rem;
-            padding: 0.7rem 1.3rem;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 10px;
-            background: rgba(255, 255, 255, 0.05);
+            margin-top: var(--space-2);
+            padding: var(--space-3) var(--space-4);
+            border: 1px solid var(--stone-edge);
+            border-radius: var(--radius-md);
+            background: var(--stone-bevel);
             color: inherit;
-            font-size: 0.95rem;
+            font: inherit;
             cursor: pointer;
         }
         button:disabled {

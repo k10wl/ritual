@@ -4,6 +4,7 @@ import { gsap } from "gsap";
 import "./ritual-dial";
 import "./dial-telemetry";
 import "./run-addresses";
+import "./ritual-shell";
 import { RUN_ADDRESSES_EXIT_TOTAL_S, RunAddresses } from "./run-addresses";
 import { DIAL_TELEMETRY_EXIT_TOTAL_S, DialTelemetry } from "./dial-telemetry";
 import { formatEta } from "./telemetry-format";
@@ -185,7 +186,9 @@ export class DialCompositionCycle extends LitElement {
 
     render() {
         return html`
-            <div class="frame">
+            <ritual-shell
+                @ambient-action=${(e: CustomEvent<"logs" | "folder">) => console.log("ambient", e.detail)}
+            >
                 <ritual-dial
                     .state=${this.state}
                     .arc=${this.arc}
@@ -196,21 +199,13 @@ export class DialCompositionCycle extends LitElement {
                 <div class="under-slot" ?data-shown=${this.showTelemetry || this.showAddresses}>
                     ${this.underSlotChild()}
                 </div>
-            </div>
+            </ritual-shell>
         `;
     }
 
     static styles = css`
         :host {
             display: block;
-        }
-        .frame {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 1.25rem;
-            padding: 1.5rem;
-            min-height: 480px;
         }
         .under-slot {
             opacity: 0;
@@ -242,6 +237,7 @@ interface Args {
 
 export default {
     title: "Dial / Composition",
+    parameters: { frame: "bare" },
     argTypes: {
         state: { control: { type: "select" }, options: ["idle", "prep", "run", "final", "fail"] },
         arc: { control: { type: "range", min: 0, max: 1, step: 0.01 } },

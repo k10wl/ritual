@@ -70,27 +70,27 @@ export class StageRunning extends LitElement {
         .card {
             display: flex;
             flex-direction: column;
-            gap: 1.25rem;
-            padding: 2rem 1.5rem;
+            gap: var(--space-5);
+            padding: var(--space-6) var(--space-5);
         }
         .status {
             display: flex;
             align-items: center;
-            gap: 0.6rem;
-            font-size: 1.1rem;
+            gap: var(--space-2);
+            font-size: var(--fs-4);
         }
         .dot {
-            width: 0.65rem;
-            height: 0.65rem;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
             display: inline-block;
         }
         .dot.on {
-            background: #51cf66;
-            box-shadow: 0 0 0 3px rgba(81, 207, 102, 0.25);
+            background: var(--state-run);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-run) 25%, transparent);
         }
         .dot.starting {
-            background: #f9c74f;
+            background: var(--state-prep);
             animation: pulse 1s ease-in-out infinite alternate;
         }
         @keyframes pulse {
@@ -100,16 +100,16 @@ export class StageRunning extends LitElement {
         .addresses {
             display: flex;
             flex-direction: column;
-            gap: 0.5rem;
-            background: rgba(255, 255, 255, 0.04);
-            border-radius: 12px;
-            padding: 1rem;
+            gap: var(--space-2);
+            background: var(--stone-bevel);
+            border-radius: var(--radius-lg);
+            padding: var(--space-4);
         }
         .addresses-title {
-            font-size: 0.8rem;
+            font-size: var(--fs-1);
             text-transform: uppercase;
             letter-spacing: 0.08em;
-            opacity: 0.6;
+            color: var(--text-faint);
         }
         ul {
             list-style: none;
@@ -117,43 +117,42 @@ export class StageRunning extends LitElement {
             padding: 0;
             display: flex;
             flex-direction: column;
-            gap: 0.4rem;
+            gap: var(--space-1);
         }
         li {
             display: grid;
             grid-template-columns: auto 1fr auto;
             align-items: center;
-            gap: 0.75rem;
+            gap: var(--space-3);
         }
         .lbl {
-            opacity: 0.75;
-            font-size: 0.9rem;
+            color: var(--text-muted);
+            font-size: var(--fs-2);
         }
         code {
-            font-family: "Departure Mono", monospace;
-            font-size: 0.95rem;
+            font-family: var(--font-mono);
+            font-size: var(--fs-3);
             overflow: hidden;
             text-overflow: ellipsis;
         }
         button {
-            padding: 0.4rem 0.8rem;
-            border: 1px solid rgba(255, 255, 255, 0.14);
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.06);
+            padding: var(--space-1) var(--space-3);
+            border: 1px solid var(--stone-edge);
+            border-radius: var(--radius-md);
+            background: var(--stone-bevel);
             color: inherit;
-            font-size: 0.85rem;
+            font: inherit;
             cursor: pointer;
         }
         button.danger {
             align-self: flex-end;
-            padding: 0.6rem 1.1rem;
-            background: rgba(255, 110, 110, 0.18);
-            border: 1px solid rgba(255, 110, 110, 0.4);
-            color: #ff9e9e;
-            font-weight: 600;
+            padding: var(--space-2) var(--space-4);
+            background: color-mix(in srgb, var(--state-fail) 18%, transparent);
+            border: 1px solid color-mix(in srgb, var(--state-fail) 40%, transparent);
+            color: var(--text-strong);
         }
         .empty {
-            opacity: 0.5;
+            color: var(--text-faint);
         }
     `;
 }

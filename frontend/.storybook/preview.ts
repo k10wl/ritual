@@ -145,6 +145,7 @@ const frameStyles = html`
             overflow: hidden;
             position: relative;
             box-sizing: border-box;
+            transform: translateZ(0);
         }
         .wails-frame > * {
             display: block;

@@ -1,6 +1,7 @@
 import { css, html, LitElement } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { getSnapshot, onView, openRootFolder, showLogs, Stage, ViewModel } from "./wails-api";
+import "./ui/ritual-shell";
 
 import "./stages/stage-idle";
 import "./stages/stage-downloading";
@@ -53,58 +54,20 @@ export class RitualApp extends LitElement {
     render() {
         const showBanner = this.vm.stage === Stage.StageFailed && this.vm.errorText !== "";
         return html`
-            ${showBanner ? html`<error-banner .vm=${this.vm}></error-banner>` : ""}
-            <header class="chrome">
-                <button class="chip" @click=${() => openRootFolder()} title="Open Ritual folder in file manager">Folder</button>
-                <button class="chip" @click=${() => showLogs()} title="Open log console">Logs</button>
-            </header>
-            <main>${this.stageBody()}</main>
+            <ritual-shell
+                @ambient-action=${(e: CustomEvent<"logs" | "folder">) =>
+                    e.detail === "logs" ? showLogs() : openRootFolder()}
+            >
+                ${showBanner
+                    ? html`<error-banner slot="banner" .vm=${this.vm}></error-banner>`
+                    : ""}
+                ${this.stageBody()}
+            </ritual-shell>
         `;
     }
 
     static styles = css`
-        :host {
-            display: flex;
-            flex-direction: column;
-            min-height: 100vh;
-            color: #f4f4f6;
-            font-family: "Departure Mono", monospace;
-            background: radial-gradient(1200px 600px at 20% -10%, rgba(70, 110, 200, 0.25), transparent 60%),
-                radial-gradient(900px 500px at 110% 110%, rgba(180, 80, 150, 0.18), transparent 60%),
-                #0f131a;
-        }
-        .chrome {
-            display: flex;
-            justify-content: flex-end;
-            padding: 0.5rem 0.75rem;
-        }
-        .chrome {
-            gap: 0.4rem;
-        }
-        .chrome .chip {
-            padding: 0.3rem 0.8rem;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: rgba(255, 255, 255, 0.75);
-            border-radius: 8px;
-            font-size: 0.8rem;
-            cursor: pointer;
-        }
-        .chrome .chip:hover {
-            background: rgba(255, 255, 255, 0.1);
-            color: #fff;
-        }
-        main {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 1rem;
-        }
-        main > * {
-            width: 100%;
-            max-width: 480px;
-        }
+        :host { display: contents; }
     `;
 }
 

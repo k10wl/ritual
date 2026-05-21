@@ -42,29 +42,29 @@ export class ErrorBanner extends LitElement {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 1rem;
-            padding: 0.8rem 1rem;
-            background: rgba(255, 70, 70, 0.18);
-            border-bottom: 1px solid rgba(255, 70, 70, 0.4);
-            color: #ffdede;
+            gap: var(--space-4);
+            padding: var(--space-3) var(--space-4);
+            background: color-mix(in srgb, var(--state-fail) 18%, transparent);
+            border-bottom: 1px solid color-mix(in srgb, var(--state-fail) 40%, transparent);
+            color: var(--text-strong);
         }
         .text {
             display: flex;
             flex-direction: column;
-            gap: 0.15rem;
+            gap: 2px;
         }
         .detail {
-            opacity: 0.8;
-            font-size: 0.85rem;
+            color: var(--text-muted);
+            font-size: var(--fs-2);
             word-break: break-word;
         }
         button {
-            padding: 0.45rem 0.9rem;
-            border-radius: 8px;
-            border: 1px solid rgba(255, 150, 150, 0.5);
-            background: rgba(255, 255, 255, 0.08);
-            color: #ffdede;
-            font-size: 0.9rem;
+            padding: var(--space-2) var(--space-3);
+            border-radius: var(--radius-md);
+            border: 1px solid color-mix(in srgb, var(--state-fail) 50%, transparent);
+            background: var(--stone-edge);
+            color: var(--text-strong);
+            font: inherit;
             cursor: pointer;
         }
         button:disabled {

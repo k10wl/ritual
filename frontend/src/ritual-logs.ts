@@ -181,34 +181,34 @@ export class RitualLogs extends LitElement {
             display: flex;
             flex-direction: column;
             height: 100vh;
-            background: #0b0e13;
-            color: #dcdfe4;
-            font-family: "Departure Mono", monospace;
-            font-size: 0.85rem;
+            background: var(--stone-deep);
+            color: var(--text);
+            font-family: var(--font-mono);
+            font-size: var(--fs-2);
         }
         header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0.5rem 0.9rem;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-            background: rgba(255, 255, 255, 0.02);
+            padding: var(--space-2) var(--space-3);
+            border-bottom: 1px solid var(--stone-bevel);
+            background: var(--stone-bevel);
         }
         .title {
-            font-size: 0.72rem;
+            font-size: var(--fs-1);
             text-transform: uppercase;
             letter-spacing: 0.14em;
-            opacity: 0.55;
+            color: var(--text-muted);
         }
         .count {
             font-variant-numeric: tabular-nums;
-            opacity: 0.45;
-            font-size: 0.72rem;
+            color: var(--text-faint);
+            font-size: var(--fs-1);
         }
         .wrap {
             flex: 1;
             overflow-y: auto;
-            padding: 0.35rem 0;
+            padding: var(--space-1) 0;
         }
         ol {
             list-style: none;
@@ -218,57 +218,54 @@ export class RitualLogs extends LitElement {
         li {
             display: grid;
             grid-template-columns: 8ch 5ch 1fr;
-            gap: 0.75rem;
-            padding: 0.18rem 0.9rem;
+            gap: var(--space-3);
+            padding: 3px var(--space-3);
             line-height: 1.35;
         }
         li:nth-child(odd) {
-            background: rgba(255, 255, 255, 0.012);
+            background: var(--stone-bevel);
         }
         time {
-            opacity: 0.45;
+            color: var(--text-faint);
         }
         .level {
             text-transform: uppercase;
-            font-size: 0.7rem;
+            font-size: var(--fs-1);
             letter-spacing: 0.05em;
             align-self: center;
         }
-        .lvl-info .level { color: #7ea8ff; }
-        .lvl-warn .level { color: #ffc876; }
-        .lvl-error .level { color: #ff9e9e; }
-        .lvl-error { background: rgba(255, 80, 80, 0.08); }
-        .row-input {
-            background: rgba(90, 180, 120, 0.10);
-        }
+        .lvl-info .level  { color: var(--state-idle); }
+        .lvl-warn .level  { color: var(--state-prep); }
+        .lvl-error .level { color: var(--state-fail); }
+        .lvl-error        { background: color-mix(in srgb, var(--state-fail) 8%, transparent); }
+        .row-input        { background: color-mix(in srgb, var(--state-run) 10%, transparent); }
         .row-input .level {
-            color: #8fe3a4;
-            font-size: 1rem;
+            color: var(--state-run);
+            font-size: var(--fs-3);
             text-transform: none;
         }
         .row-input .msg {
-            color: #caf0d2;
+            color: var(--state-run);
         }
         .msg {
             white-space: pre-wrap;
             word-break: break-word;
         }
         .empty {
-            padding: 2rem 1rem;
+            padding: var(--space-6) var(--space-4);
             text-align: center;
-            opacity: 0.6;
+            color: var(--text-faint);
         }
         footer {
             display: flex;
             align-items: center;
-            gap: 0.6rem;
-            padding: 0.5rem 0.9rem;
-            border-top: 1px solid rgba(255, 255, 255, 0.06);
-            background: rgba(255, 255, 255, 0.025);
+            gap: var(--space-2);
+            padding: var(--space-2) var(--space-3);
+            border-top: 1px solid var(--stone-bevel);
+            background: var(--stone-bevel);
         }
         .prompt {
-            opacity: 0.75;
-            color: #8fe3a4;
+            color: var(--state-run);
             user-select: none;
         }
         .editor {
@@ -278,11 +275,11 @@ export class RitualLogs extends LitElement {
             outline: none;
             color: inherit;
             font: inherit;
-            caret-color: #8fe3a4;
+            caret-color: var(--state-run);
             padding: 0;
         }
         .editor::placeholder {
-            opacity: 0.35;
+            color: var(--text-faint);
         }
     `;
 }
