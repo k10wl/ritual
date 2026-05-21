@@ -3,8 +3,16 @@ import { customElement, state } from "lit/decorators.js";
 import { gsap } from "gsap";
 import "./ritual-dial";
 import "./dial-telemetry";
+import "./run-addresses";
 import { formatEta } from "./telemetry-format";
+import { JoinAddress } from "../wails-api";
 import type { DialGlyph, DialState } from "./ritual-dial";
+
+const RUN_ADDRESSES = [
+    new JoinAddress({ label: "localhost", address: "127.0.0.1:25565" }),
+    new JoinAddress({ label: "Wi-Fi", address: "192.168.1.42:25565" }),
+    new JoinAddress({ label: "Ethernet", address: "10.0.0.7:25565" }),
+];
 
 const TOTAL_BYTES = 980 * 1024 * 1024;
 const TRANSFER_S = 6;
@@ -29,6 +37,7 @@ export class DialCompositionCycle extends LitElement {
     @state() private speedBps = 0;
     @state() private etaSeconds: number | null = null;
     @state() private showTelemetry = false;
+    @state() private showAddresses = false;
 
     private tl?: gsap.core.Timeline;
     private rafId = 0;
@@ -61,12 +70,14 @@ export class DialCompositionCycle extends LitElement {
             this.state = "idle"; this.arc = 0; this.glyph = "play";
             this.label = "Start"; this.sub = "";
             this.showTelemetry = false;
+            this.showAddresses = false;
         });
         tl.to({}, { duration: HOLD_S });
         tl.call(() => {
             this.state = "prep"; this.glyph = "download";
             this.label = "Getting ready"; this.sub = formatEta(null);
             this.showTelemetry = true;
+            this.showAddresses = false;
             a.v = 0;
             this.resetTransfer();
         });
@@ -75,6 +86,7 @@ export class DialCompositionCycle extends LitElement {
             this.state = "run"; this.glyph = "stop";
             this.label = "Ready to play"; this.sub = "Hold to stop";
             this.showTelemetry = false;
+            this.showAddresses = true;
             this.arc = 1;
         });
         tl.to({}, { duration: HOLD_S });
@@ -82,6 +94,7 @@ export class DialCompositionCycle extends LitElement {
             this.state = "final"; this.glyph = "upload";
             this.label = "Saving"; this.sub = formatEta(null);
             this.showTelemetry = true;
+            this.showAddresses = false;
             a.v = 0;
             this.resetTransfer();
         });
@@ -129,12 +142,14 @@ export class DialCompositionCycle extends LitElement {
                     .label=${this.label}
                     .sub=${this.sub}
                 ></ritual-dial>
-                <div class="telemetry-slot" ?data-shown=${this.showTelemetry}>
-                    <dial-telemetry
-                        .speedBps=${this.speedBps}
-                        .bytesDone=${this.bytesDone}
-                        .bytesTotal=${TOTAL_BYTES}
-                    ></dial-telemetry>
+                <div class="under-slot" ?data-shown=${this.showTelemetry || this.showAddresses}>
+                    ${this.showAddresses
+                        ? html`<run-addresses .addresses=${RUN_ADDRESSES}></run-addresses>`
+                        : html`<dial-telemetry
+                              .speedBps=${this.speedBps}
+                              .bytesDone=${this.bytesDone}
+                              .bytesTotal=${TOTAL_BYTES}
+                          ></dial-telemetry>`}
                 </div>
             </div>
         `;
@@ -148,13 +163,16 @@ export class DialCompositionCycle extends LitElement {
             gap: 1.25rem;
             padding: 1.5rem;
         }
-        .telemetry-slot {
+        .under-slot {
             opacity: 0;
             transform: translateY(-4px);
             transition: opacity 240ms ease, transform 240ms ease;
             min-height: 1.5rem;
+            width: 100%;
+            display: flex;
+            justify-content: center;
         }
-        .telemetry-slot[data-shown] {
+        .under-slot[data-shown] {
             opacity: 1;
             transform: translateY(0);
         }
@@ -218,3 +236,16 @@ export const Playground = (a: Args) => html`
 `;
 
 export const Cycle = () => html`<dial-composition-cycle></dial-composition-cycle>`;
+
+export const RunWithAddresses = () => html`
+    <div style="display:flex; flex-direction:column; align-items:center; gap:1.25rem; padding:1.5rem;">
+        <ritual-dial
+            state="run"
+            .arc=${1}
+            glyph="stop"
+            label="Ready to play"
+            sub="Hold to stop"
+        ></ritual-dial>
+        <run-addresses .addresses=${RUN_ADDRESSES} .startOffset=${73}></run-addresses>
+    </div>
+`;
