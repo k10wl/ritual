@@ -33,6 +33,7 @@ const fixtures = {
             progress,
             bytesDone: progress * 10_000_000,
             bytesTotal: 1_000_000_000,
+            speedMbps: 32,
             label: "Downloading world…",
         }),
     running: () =>
@@ -50,6 +51,7 @@ const fixtures = {
             progress,
             bytesDone: progress * 10_000_000,
             bytesTotal: 1_000_000_000,
+            speedMbps: 22,
             label: "Uploading world…",
         }),
 };
