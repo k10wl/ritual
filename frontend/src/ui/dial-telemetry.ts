@@ -1,8 +1,8 @@
 import { LitElement, css, html, TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { gsap } from "gsap";
-import "./stable-num";
-import "./decoder";
+import "./primitives/stable-num";
+import "./primitives/decoder";
 import { formatSize, formatSpeed } from "./telemetry-format";
 
 const NUMERIC_PLACEHOLDER = "·····";
@@ -101,7 +101,7 @@ export class DialTelemetry extends LitElement {
             flex-direction: column;
             align-items: center;
             gap: 2px;
-            font-size: var(--fs-2);
+            font-size: var(--fs-body);
             font-variant-numeric: tabular-nums;
             letter-spacing: 0.04em;
             color: var(--text-muted);

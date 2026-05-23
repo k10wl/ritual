@@ -4,7 +4,7 @@ import { gsap } from "gsap";
 import { MorphSVGPlugin } from "gsap/MorphSVGPlugin";
 import { Copy, Check } from "lucide";
 import svgpath from "svgpath";
-import "./decoder";
+import "./primitives/decoder";
 import type { JoinAddress } from "../wails-api";
 
 gsap.registerPlugin(MorphSVGPlugin);

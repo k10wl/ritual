@@ -82,7 +82,7 @@ interface Args {
 }
 
 export default {
-    title: "Dial / RitualDial",
+    title: "Components / Ritual Dial",
     component: "ritual-dial",
     argTypes: {
         state: {

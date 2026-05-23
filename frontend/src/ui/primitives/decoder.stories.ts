@@ -52,7 +52,7 @@ interface Args {
 }
 
 export default {
-    title: "Text / Rune Decoder",
+    title: "Primitives / Rune Decoder",
     component: "rune-decoder",
     argTypes: {
         text: { control: { type: "text" } },

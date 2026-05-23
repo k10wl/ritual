@@ -5,7 +5,7 @@ import { JoinAddress, Stage, ViewModel } from "../wails-api";
 import { pushView } from "../../.storybook/preview";
 
 export default {
-    title: "App/Ritual",
+    title: "Screens / Ritual",
     component: "ritual-app",
     parameters: { frame: "bare" },
 };

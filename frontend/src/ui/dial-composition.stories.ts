@@ -237,7 +237,7 @@ interface Args {
 }
 
 export default {
-    title: "Dial / Composition",
+    title: "Components / Dial Composition",
     parameters: { frame: "bare" },
     argTypes: {
         state: { control: { type: "select" }, options: ["idle", "prep", "run", "final", "fail"] },

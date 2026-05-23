@@ -1,7 +1,8 @@
 # 002 — GUI Reset: tokens + primitives, one look everywhere
 
-- **Status:** Draft
+- **Status:** Superseded by [015 Design system](015-design-system.md)
 - **Date:** 2026-05-17
+- **Supersession note:** Tokens phase landed in 015 Session 1 with the semantic clamp scale + surface/feedback/motion token additions. Primitives phase landed in 015 Sessions 2–3 as `<rune-*>` Lit elements with HIG citations and Storybook + `@web/test-runner` coverage. The Inter-font + Bell-reset specifics of 002 are obsolete (font is Departure Mono per [[project_brand_language]]; reset is the minimal cross-engine variant in 015's `_base.ts`).
 - **Area:** GUI / Frontend
 - **Related:** [001 Progress Projection](001-progress-projection.md), [[project_gui_plan]]
 

@@ -184,7 +184,7 @@ export class RitualLogs extends LitElement {
             background: var(--stone-deep);
             color: var(--text);
             font-family: var(--font-mono);
-            font-size: var(--fs-2);
+            font-size: var(--fs-body);
         }
         header {
             display: flex;
@@ -195,7 +195,7 @@ export class RitualLogs extends LitElement {
             background: var(--stone-bevel);
         }
         .title {
-            font-size: var(--fs-1);
+            font-size: var(--fs-caption);
             text-transform: uppercase;
             letter-spacing: 0.14em;
             color: var(--text-muted);
@@ -203,7 +203,7 @@ export class RitualLogs extends LitElement {
         .count {
             font-variant-numeric: tabular-nums;
             color: var(--text-faint);
-            font-size: var(--fs-1);
+            font-size: var(--fs-caption);
         }
         .wrap {
             flex: 1;
@@ -230,7 +230,7 @@ export class RitualLogs extends LitElement {
         }
         .level {
             text-transform: uppercase;
-            font-size: var(--fs-1);
+            font-size: var(--fs-caption);
             letter-spacing: 0.05em;
             align-self: center;
         }
@@ -241,7 +241,7 @@ export class RitualLogs extends LitElement {
         .row-input        { background: color-mix(in srgb, var(--state-run) 10%, transparent); }
         .row-input .level {
             color: var(--state-run);
-            font-size: var(--fs-3);
+            font-size: var(--fs-body);
             text-transform: none;
         }
         .row-input .msg {

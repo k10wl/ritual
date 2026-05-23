@@ -66,7 +66,7 @@ interface Args {
 }
 
 export default {
-    title: "Dial / Telemetry",
+    title: "Components / Dial Telemetry",
     component: "dial-telemetry",
     argTypes: {
         speedBps: { control: { type: "range", min: 0, max: 200 * 1024 * 1024, step: 1024 } },

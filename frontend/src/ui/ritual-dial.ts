@@ -4,8 +4,8 @@ import { gsap } from "gsap";
 import { MorphSVGPlugin } from "gsap/MorphSVGPlugin";
 import { Play, Square, X as XIcon, Download, Upload } from "lucide";
 import svgpath from "svgpath";
-import "./decoder";
-import "./stable-num";
+import "./primitives/decoder";
+import "./primitives/stable-num";
 
 gsap.registerPlugin(MorphSVGPlugin);
 
@@ -512,14 +512,14 @@ export class RitualDial extends LitElement {
                         filter var(--motion-base, 220ms ease);
         }
         .label {
-            font-size: var(--fs-4);
+            font-size: var(--fs-title);
             line-height: 24px;
             color: var(--text-strong);
             text-align: center;
             overflow: hidden;
         }
         .sub {
-            font-size: var(--fs-2);
+            font-size: var(--fs-body);
             line-height: 18px;
             color: var(--text-muted);
             letter-spacing: 0.02em;

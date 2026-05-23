@@ -88,6 +88,26 @@ func (c *ControlService) GetSnapshot() projection.ViewModel {
 	return c.snapshot.Snapshot()
 }
 
+// Prep is the bind-time server parameters surfaced to the IDLE-screen
+// advanced-settings disclosure. Falls back to DefaultSettings values if
+// the settings file is missing or malformed.
+type Prep struct {
+	Port     int `json:"port"`
+	MemoryMB int `json:"memoryMB"`
+}
+
+// GetPrep returns the persisted port + memory so the frontend can render
+// the prep-settings disclosure with the user's last-saved values. Errors
+// during load collapse to defaults — the disclosure always renders.
+func (c *ControlService) GetPrep() Prep {
+	defaults := domain.DefaultSettings()
+	settings, err := domain.LoadSettings()
+	if err != nil || settings == nil {
+		return Prep{Port: defaults.Port, MemoryMB: defaults.Memory}
+	}
+	return Prep{Port: settings.Port, MemoryMB: settings.Memory}
+}
+
 // SendConsole forwards a user-typed line from the logs window to the
 // running server's stdin via a ConsoleInput bus event. No-op when no
 // server is running — the running-stage coordinator is the sole consumer.

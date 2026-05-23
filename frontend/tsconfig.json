@@ -21,5 +21,6 @@
     "noImplicitAny": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "bindings"]
+  "include": ["src", "bindings"],
+  "exclude": ["src/**/*.test.ts"]
 }

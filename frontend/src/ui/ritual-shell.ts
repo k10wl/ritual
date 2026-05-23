@@ -1,7 +1,7 @@
 import { LitElement, css, html, PropertyValues } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { ContextProvider } from "@lit/context";
-import { dialStateContext } from "./dial-state-context";
+import { dialStateContext } from "./contexts/dial-state-context";
 import type { DialState } from "./ritual-dial";
 import "./ambient-footer";
 

@@ -1,6 +1,7 @@
 import { css, html, LitElement } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { customElement, query, state } from "lit/decorators.js";
 import {
+    getPrep,
     getSnapshot,
     onView,
     openRootFolder,
@@ -17,10 +18,11 @@ import "./ui/ritual-shell";
 import "./ui/ritual-dial";
 import "./ui/dial-telemetry";
 import "./ui/run-addresses";
+import "./ui/prep-settings";
+import type { PrepSettings, PrepSettingsEl } from "./ui/prep-settings";
 
-const DEFAULT_PORT = 25565;
-const DEFAULT_MEMORY_MB = 4096;
 const MBPS_TO_BPS = 1_000_000 / 8;
+const FALLBACK_PREP: PrepSettings = { port: 25565, memoryMB: 4096 };
 
 type UnderSlot = "telemetry" | "addresses" | null;
 
@@ -54,6 +56,8 @@ export class RitualApp extends LitElement {
     @state() private lastProgressArc = 0;
     @state() private lastNonFailStage: Stage = Stage.StageIdle;
     @state() private uptimeSub = "";
+    @state() private prep: PrepSettings = FALLBACK_PREP;
+    @query("prep-settings") private _prepEl!: PrepSettingsEl | null;
     private runStartedAt = 0;
     private uptimeTimer = 0;
     private unsubscribe?: () => void;
@@ -64,6 +68,12 @@ export class RitualApp extends LitElement {
             this.applyVm(await getSnapshot());
         } catch {
             // first render relies on FALLBACK_VM until the first Emit arrives
+        }
+        try {
+            const p = await getPrep();
+            this.prep = { port: p.port, memoryMB: p.memoryMB };
+        } catch {
+            // keep FALLBACK_PREP if the binding is unavailable
         }
         this.unsubscribe = onView((vm) => this.applyVm(vm));
     }
@@ -200,9 +210,9 @@ export class RitualApp extends LitElement {
 
     private onTap = () => {
         const s = this.vm.stage;
-        if (s === Stage.StageIdle || s === Stage.StageLocked || s === Stage.StageFailed) {
-            void start(DEFAULT_PORT, DEFAULT_MEMORY_MB);
-        }
+        if (s !== Stage.StageIdle && s !== Stage.StageLocked && s !== Stage.StageFailed) return;
+        const settings = this._prepEl?.read() ?? this.prep;
+        void start(settings.port, settings.memoryMB);
     };
 
     private onHoldCommit = () => {
@@ -244,6 +254,9 @@ export class RitualApp extends LitElement {
                 <div class="under-slot" ?data-shown=${d.underSlot !== null}>
                     ${this.underSlotChild(d)}
                 </div>
+                ${d.dial.state === "idle"
+                    ? html`<prep-settings .config=${this.prep}></prep-settings>`
+                    : null}
             </ritual-shell>
         `;
     }

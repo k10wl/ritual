@@ -29,7 +29,7 @@ interface Args {
 }
 
 export default {
-    title: "Run / Addresses",
+    title: "Components / Run Addresses",
     component: "run-addresses",
     argTypes: {
         addressCount: { control: { type: "range", min: 0, max: ALL_ADDRESSES.length, step: 1 } },

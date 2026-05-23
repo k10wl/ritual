@@ -22,7 +22,7 @@ export class AmbientFooter extends LitElement {
             padding: var(--space-2) var(--space-4);
             pointer-events: none;
             font-family: var(--font-mono);
-            font-size: var(--fs-1);
+            font-size: var(--fs-caption);
             letter-spacing: 0.08em;
         }
         nav {
