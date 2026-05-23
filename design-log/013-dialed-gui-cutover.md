@@ -1,6 +1,6 @@
 # 013 — Cutover: dialed GUI replaces stage layouts
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Date:** 2026-05-21
 - **Area:** GUI / Frontend
 - **Related:** [007 One dial](007-hig-ux-coherence.md), [009 Telemetry](009-telemetry-hierarchy.md), [010 RUN addresses](010-run-addresses.md), [011 Dial frame](011-dial-frame-flip.md)
@@ -141,3 +141,15 @@ Resolved: hardcode `start(25565, 4096)` defaults at the dial's `tap` handler. Se
 - 007 §Q8 "fold" — this log executes that fold.
 - 011 — frame geometry stays as-is; cutover does not reopen positioning.
 - `dial-composition.stories.ts` — reference composition. The cutover lifts that shape verbatim into `ritual-app.ts`.
+
+## Implementation Results
+
+Landed across `a834743` (compose dial directly) + `f97f15c` (wire + restore `/style.css`).
+
+- `frontend/src/stages/` removed; `error-banner` + all `stage-*` references gone.
+- `frontend/src/ritual-app.ts` renders `<ritual-dial>` + `<dial-telemetry>` + `<run-addresses>` directly via `deriveView(vm)` pure mapper; `lastProgress` + `runStartedAt` tracked as `@state` for FAIL carry-over and RUN uptime.
+- `<slot name="banner">` and its CSS removed from `ritual-shell.ts`.
+- OQ2 (LOCKED tap): chose reuse of `start(25565, 4096)` — no `Control.Recheck` binding added.
+- Phase C verification: `App/Ritual` story (`frontend/src/stories/app.stories.ts`) drives `<ritual-app>` via mocked `wails-api` transport through every state including fail-at-each-stage and IDLE+lockHolder.
+
+No deviations from design.
