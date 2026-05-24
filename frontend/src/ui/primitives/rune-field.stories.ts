@@ -1,5 +1,23 @@
 import { html } from "lit";
 import "./rune-field";
+import { composeValidators, type RuneFieldValidator } from "./rune-field";
+
+const required: RuneFieldValidator = (v) =>
+    v.trim() === "" ? "Required." : null;
+
+const numeric: RuneFieldValidator = (v) =>
+    v === "" || !Number.isNaN(Number(v)) ? null : "Must be a number.";
+
+const range = (lo: number, hi: number): RuneFieldValidator => (v) => {
+    if (v === "") return null;
+    const n = Number(v);
+    return n < lo || n > hi ? `Must be between ${lo} and ${hi}.` : null;
+};
+
+const divisibleBy = (d: number): RuneFieldValidator => (v) => {
+    if (v === "") return null;
+    return Number(v) % d === 0 ? null : `Must be a multiple of ${d}.`;
+};
 
 export default {
     title: "Primitives / Rune Field",
@@ -9,7 +27,9 @@ export default {
             description: {
                 component:
                     "Labelled input — HIG label-above text-field. Form-associated custom element. " +
-                    "Attributes: type (text|number), label, hint, value, min, max, step, placeholder, disabled, invalid. " +
+                    "Attributes: type (text|number), label, hint, value, placeholder, disabled, invalid. " +
+                    "Property: validate (RuneFieldValidator). Compose multiple rules with composeValidators(...). " +
+                    "type=\"number\" only switches the mobile inputmode; constraints live in the validator. " +
                     "HIG: https://developer.apple.com/design/human-interface-guidelines/text-fields",
             },
         },
@@ -26,25 +46,38 @@ export const Text = () => html`
     </div>
 `;
 
-export const Number = () => html`
+export const Numeric = () => html`
     <div style="padding:var(--space-4); max-width:380px; display:flex; flex-direction:column; gap:var(--space-4);">
         <rune-field
             type="number"
             label="Port"
             value="25565"
-            min="1024"
-            max="65535"
-            step="1"
             hint="Range 1024–65535."
+            .validate=${composeValidators(numeric, range(1024, 65535))}
         ></rune-field>
         <rune-field
             type="number"
             label="Memory (MB)"
             value="2048"
-            min="512"
-            max="16384"
-            step="256"
             hint="At least 1024 MB recommended."
+            .validate=${composeValidators(numeric, range(512, 16384))}
+        ></rune-field>
+    </div>
+`;
+
+export const ComposedRules = () => html`
+    <div style="padding:var(--space-4); max-width:380px;">
+        <rune-field
+            type="number"
+            label="Buffer size"
+            placeholder="multiple of 15, 15–150"
+            hint="FizzBuzz-shaped: required, numeric, in range, divisible by 15."
+            .validate=${composeValidators(
+                required,
+                numeric,
+                range(15, 150),
+                divisibleBy(15),
+            )}
         ></rune-field>
     </div>
 `;

@@ -6,10 +6,22 @@
  */
 
 import { LitElement, css, html } from "lit";
-import { customElement, property, query } from "lit/decorators.js";
+import { customElement, property, query, state } from "lit/decorators.js";
 import { sharedStyles } from "./_base";
 
 export type RuneFieldType = "text" | "number";
+
+export type RuneFieldValidator = (value: string) => string | null;
+
+export const composeValidators =
+    (...rules: RuneFieldValidator[]): RuneFieldValidator =>
+    (value) => {
+        for (const rule of rules) {
+            const err = rule(value);
+            if (err !== null) return err;
+        }
+        return null;
+    };
 
 export interface RuneFieldChangeDetail {
     value: string;
@@ -25,11 +37,11 @@ export class RuneField extends LitElement {
     @property() placeholder = "";
     @property() value = "";
     @property() name = "";
-    @property() min = "";
-    @property() max = "";
-    @property() step = "";
     @property({ type: Boolean, reflect: true }) disabled = false;
     @property({ type: Boolean, reflect: true }) invalid = false;
+    @property({ attribute: false }) validate?: RuneFieldValidator;
+
+    @state() private _error: string | null = null;
 
     @query("input") private _input!: HTMLInputElement;
 
@@ -43,6 +55,7 @@ export class RuneField extends LitElement {
     connectedCallback() {
         super.connectedCallback();
         this._internals.setFormValue(this.value);
+        this.#runValidator();
     }
 
     formAssociatedCallback() {
@@ -52,6 +65,9 @@ export class RuneField extends LitElement {
     updated(changed: Map<string, unknown>) {
         if (changed.has("value")) {
             this._internals.setFormValue(this.value);
+        }
+        if (changed.has("validate")) {
+            this.#runValidator();
         }
     }
 
@@ -74,15 +90,21 @@ export class RuneField extends LitElement {
 
             .control {
                 display: flex;
-                align-items: center;
-                gap: var(--space-2);
-                padding: var(--space-2) var(--space-3);
+                align-items: stretch;
                 background: var(--stone-edge);
                 border-radius: var(--radius-sm);
                 box-shadow: inset 0 1px 0 var(--stone-bevel);
                 transition:
                     background var(--motion-fast),
                     box-shadow var(--motion-reveal);
+            }
+            ::slotted([slot="leading"]) {
+                align-self: center;
+                margin-left: var(--space-3);
+            }
+            ::slotted([slot="trailing"]) {
+                align-self: center;
+                margin-right: var(--space-3);
             }
             .control:hover {
                 background: color-mix(in srgb, var(--stone-edge) 85%, var(--rune-soft));
@@ -106,11 +128,16 @@ export class RuneField extends LitElement {
             input {
                 flex: 1;
                 min-width: 0;
+                padding: var(--space-2) var(--space-3);
                 font: inherit;
                 color: var(--text-strong);
                 background: transparent;
                 font-variant-numeric: tabular-nums;
                 letter-spacing: 0.02em;
+            }
+            input:focus,
+            input:focus-visible {
+                outline: none;
             }
             input::placeholder {
                 color: var(--text-faint);
@@ -129,7 +156,8 @@ export class RuneField extends LitElement {
     ];
 
     render() {
-        const hasHintSlot = this.hint || this._hasNamedSlot("hint");
+        const hintText = this._error ?? this.hint;
+        const hasHintSlot = hintText || this._hasNamedSlot("hint");
         return html`
             ${this.label
                 ? html`<label part="label" for="input">${this.label}</label>`
@@ -138,12 +166,10 @@ export class RuneField extends LitElement {
                 <slot name="leading"></slot>
                 <input
                     id="input"
-                    type=${this.type}
+                    type="text"
+                    inputmode=${this.type === "number" ? "decimal" : "text"}
                     .value=${this.value}
                     placeholder=${this.placeholder}
-                    min=${this.min || ""}
-                    max=${this.max || ""}
-                    step=${this.step || ""}
                     ?disabled=${this.disabled}
                     @input=${this.#onInput}
                     @change=${this.#onChange}
@@ -153,7 +179,7 @@ export class RuneField extends LitElement {
             </div>
             ${hasHintSlot
                 ? html`<div class="hint" part="hint">
-                      <slot name="hint">${this.hint}</slot>
+                      <slot name="hint">${hintText}</slot>
                   </div>`
                 : null}
         `;
@@ -162,7 +188,18 @@ export class RuneField extends LitElement {
     #onInput = (e: Event) => {
         this.value = (e.target as HTMLInputElement).value;
         this._internals.setFormValue(this.value);
+        this.#runValidator();
     };
+
+    #runValidator() {
+        if (!this.validate) {
+            this._error = null;
+            return;
+        }
+        const err = this.validate(this.value);
+        this._error = err;
+        this.invalid = err !== null;
+    }
 
     #onChange = () => {
         const detail: RuneFieldChangeDetail = { value: this.value };

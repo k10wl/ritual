@@ -1,16 +1,22 @@
 /**
  * IDLE-only advanced-settings disclosure. Composes <rune-disclosure> +
- * <rune-field> × 2 (port, memoryMB). Form-driven validity per 014 §HIG
- * hint rule; emits `change` on every keystroke (for Start enable/disable)
- * and `submit` when the consumer asks the form to submit (read on Start).
+ * <rune-field> × 2 (port, memoryMB). Validity computed from per-field
+ * injected validators (Formik-style). Emits `change` on every keystroke
+ * (for Start enable/disable) and `submit` when the consumer asks the
+ * form to submit (read on Start).
  *
  * See design-log/014-prep-advanced-settings.md.
  */
 
 import { LitElement, css, html } from "lit";
-import { customElement, property, query } from "lit/decorators.js";
+import { customElement, property, queryAll } from "lit/decorators.js";
 import "./primitives/rune-disclosure";
 import "./primitives/rune-field";
+import {
+    composeValidators,
+    type RuneField,
+    type RuneFieldValidator,
+} from "./primitives/rune-field";
 
 export interface PrepSettings {
     port: number;
@@ -22,11 +28,33 @@ export interface PrepSettingsChangeDetail {
     settings: PrepSettings | null;
 }
 
+const required: RuneFieldValidator = (v) =>
+    v.trim() === "" ? "Required." : null;
+
+const integer: RuneFieldValidator = (v) =>
+    /^-?\d+$/.test(v) ? null : "Whole number only.";
+
+const range = (lo: number, hi: number): RuneFieldValidator => (v) => {
+    const n = Number(v);
+    return n < lo || n > hi ? `Must be between ${lo} and ${hi}.` : null;
+};
+
+const multipleOf = (m: number): RuneFieldValidator => (v) =>
+    Number(v) % m === 0 ? null : `Must be a multiple of ${m}.`;
+
+const portValidator = composeValidators(required, integer, range(1, 65535));
+const memoryValidator = composeValidators(
+    required,
+    integer,
+    range(512, 65536),
+    multipleOf(512),
+);
+
 @customElement("prep-settings")
 export class PrepSettingsEl extends LitElement {
     @property({ type: Object }) config: PrepSettings = { port: 25565, memoryMB: 4096 };
 
-    @query("form") private _form!: HTMLFormElement;
+    @queryAll("rune-field") private _fields!: NodeListOf<RuneField>;
 
     static styles = css`
         :host {
@@ -50,9 +78,7 @@ export class PrepSettingsEl extends LitElement {
                         name="port"
                         label="Port"
                         .value=${String(this.config.port)}
-                        min="1"
-                        max="65535"
-                        step="1"
+                        .validate=${portValidator}
                         hint="Port must be 1–65535."
                     ></rune-field>
                     <rune-field
@@ -60,8 +86,7 @@ export class PrepSettingsEl extends LitElement {
                         name="memoryMB"
                         label="Memory (MB)"
                         .value=${String(this.config.memoryMB)}
-                        min="512"
-                        step="512"
+                        .validate=${memoryValidator}
                         hint="Memory must be ≥ 512 MB, in 512 MB steps."
                     ></rune-field>
                 </form>
@@ -69,19 +94,26 @@ export class PrepSettingsEl extends LitElement {
         `;
     }
 
-    /** Read current settings; returns null if invalid. */
+    /** Read current settings; returns null if any field is invalid. */
     read(): PrepSettings | null {
-        const data = new FormData(this._form);
-        const port = Number(data.get("port"));
-        const memoryMB = Number(data.get("memoryMB"));
-        if (!this._form.checkValidity()) return null;
+        const values: Record<string, string> = {};
+        for (const f of this._fields) {
+            if (f.invalid) return null;
+            values[f.name] = f.value;
+        }
+        const port = Number(values.port);
+        const memoryMB = Number(values.memoryMB);
         if (!Number.isFinite(port) || !Number.isFinite(memoryMB)) return null;
         return { port, memoryMB };
     }
 
-    /** True when the current form values are valid. */
+    /** True when every field is currently valid. */
     isValid(): boolean {
-        return this._form?.checkValidity() ?? false;
+        if (!this._fields) return false;
+        for (const f of this._fields) {
+            if (f.invalid) return false;
+        }
+        return true;
     }
 
     #onInput = () => {
