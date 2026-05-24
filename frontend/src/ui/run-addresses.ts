@@ -235,8 +235,8 @@ export class RunAddresses extends LitElement {
             font-variant-numeric: tabular-nums;
         }
         .list {
-            display: flex;
-            flex-direction: column;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
             gap: 2px;
             max-height: 40vh;
             overflow-y: auto;
@@ -245,7 +245,8 @@ export class RunAddresses extends LitElement {
         }
         .row {
             display: grid;
-            grid-template-columns: minmax(60px, auto) 1fr 14px;
+            grid-template-columns: subgrid;
+            grid-column: 1 / -1;
             align-items: center;
             gap: 10px;
             padding: 5px 10px;
