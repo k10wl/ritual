@@ -2,6 +2,35 @@
  * Labelled input primitive — HIG label-above text-field pattern. Form-associated
  * custom element so values participate in <form> submission.
  *
+ * # Validation
+ *
+ * Domain-free. Callers inject rules via the `validate` JS property
+ * (Formik-style); the primitive only runs the function, paints the
+ * `invalid` ring, and replaces the hint with the returned message.
+ * Compose multiple rules with {@link composeValidators}.
+ *
+ * # Why caller-injected (not built-in min/max)
+ *
+ * Earlier revisions encoded type-aware ranges inside the primitive.
+ * Rejected as not-SOLID: primitives must not know domain rules; reuse
+ * suffers and every screen ends up fighting the built-ins. Rule
+ * authorship belongs to the consumer.
+ *
+ * # Why `type="number"` is a *prop*, not the rendered HTML type
+ *
+ * `<input type="number">` silently masks bad input as `""` (Chrome /
+ * Safari) and blocks valid keystrokes inconsistently across engines.
+ * The user can't see what they typed, the validator can't flag it.
+ * Internally we always render `<input type="text">` and pick
+ * `inputmode` from the prop — mobile keypad without the footguns.
+ * Callers still write `type="number"` for intent + a11y signalling.
+ *
+ * # Why we never block keystrokes
+ *
+ * Inputs accept every character. No keydown filters, no paste blockers,
+ * no masking. Show the typed string verbatim and let the validator
+ * explain what's wrong. Honest UX beats hostile UX.
+ *
  * HIG: https://developer.apple.com/design/human-interface-guidelines/text-fields
  */
 
@@ -9,10 +38,33 @@ import { LitElement, css, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { sharedStyles } from "./_base";
 
+/**
+ * Caller-facing intent for the field. Drives `inputmode` (mobile
+ * keypad) and a11y; does NOT change the rendered HTML input type
+ * (always `text` — see file header for rationale).
+ */
 export type RuneFieldType = "text" | "number";
 
+/**
+ * Validator contract: receive the current string value, return an
+ * error message to display, or `null` when the value is acceptable.
+ *
+ * Validators run synchronously on every input event so consumers
+ * reading `.invalid` during the bubbling `input` event see fresh
+ * state (no `await updateComplete` needed).
+ */
 export type RuneFieldValidator = (value: string) => string | null;
 
+/**
+ * Chain validators in priority order: returns the first non-null
+ * error, or `null` when every rule passes. Order matters — put
+ * shape rules (`required`, `numeric`) before semantic rules
+ * (`range`, `multipleOf`) so users see the most fundamental
+ * problem first.
+ *
+ * @example
+ * composeValidators(required, integer, range(1, 65535))
+ */
 export const composeValidators =
     (...rules: RuneFieldValidator[]): RuneFieldValidator =>
     (value) => {
