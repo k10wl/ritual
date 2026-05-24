@@ -47,14 +47,14 @@ export class RuneDisclosure extends LitElement {
 
             .chevron {
                 display: inline-block;
-                width: 10px;
-                height: 10px;
-                border-right: 1.5px solid currentColor;
-                border-bottom: 1.5px solid currentColor;
-                transform: rotate(-45deg);
+                width: 12px;
+                height: 12px;
+                color: currentColor;
+                transform: rotate(-90deg);
                 transition: transform var(--motion-reveal);
             }
-            details[open] .chevron { transform: rotate(45deg); }
+            details[open] .chevron { transform: rotate(0deg); }
+            .chevron svg { display: block; width: 100%; height: 100%; }
 
             .body {
                 overflow: hidden;
@@ -85,7 +85,12 @@ export class RuneDisclosure extends LitElement {
                 @toggle=${this.#onToggle}
             >
                 <summary part="summary">
-                    <span class="chevron" aria-hidden="true"></span>
+                    <span class="chevron" aria-hidden="true">
+                        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor"
+                             stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3,4.5 6,7.5 9,4.5"></polyline>
+                        </svg>
+                    </span>
                     <slot name="summary">Details</slot>
                 </summary>
                 <div class="body" part="body">

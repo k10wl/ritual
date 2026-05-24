@@ -1,9 +1,13 @@
 /**
  * IDLE-only advanced-settings disclosure. Composes <rune-disclosure> +
- * <rune-field> × 2 (port, memoryMB). Validity computed from per-field
+ * <rune-field> × 2 (port, memory). Validity computed from per-field
  * injected validators (Formik-style). Emits `change` on every keystroke
  * (for Start enable/disable) and `submit` when the consumer asks the
  * form to submit (read on Start).
+ *
+ * Memory is presented to the user in GB (whole numbers, ≥ 4) but the
+ * public contract stays in MB to match the backend (`-Xmx<N>M`).
+ * Conversion happens at the edges of this element only.
  *
  * See design-log/014-prep-advanced-settings.md.
  */
@@ -39,16 +43,29 @@ const range = (lo: number, hi: number): RuneFieldValidator => (v) => {
     return n < lo || n > hi ? `Must be between ${lo} and ${hi}.` : null;
 };
 
-const multipleOf = (m: number): RuneFieldValidator => (v) =>
-    Number(v) % m === 0 ? null : `Must be a multiple of ${m}.`;
+const MIN_MEMORY_GB = 4;
+const MAX_MEMORY_GB = 64;
+
+/** Accept "4", "4.5", "4,5" — comma is the decimal separator in many locales. */
+const parseGB = (raw: string): number => Number(raw.replace(",", "."));
+
+const memoryShape: RuneFieldValidator = (v) =>
+    /^\d+([.,]\d+)?$/.test(v) ? null : "Numbers only (e.g. 4 or 4.5).";
+
+const memoryRange: RuneFieldValidator = (v) => {
+    const n = parseGB(v);
+    return n < MIN_MEMORY_GB || n > MAX_MEMORY_GB
+        ? `Must be between ${MIN_MEMORY_GB} and ${MAX_MEMORY_GB}.`
+        : null;
+};
+
+const formatGB = (memoryMB: number): string => {
+    const gb = Math.max(MIN_MEMORY_GB, memoryMB / 1024);
+    return String(+gb.toFixed(1));
+};
 
 const portValidator = composeValidators(required, integer, range(1, 65535));
-const memoryValidator = composeValidators(
-    required,
-    integer,
-    range(512, 65536),
-    multipleOf(512),
-);
+const memoryValidator = composeValidators(required, memoryShape, memoryRange);
 
 @customElement("prep-settings")
 export class PrepSettingsEl extends LitElement {
@@ -62,10 +79,11 @@ export class PrepSettingsEl extends LitElement {
             font-family: var(--font-mono);
         }
         form {
-            display: flex;
-            flex-direction: column;
-            gap: var(--space-4);
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: var(--space-3) var(--space-4);
         }
+        form > rune-field { min-width: 0; }
     `;
 
     render() {
@@ -83,11 +101,11 @@ export class PrepSettingsEl extends LitElement {
                     ></rune-field>
                     <rune-field
                         type="number"
-                        name="memoryMB"
-                        label="Memory (MB)"
-                        .value=${String(this.config.memoryMB)}
+                        name="memoryGB"
+                        label="Memory (GB)"
+                        .value=${formatGB(this.config.memoryMB)}
                         .validate=${memoryValidator}
-                        hint="Memory must be ≥ 512 MB, in 512 MB steps."
+                        hint="At least ${MIN_MEMORY_GB} GB."
                     ></rune-field>
                 </form>
             </rune-disclosure>
@@ -102,9 +120,9 @@ export class PrepSettingsEl extends LitElement {
             values[f.name] = f.value;
         }
         const port = Number(values.port);
-        const memoryMB = Number(values.memoryMB);
-        if (!Number.isFinite(port) || !Number.isFinite(memoryMB)) return null;
-        return { port, memoryMB };
+        const memoryGB = parseGB(values.memoryGB);
+        if (!Number.isFinite(port) || !Number.isFinite(memoryGB)) return null;
+        return { port, memoryMB: Math.round(memoryGB * 1024) };
     }
 
     /** True when every field is currently valid. */

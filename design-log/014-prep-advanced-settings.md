@@ -261,3 +261,7 @@ The implementation solves the original problem when:
 
 - **OQ1.** Should `SaveConfig` also be called on `<details>` close (autosave on collapse) so unsubmitted edits aren't lost on accidental refresh? Default answer: no — keeps the "decide on Start" framing — but worth confirming with the user.
 - **OQ2.** Hint copy — keep terse English literals in the template, or route through a future i18n layer? Default: literals now; revisit when i18n is on the roadmap.
+
+## Implementation Results — addendum (2026-05-24)
+
+**Deviation: 2-column form layout.** Original spec stacked port + memory vertically (`flex-direction: column`). On shorter Wails windows the disclosure body pushed the stage past viewport height → scroll. Switched form to `display: grid; grid-template-columns: 1fr 1fr` (gap `space-3 / space-4`). Shell slot is 480px wide → ~216px per column, sufficient for 5-digit numeric inputs and their hints. No primitive changes; field internals unchanged.
