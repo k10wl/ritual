@@ -613,3 +613,18 @@ public/
 3. `dialStateContext` consumer wiring once a non-trivial consumer appears (e.g. when telemetry needs the state colour directly).
 4. `wailsApiContext` provider wiring once a primitive needs to call the service directly.
 5. 014 manual verification: run Wails dev, edit port + memory, restart, confirm persistence.
+
+### Post-ship deviation — `<rune-disclosure>` animation engine (2026-05-24)
+
+**Problem.** Original implementation animated body reveal via `details::details-content { block-size: 0 → auto }` paired with `interpolate-size: allow-keywords`. Both are very recent platform features and are not reliably honoured by the WebKit build Wails ships on macOS — the chevron rotated but the body snapped, i.e. no animation.
+
+**Fix.** Dropped `<details>/<summary>`. Now a `<button aria-expanded aria-controls>` toggles host `open` and a sibling region wrapper animates via `grid-template-rows: 0fr → 1fr` — universally supported in current WebKit/Chromium/Firefox without experimental flags. Honours `prefers-reduced-motion`. Public API (`open`, `summary` + default slots, `open` / `close` events) unchanged; only callers' visual outcome changes (now actually animated). Test updated to drive the button instead of the removed `<details>`.
+
+**Motion language tuning.** First pass was purely smooth (`--motion-reveal` on height); felt generic-web and didn't match the project's "glitchy smooth combo" (decoder splash over GSAP morph/zoom). Now layered:
+
+- **Smooth axis** — body height grows via `grid-template-rows: 0fr → 1fr` over `--motion-settle` (320 ms) for a deliberate, weighted reveal that matches the dial/sheet pace.
+- **Cascade axis** — *per-child* fade + scan-line drop (`translateY(-4px) → 0`) on each default-slot child, eased via `var(--motion-base)`, cascaded 50 ms apart on **open only**. Close fades all children together with no stagger — exit doesn't earn the extra choreography. Selectors are scoped via `::slotted(:not([slot]))` + `:nth-child(N of :not([slot]))` so the summary span never participates and the index stays correct regardless of whether a summary is slotted. (Earlier `steps(3, end)` glitch was tried and rejected — too on-the-nose; smooth wins for this surface.)
+- Caveat: the cascade only fires on *direct* slotted nodes. A caller that wraps all body content in a single `<form>` or `<div>` (e.g. `prep-settings`) collapses the cascade to one block fade; pass siblings to keep it.
+- Chevron rotates over `--motion-base` (220 ms) so it leads the body reveal slightly. All three collapse to `transition: none` under `prefers-reduced-motion`.
+
+All in primitive-allowed territory (CSS only; no `gsap` in `primitives/`).

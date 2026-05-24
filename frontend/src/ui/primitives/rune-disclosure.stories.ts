@@ -30,10 +30,13 @@ export const Open = () => html`
     <div style="padding:var(--space-4); max-width:380px;">
         <rune-disclosure open>
             <span slot="summary">Advanced</span>
-            <div style="display:flex; flex-direction:column; gap:var(--space-2);">
-                <p style="margin:0; color:var(--text-muted);">Body content revealed.</p>
-                <rune-button variant="tinted" size="sm">Action</rune-button>
-            </div>
+            <p style="margin:0 0 var(--space-2); color:var(--text-muted);">
+                Body content revealed.
+            </p>
+            <p style="margin:0 0 var(--space-3); color:var(--text-muted);">
+                Each child stutters in on its own beat.
+            </p>
+            <rune-button variant="tinted" size="sm">Action</rune-button>
         </rune-disclosure>
     </div>
 `;
