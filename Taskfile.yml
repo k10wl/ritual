@@ -34,7 +34,26 @@ includes:
   darwin: ./build/darwin/Taskfile.yml
   linux: ./build/linux/Taskfile.yml
 
+# Auto-load gitignored R2 credentials from .env.{dev,prod}.local and remap
+# Cloudflare-dashboard names (R2_*) to the runtime names the GUI reads
+# (RITUAL_R2_*, see internal/subsystems/remote/build.go).
+#
+# Default: dev. Override on the CLI:
+#   task gui:dev                   # uses .env.dev.local
+#   task gui:dev RITUAL_ENV=prod   # uses .env.prod.local
+#
+# Missing file is fatal at task time — Task aborts before launching the
+# GUI, naming the file it could not open. Missing keys inside an existing
+# file surface as remote.ErrR2EnvIncomplete at GUI boot.
+dotenv: ['.env.{{.RITUAL_ENV}}.local']
+env:
+  RITUAL_R2_BUCKET: '{{.R2_BUCKET_NAME}}'
+  RITUAL_R2_ACCOUNT_ID: '{{.R2_ACCOUNT_ID}}'
+  RITUAL_R2_ACCESS_KEY_ID: '{{.R2_ACCESS_KEY_ID}}'
+  RITUAL_R2_SECRET_ACCESS_KEY: '{{.R2_SECRET_ACCESS_KEY}}'
+
 vars:
+  RITUAL_ENV: '{{.RITUAL_ENV | default "dev"}}'
   APP_NAME: "ritual"
   BIN_DIR: "bin"
   MAIN_PKG: "./cmd/gui"

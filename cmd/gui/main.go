@@ -219,7 +219,7 @@ func buildRuntime() (*guiRuntime, error) {
 	//
 	//   4. Revert by changing the constant back to `remote.ModeMock`
 	//      and rebuilding. <root>/remote-mock/ is recreated fresh.
-	const remoteMode = remote.ModeMock
+	const remoteMode = remote.ModeR2
 
 	rawRemote, err := remote.Build(context.Background(), remoteMode, bus)
 	if err != nil {
