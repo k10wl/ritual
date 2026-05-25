@@ -343,8 +343,12 @@ func (r *testRitual) sendStop() {
 	r.bus.Publish(ritual.StopRequested{})
 }
 
-func (r *testRitual) sendRetry() {
-	r.bus.Publish(ritual.RetryRequested{})
+func (r *testRitual) sendDismiss() {
+	r.bus.Publish(ritual.DismissRequested{})
+}
+
+func (r *testRitual) sendStart() {
+	r.bus.Publish(ritual.StartRequested{})
 }
 
 // ---------- wait helpers ----------
@@ -986,24 +990,32 @@ func TestIntegration_StopRequestMidRunning_CommitsAndPushesRefBeforeDone(t *test
 		"audit fix #4 regression: ritual.StopRequested mid-Running must NOT cancel runCtx — Committing must run after the server exits and produce a new refs/{id}.json on remote. Pre-fix, lifecycle.stop() cancelled runCtx and Commit aborted on its first storage write, silently dropping the session while resolveStatus masked the failure as Done.")
 }
 
-func TestIntegration_FetchFails_RetrySucceeds(t *testing.T) {
-	ritual := newRitual(t)
+// After a failed Fetch, the user dismisses (Failed → Dismissed → Idle) then
+// starts again. Design-log/017 cuts retry-from-failed; a fresh Start re-enters
+// the pipeline at the entry strategy, and the flaky puller succeeds on its
+// second invocation.
+func TestIntegration_FetchFails_DismissAndStartSucceeds(t *testing.T) {
+	r := newRitual(t)
 
-	seedRemoteWorld(t, ritual,
+	seedRemoteWorld(t, r,
 		file("world/level.dat", []byte("level data")),
 	)
 
 	flaky := &failOnceIntegrationPuller{}
-	server := ritual.startRitualWithFlakyPuller(t, flaky)
-	ritual.waitFailed(t)
+	server := r.startRitualWithFlakyPuller(t, flaky)
+	r.waitFailed(t)
 
-	ritual.sendRetry()
+	r.sendDismiss()
+	waitForIntegrationStatus(t, r.ch, lifecycle.Dismissed, time.Second)
+	waitForIntegrationStatus(t, r.ch, lifecycle.Idle, time.Second)
+
+	r.sendStart()
 	server.waitReady(t)
 	server.stdin.Close()
-	ritual.waitDone(t)
+	r.waitDone(t)
 
 	assert.Equal(t, 2, flaky.calls,
-		"puller should be called twice — fail on first, succeed on retry")
+		"puller should be called twice — fail on first, succeed on the fresh Start after Dismiss")
 }
 
 // ---------- integration tests: backup and retention ----------

@@ -163,7 +163,11 @@ func TestRitual_Start_RunsPipeline(t *testing.T) {
 	assert.True(t, true, "pipeline reached Done")
 }
 
-func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
+// Story — after Dismiss-from-Failed, the user can Start a fresh run. Design-log/017
+// cuts retry-from-failed: dismiss returns the lifecycle to Idle; a subsequent
+// Start triggers a fresh pipeline. The flaky puller still succeeds on its
+// second invocation because the pipeline re-enters from the entry strategy.
+func TestRitual_DismissThenStart_RecoversFromFailure(t *testing.T) {
 	bus := adapters.NewEventBus(128)
 	ch, unsub := bus.Subscribe()
 	defer unsub()
@@ -182,10 +186,14 @@ func TestRitual_Retry_ReentersAtFailedStage(t *testing.T) {
 	bus.Publish(ritual.StartRequested{})
 	waitForStatus(t, ch, lifecycle.Failed, 5*time.Second)
 
-	bus.Publish(ritual.RetryRequested{})
+	bus.Publish(ritual.DismissRequested{})
+	waitForStatus(t, ch, lifecycle.Dismissed, 5*time.Second)
+	waitForStatus(t, ch, lifecycle.Idle, 5*time.Second)
+
+	bus.Publish(ritual.StartRequested{})
 	waitForStatus(t, ch, lifecycle.Done, 5*time.Second)
 
-	assert.Equal(t, 2, flaky.calls, "puller called twice: fail + retry")
+	assert.Equal(t, 2, flaky.calls, "puller called twice: fail + fresh-start retry path")
 }
 
 // Story #7 — Start is only rejected while Running. After terminal states
@@ -214,7 +222,7 @@ func TestRitual_Start_AfterDone_StartsAgain(t *testing.T) {
 	waitForStatus(t, ch, lifecycle.Done, 5*time.Second)
 }
 
-func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
+func TestRitual_Dismiss_WhenIdle_Rejected(t *testing.T) {
 	bus := adapters.NewEventBus(128)
 	ch, unsub := bus.Subscribe()
 	defer unsub()
@@ -226,7 +234,7 @@ func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
 		immediateReady{},
 	)()
 
-	bus.Publish(ritual.RetryRequested{})
+	bus.Publish(ritual.DismissRequested{})
 
 	deadline := time.After(time.Second)
 	for {
@@ -235,7 +243,7 @@ func TestRitual_Retry_WhenIdle_Rejected(t *testing.T) {
 			return // no crash, acceptable
 		case e := <-ch:
 			if sc, ok := e.(lifecycle.StatusChanged); ok && sc.Err != nil {
-				assert.Contains(t, sc.Err.Error(), "cannot retry")
+				assert.Contains(t, sc.Err.Error(), "cannot dismiss")
 				return
 			}
 		}

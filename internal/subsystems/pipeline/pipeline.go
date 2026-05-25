@@ -45,9 +45,9 @@ type Deps struct {
 }
 
 // Build wires the chain and returns the entry strategy. failed.* nodes
-// use SetRetry back-edges so a retry re-enters at the failed stage.
-// Retaining is wired with a side-specific failed instance per spec
-// §2297 so retry re-enters the side that actually failed.
+// are purely terminal — design-log/017 cuts retry-from-failed in favour of
+// dismiss-to-idle. Side-specific failed instances per spec §2297 still
+// attribute retaining failures to the correct side via rs.FailedStage.
 func Build(d Deps) machine.Strategy[ritual.RunState] {
 	failCheck := failed.New(ritual.StageChecking)
 	failPull := failed.New(ritual.StagePulling)
@@ -67,14 +67,6 @@ func Build(d Deps) machine.Strategy[ritual.RunState] {
 	acquire := acquiring.New(d.AcquireFn, d.InspectFn, d.HeartbeatInterval, run, failAcq)
 	pull := pulling.New(d.Puller, d.Applier, d.HeadResolver, acquire, failPull)
 	check := checking.New(d.Checks, pull, failCheck)
-
-	failCheck.SetRetry(check)
-	failPull.SetRetry(pull)
-	failAcq.SetRetry(acquire)
-	failCommit.SetRetry(commit)
-	failPush.SetRetry(push)
-	failRetLocal.SetRetry(pruneLocal)
-	failRetRemote.SetRetry(pruneRemote)
 
 	return check
 }

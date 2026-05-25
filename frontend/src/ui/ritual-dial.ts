@@ -2,7 +2,7 @@ import { LitElement, css, html, PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { gsap } from "gsap";
 import { MorphSVGPlugin } from "gsap/MorphSVGPlugin";
-import { Play, Square, X as XIcon, Download, Upload } from "lucide";
+import { Play, Square, X as XIcon, Download, Upload, BrainCog, Unplug } from "lucide";
 import svgpath from "svgpath";
 import "./primitives/decoder";
 import "./primitives/stable-num";
@@ -10,7 +10,7 @@ import "./primitives/stable-num";
 gsap.registerPlugin(MorphSVGPlugin);
 
 export type DialState = "idle" | "prep" | "run" | "final" | "fail";
-export type DialGlyph = "play" | "stop" | "x" | "download" | "upload" | null;
+export type DialGlyph = "play" | "stop" | "x" | "download" | "upload" | "brain-cog" | "unplug" | null;
 
 const RADIUS = 100;
 const CIRC = 2 * Math.PI * RADIUS;
@@ -47,11 +47,13 @@ const compoundD = (icon: LucideIcon): string =>
     icon.map(shapeToD).filter(Boolean).map((d) => svgpath(d).abs().toString()).join(" ");
 
 const GLYPHS: Record<Exclude<DialGlyph, null>, string> = {
-    play:     compoundD(Play as LucideIcon),
-    stop:     compoundD(Square as LucideIcon),
-    x:        compoundD(XIcon as LucideIcon),
-    download: compoundD(Download as LucideIcon),
-    upload:   compoundD(Upload as LucideIcon),
+    play:        compoundD(Play as LucideIcon),
+    stop:        compoundD(Square as LucideIcon),
+    x:           compoundD(XIcon as LucideIcon),
+    download:    compoundD(Download as LucideIcon),
+    upload:      compoundD(Upload as LucideIcon),
+    "brain-cog": compoundD(BrainCog as LucideIcon),
+    unplug:      compoundD(Unplug as LucideIcon),
 };
 const dFor = (g: DialGlyph): string => (g ? GLYPHS[g] : "");
 

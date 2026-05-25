@@ -4,14 +4,14 @@
 import { Events } from "@wailsio/runtime";
 import * as Control from "../bindings/ritual/internal/gui/control/controlservice";
 import { Prep } from "../bindings/ritual/internal/gui/control/models";
-import { ViewModel, Stage, JoinAddress } from "../bindings/ritual/internal/gui/projection/models";
+import { ViewModel, Stage, Phase, JoinAddress } from "../bindings/ritual/internal/gui/projection/models";
 import { LogLine, Level } from "../bindings/ritual/internal/gui/logsink/models";
 
-export { ViewModel, Stage, JoinAddress, LogLine, Level, Prep };
+export { ViewModel, Stage, Phase, JoinAddress, LogLine, Level, Prep };
 
 export const start = (port: number, memoryMB: number) => Control.Start(port, memoryMB);
 export const stop = () => Control.Stop();
-export const retry = () => Control.Retry();
+export const dismiss = () => Control.Dismiss();
 export const getSnapshot = () => Control.GetSnapshot();
 export const getPrep = () => Control.GetPrep();
 export const showLogs = () => Control.ShowLogs();

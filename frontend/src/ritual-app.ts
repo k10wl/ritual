@@ -1,6 +1,7 @@
 import { css, html, LitElement } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import {
+    dismiss,
     getPrep,
     getSnapshot,
     onView,
@@ -8,7 +9,7 @@ import {
     showLogs,
     start,
     stop,
-    Stage,
+    Phase,
     ViewModel,
     JoinAddress,
 } from "./wails-api";
@@ -26,20 +27,33 @@ const FALLBACK_PREP: PrepSettings = { port: 25565, memoryMB: 4096 };
 
 type UnderSlot = "telemetry" | "addresses" | null;
 
-interface Derived {
-    dial: { state: DialState; arc: number; glyph: DialGlyph; label: string; sub: string };
+interface DialView {
+    state: DialState;
+    glyph: DialGlyph;
+    label: string;
+    arc: (vm: ViewModel, ctx: AppCtx) => number;
+    sub: (vm: ViewModel, ctx: AppCtx) => string;
     underSlot: UnderSlot;
-    telemetry: { speedBps: number; bytesDone: number; bytesTotal: number };
-    addresses: JoinAddress[];
 }
 
-const FALLBACK_VM: ViewModel = new ViewModel({ stage: Stage.StageIdle });
+interface AppCtx {
+    uptimeSub: string;
+    lastProgressArc: number;
+    lastNonFailPhase: Phase;
+}
 
-function nounFor(stage: Stage): string {
-    switch (stage) {
-        case Stage.StageDownloading: return "getting ready";
-        case Stage.StageRunning:     return "running the server";
-        case Stage.StageUploading:   return "saving";
+const FALLBACK_VM: ViewModel = new ViewModel({ phase: Phase.PhaseIdle });
+
+// Failure attribution noun map: when a run fails, the dial shows "Couldn't
+// finish {noun}" where noun reflects the last user-meaningful phase the run
+// was in. Three nouns cover the six active phases. Per design-log/017.
+function nounFor(phase: Phase): string {
+    switch (phase) {
+        case Phase.PhaseDownloading: return "starting";
+        case Phase.PhasePreparing:   return "starting";
+        case Phase.PhasePlaying:     return "running";
+        case Phase.PhaseWrapping:    return "saving";
+        case Phase.PhaseSaving:      return "saving";
         default:                     return "the run";
     }
 }
@@ -50,11 +64,83 @@ function snapEta(secs: number): number {
     return Math.round(secs / 60) * 60;
 }
 
+function arcFromBytes(vm: ViewModel): number {
+    if (vm.bytesTotal <= 0) return 0;
+    return Math.min(1, Math.max(0, vm.bytesDone / vm.bytesTotal));
+}
+
+function etaSub(vm: ViewModel): string {
+    const speedBps = vm.speedMbps * MBPS_TO_BPS;
+    if (speedBps <= 0 || vm.bytesTotal <= 0) return formatEta(null);
+    const remaining = Math.max(0, vm.bytesTotal - vm.bytesDone);
+    return formatEta(snapEta(remaining / speedBps));
+}
+
+// Phase → dial view table. Single source of truth for glyph + label + arc +
+// sub-line + under-slot dispatch. Per design-log/017 §Visual dispatch +
+// copy table. Lock-conflict is a PhaseFailed beat with friendly copy
+// resolved at render time (sees vm.lockHolder).
+const PHASE_VIEW: Record<Phase, DialView> = {
+    [Phase.$zero]: {
+        state: "idle", glyph: "play", label: "Start", underSlot: null,
+        arc: () => 0,
+        sub: () => "",
+    },
+    [Phase.PhaseIdle]: {
+        state: "idle", glyph: "play", label: "Start", underSlot: null,
+        arc: () => 0,
+        sub: () => "",
+    },
+    [Phase.PhaseDownloading]: {
+        state: "prep", glyph: "download", label: "Downloading", underSlot: "telemetry",
+        arc: arcFromBytes,
+        sub: etaSub,
+    },
+    [Phase.PhasePreparing]: {
+        state: "prep", glyph: "brain-cog", label: "Spinning up", underSlot: null,
+        arc: () => 1,
+        sub: () => "Almost live",
+    },
+    [Phase.PhasePlaying]: {
+        state: "run", glyph: "stop", label: "Live", underSlot: "addresses",
+        arc: () => 1,
+        sub: (_vm, ctx) => ctx.uptimeSub || formatEta(0),
+    },
+    [Phase.PhaseWrapping]: {
+        state: "final", glyph: "unplug", label: "Spinning down", underSlot: null,
+        arc: () => 0,
+        sub: () => "Going offline",
+    },
+    [Phase.PhaseSaving]: {
+        state: "final", glyph: "upload", label: "Saving", underSlot: "telemetry",
+        arc: arcFromBytes,
+        // Save-tail per design-log/017: once all bytes are out (Unlocking +
+        // Retaining), swap the visible label to "Wrapping up" / "Almost done"
+        // — the arc plateau + housekeeping deserves its own beat copy.
+        sub: (vm) => (vm.bytesTotal > 0 && vm.bytesDone >= vm.bytesTotal ? "Almost done" : etaSub(vm)),
+    },
+    [Phase.PhaseFailed]: {
+        state: "fail", glyph: "x", label: "",
+        // Failure label resolved at render time so locked-conflict and
+        // generic failures pick distinct copy from the same dispatch slot.
+        underSlot: null,
+        arc: (_vm, ctx) => ctx.lastProgressArc,
+        sub: () => "Tap to dismiss",
+    },
+};
+
+interface Derived {
+    dial: { state: DialState; arc: number; glyph: DialGlyph; label: string; sub: string };
+    underSlot: UnderSlot;
+    telemetry: { speedBps: number; bytesDone: number; bytesTotal: number };
+    addresses: JoinAddress[];
+}
+
 @customElement("ritual-app")
 export class RitualApp extends LitElement {
     @state() private vm: ViewModel = FALLBACK_VM;
     @state() private lastProgressArc = 0;
-    @state() private lastNonFailStage: Stage = Stage.StageIdle;
+    @state() private lastNonFailPhase: Phase = Phase.PhaseIdle;
     @state() private uptimeSub = "";
     @state() private prep: PrepSettings = FALLBACK_PREP;
     @query("prep-settings") private _prepEl!: PrepSettingsEl | null;
@@ -85,20 +171,23 @@ export class RitualApp extends LitElement {
     }
 
     private applyVm(vm: ViewModel) {
-        const wasRun = this.vm.stage === Stage.StageRunning;
-        const isRun = vm.stage === Stage.StageRunning;
-        if (vm.stage !== Stage.StageFailed) {
-            this.lastNonFailStage = vm.stage;
-            this.lastProgressArc = this.arcFor(vm);
+        const wasPlaying = this.vm.phase === Phase.PhasePlaying;
+        const isPlaying = vm.phase === Phase.PhasePlaying;
+        if (vm.phase !== Phase.PhaseFailed) {
+            this.lastNonFailPhase = vm.phase;
+            this.lastProgressArc = PHASE_VIEW[vm.phase]?.arc(vm, this.ctx()) ?? 0;
         }
-        if (isRun && !wasRun) this.startUptime();
-        if (!isRun && wasRun) this.stopUptime();
+        if (isPlaying && !wasPlaying) this.startUptime();
+        if (!isPlaying && wasPlaying) this.stopUptime();
         this.vm = vm;
     }
 
-    private arcFor(vm: ViewModel): number {
-        if (vm.bytesTotal <= 0) return 0;
-        return Math.min(1, Math.max(0, vm.bytesDone / vm.bytesTotal));
+    private ctx(): AppCtx {
+        return {
+            uptimeSub: this.uptimeSub,
+            lastProgressArc: this.lastProgressArc,
+            lastNonFailPhase: this.lastNonFailPhase,
+        };
     }
 
     private startUptime() {
@@ -116,107 +205,61 @@ export class RitualApp extends LitElement {
         this.uptimeTimer = 0;
     }
 
-    private etaSub(vm: ViewModel): string {
-        const speedBps = vm.speedMbps * MBPS_TO_BPS;
-        if (speedBps <= 0 || vm.bytesTotal <= 0) return formatEta(null);
-        const remaining = Math.max(0, vm.bytesTotal - vm.bytesDone);
-        return formatEta(snapEta(remaining / speedBps));
-    }
-
     private derive(): Derived {
         const vm = this.vm;
+        const ctx = this.ctx();
         const telemetry = {
             speedBps: vm.speedMbps * MBPS_TO_BPS,
             bytesDone: vm.bytesDone,
             bytesTotal: vm.bytesTotal,
         };
-        if (vm.stage === Stage.StageFailed) {
-            return {
-                dial: {
-                    state: "fail",
-                    arc: this.lastProgressArc,
-                    glyph: "x",
-                    label: `Couldn't finish ${nounFor(this.lastNonFailStage)}`,
-                    sub: "Tap to try again",
-                },
-                underSlot: null,
-                telemetry,
-                addresses: vm.addresses,
-            };
+        const view = PHASE_VIEW[vm.phase] ?? PHASE_VIEW[Phase.PhaseIdle];
+
+        let label = view.label;
+        // Save-tail beat shares the dispatch slot with the saving beat; swap
+        // its title to "Wrapping up" once the bytes window closes.
+        if (vm.phase === Phase.PhaseSaving) {
+            if (vm.bytesTotal > 0 && vm.bytesDone >= vm.bytesTotal) {
+                label = "Wrapping up";
+            } else {
+                label = "Saving";
+            }
+        } else if (vm.phase === Phase.PhaseFailed) {
+            // Lock-held failures get the friendly holder-name title; generic
+            // failures pick a phase-attributed noun. Design-log/017 folded
+            // PhaseLocked into PhaseFailed.
+            label = vm.lockHolder
+                ? `${vm.lockHolder} is playing`
+                : `Couldn't finish ${nounFor(this.lastNonFailPhase)}`;
         }
-        switch (vm.stage) {
-            case Stage.StageLocked:
-                return {
-                    dial: {
-                        state: "idle",
-                        arc: 0,
-                        glyph: "x",
-                        label: vm.lockHolder ? `${vm.lockHolder} is playing` : "Locked",
-                        sub: "Tap to check again",
-                    },
-                    underSlot: null,
-                    telemetry,
-                    addresses: vm.addresses,
-                };
-            case Stage.StageDownloading:
-                return {
-                    dial: {
-                        state: "prep",
-                        arc: this.arcFor(vm),
-                        glyph: "download",
-                        label: "Getting ready",
-                        sub: this.etaSub(vm),
-                    },
-                    underSlot: "telemetry",
-                    telemetry,
-                    addresses: vm.addresses,
-                };
-            case Stage.StageRunning:
-                return {
-                    dial: {
-                        state: "run",
-                        arc: 1,
-                        glyph: "stop",
-                        label: "Ready to play",
-                        sub: this.uptimeSub || formatEta(0),
-                    },
-                    underSlot: "addresses",
-                    telemetry,
-                    addresses: vm.addresses,
-                };
-            case Stage.StageUploading:
-                return {
-                    dial: {
-                        state: "final",
-                        arc: this.arcFor(vm),
-                        glyph: "upload",
-                        label: "Saving",
-                        sub: this.etaSub(vm),
-                    },
-                    underSlot: "telemetry",
-                    telemetry,
-                    addresses: vm.addresses,
-                };
-            case Stage.StageIdle:
-            default:
-                return {
-                    dial: { state: "idle", arc: 0, glyph: "play", label: "Start", sub: "" },
-                    underSlot: null,
-                    telemetry,
-                    addresses: vm.addresses,
-                };
-        }
+
+        return {
+            dial: {
+                state: view.state,
+                arc: view.arc(vm, ctx),
+                glyph: view.glyph,
+                label,
+                sub: view.sub(vm, ctx),
+            },
+            underSlot: view.underSlot,
+            telemetry,
+            addresses: vm.addresses,
+        };
     }
 
     private onTap = () => {
-        const s = this.vm.stage;
-        if (s !== Stage.StageIdle && s !== Stage.StageLocked && s !== Stage.StageFailed) return;
+        const phase = this.vm.phase;
+        if (phase === Phase.PhaseFailed) {
+            void dismiss();
+            return;
+        }
+        if (phase !== Phase.PhaseIdle && phase !== Phase.$zero) return;
         const settings = this._prepEl?.read() ?? this.prep;
         void start(settings.port, settings.memoryMB);
     };
 
     private onHoldCommit = () => {
-        if (this.vm.stage === Stage.StageRunning) void stop();
+        if (this.vm.phase === Phase.PhasePlaying) void stop();
     };
 
     private onAmbientAction = (e: CustomEvent<"logs" | "folder">) => {

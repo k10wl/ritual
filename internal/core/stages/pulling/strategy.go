@@ -27,6 +27,15 @@ type HeadResolver func(ctx context.Context) (domain.RefID, error)
 // a different error so they route to onFail unchanged.
 var ErrNoHead = errors.New("pulling: no head ref on storage")
 
+// ApplyStartedInfo fires after the network pull completes and before the
+// workdir apply begins. GUI projection consumes it to flip the dial phase
+// from `downloading` (bytes flowing) to `preparing` (invisible work) — see
+// design-log/017 §Q1. Fires exactly once per Pulling run that reaches the
+// apply step, including when Puller.Pull returned with no bytes to fetch.
+type ApplyStartedInfo struct{}
+
+func (ApplyStartedInfo) String() string { return "apply started" }
+
 // Strategy implements the Pulling stage.
 type Strategy struct {
 	puller  ports.Puller
@@ -70,6 +79,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 		rs.Err = err
 		return s.onFail, nil
 	}
+	publish(rs.Bus, ApplyStartedInfo{})
 	if err := s.applier.Apply(stopCtx, id); err != nil {
 		rs.Err = err
 		return s.onFail, nil

@@ -2,13 +2,13 @@ package projection
 
 import (
 	"context"
-	"fmt"
 	"ritual/internal/adapters/progress"
-	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/acquiring"
+	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/running"
+	"ritual/internal/subsystems/lifecycle"
 )
 
 // Emitter receives a snapshot after every fold that changes the ViewModel.
@@ -18,15 +18,17 @@ type Emitter interface {
 }
 
 // AddressProvider returns the list of join addresses to render on the
-// Running stage. Called once per StageRunning entry.
+// Playing phase. Called once per ServerReady transition.
 type AddressProvider interface {
 	Addresses() []JoinAddress
 }
 
 // Projection subscribes to the bus and folds events into a single ViewModel.
 // pipelineStage tracks the most recent ritual stage name so onTick can gate
-// label mutation: a late progress.Tick arriving after the pipeline moved on
-// to Committing must not flip the label back to "Uploading — N Mbps".
+// network-progress writes: a late progress.Tick arriving after the pipeline
+// moved on to Committing must not overwrite stage-set values.
+// everReady tracks whether the current run has reached ServerReady; gates
+// the Running-stage phase transitions (preparing → playing → wrapping).
 type Projection struct {
 	ch            <-chan ports.Event
 	unsub         func()
@@ -34,6 +36,7 @@ type Projection struct {
 	addresses     AddressProvider
 	state         ViewModel
 	pipelineStage string
+	everReady     bool
 }
 
 // New subscribes to bus immediately and returns a Projection ready for Run.
@@ -47,7 +50,7 @@ func New(bus ports.EventBus, emitter Emitter, addresses AddressProvider) *Projec
 		unsub:     unsub,
 		emitter:   emitter,
 		addresses: addresses,
-		state:     ViewModel{Stage: StageIdle},
+		state:     ViewModel{Stage: StageIdle, Phase: PhaseIdle},
 	}
 }
 
@@ -81,22 +84,35 @@ func (p *Projection) fold(evt ports.Event) bool {
 	switch e := evt.(type) {
 	case ritual.StateChangedInfo:
 		p.onStateChanged(e.To)
-	case running.ServerStartingInfo:
-		p.state.Label = "Starting server…"
-		p.state.ReadyLight = false
+	case pulling.ApplyStartedInfo:
+		// Pulling's network phase is done; apply is running invisibly. Phase
+		// flips from `downloading` to `preparing` so the dial swaps glyph
+		// (download → brain-cog) and drops ETA. See design-log/017 §Q1.
+		if p.pipelineStage == ritual.StagePulling {
+			p.state.Phase = PhasePreparing
+		}
 	case running.ServerReadyInfo:
-		p.state.Label = "Ready"
-		p.state.ReadyLight = true
+		// Address reachable. Flip bucket to running + phase to playing; load
+		// addresses once now that the server is actually listening.
+		p.everReady = true
+		p.state.Stage = StageRunning
+		p.state.Phase = PhasePlaying
+		if p.addresses != nil {
+			p.state.Addresses = p.addresses.Addresses()
+		}
 	case running.ServerStoppingInfo:
-		p.state.Label = "Stopping…"
-		p.state.ReadyLight = false
-	case running.ServerStoppedInfo:
-		p.state.ReadyLight = false
+		// User-driven shutdown begun. Flip bucket to uploading + phase to
+		// wrapping; addresses are no longer useful so drop them.
+		p.state.Stage = StageUploading
+		p.state.Phase = PhaseWrapping
+		p.state.Addresses = nil
 	case acquiring.LockHeldInfo:
-		p.state.Stage = StageLocked
+		// Lock-held merely records the holder; the actual UI transition fires
+		// when lifecycle reports Failed (the acquiring stage routes to failed
+		// after LockHeldInfo). Frontend reads lockHolder during PhaseFailed
+		// to pick the friendly "{holder} is playing" copy. Design-log/017
+		// folded PhaseLocked into PhaseFailed for a single failure pathway.
 		p.state.LockHolder = e.Holder
-		p.state.Label = e.Holder + " is playing"
-		p.state.ErrorText = ""
 	case progress.Tick:
 		return p.onTick(e)
 	case ritual.PlanInfo:
@@ -114,117 +130,76 @@ func (p *Projection) fold(evt ports.Event) bool {
 // the ticker already derived everything, projection chooses which series
 // drives the visible state for the current pipeline stage. Gated on
 // pipelineStage so a late Tick arriving after the pipeline moved on (e.g.
-// during Committing) does not overwrite the stage-set label or freeze a
-// stale BytesDone value.
+// during Committing) does not freeze a stale BytesDone value.
 //
 // BytesDone reads from Stream.Data (logical, matches PlanInfo.BytesTotal).
-// Label and SpeedMbps read from Stream.Average — 5-second rolling wire
-// rate, matches curl's --progress-bar convention (design-log/001
-// §Refinement). LogicalMbps reads from Stream.DataAverage — drives the
-// chart's second series (decompress/install rate).
-//
-// The 0.5 Mbps floor on the LABEL suppresses "0.0 Mbps" flicker when
-// nothing is moving; the stage-set label ("Downloading…") stays visible
-// until real activity crosses the floor. SpeedMbps / LogicalMbps are
-// always set so frontend charts have the raw numbers regardless of label
-// state.
-const speedLabelFloorMbps = 0.5
-
+// SpeedMbps reads from Stream.Average — 5-second rolling wire rate, matches
+// curl's --progress-bar convention (design-log/001 §Refinement).
+// LogicalMbps reads from Stream.DataAverage — drives the chart's second
+// series (decompress/install rate).
 func (p *Projection) onTick(t progress.Tick) bool {
 	switch p.pipelineStage {
 	case ritual.StagePulling:
 		p.state.BytesDone = t.Remote.Down.Data
 		p.state.SpeedMbps = t.Remote.Down.Average
 		p.state.LogicalMbps = t.Remote.Down.DataAverage
-		if t.Remote.Down.Average > speedLabelFloorMbps {
-			p.state.Label = fmt.Sprintf("Downloading — %.1f Mbps", t.Remote.Down.Average)
-		}
 	case ritual.StagePushing:
 		p.state.BytesDone = t.Remote.Up.Data
 		p.state.SpeedMbps = t.Remote.Up.Average
 		p.state.LogicalMbps = t.Remote.Up.DataAverage
-		if t.Remote.Up.Average > speedLabelFloorMbps {
-			p.state.Label = fmt.Sprintf("Uploading — %.1f Mbps", t.Remote.Up.Average)
-		}
 	default:
 		return false
 	}
 	return true
 }
 
+// onStateChanged maps ritual stage transitions to (Stage, Phase) per the
+// design-log/017 §Bucket × Phase mapping table. Server-lifecycle events
+// (ServerReady/Stopping) and pulling.ApplyStartedInfo refine Phase further
+// within the Running and Pulling windows respectively.
 func (p *Projection) onStateChanged(to string) {
 	p.pipelineStage = to
 	switch to {
-	case ritual.StageChecking, ritual.StagePulling, ritual.StageAcquiring:
+	case ritual.StageChecking, ritual.StagePulling:
 		p.state.Stage = StageDownloading
-		p.state.Label = downloadLabel(to)
+		p.state.Phase = PhaseDownloading
+	case ritual.StageAcquiring:
+		p.state.Stage = StageDownloading
+		p.state.Phase = PhasePreparing
 	case ritual.StageRunning:
-		p.state.Stage = StageRunning
-		p.state.Label = "Starting server…"
+		// Stay in downloading bucket / preparing phase until ServerReady
+		// actually fires — see design-log/017 §Prep→Run boundary. The bucket
+		// flip happens in onFold for ServerReadyInfo, not here.
+		p.state.Stage = StageDownloading
+		p.state.Phase = PhasePreparing
 		p.state.Progress, p.state.BytesDone, p.state.BytesTotal = 0, 0, 0
 		p.state.FilesDone, p.state.FilesTotal = 0, 0
-		if p.addresses != nil {
-			p.state.Addresses = p.addresses.Addresses()
-		}
-	case ritual.StageCommitting, ritual.StagePushing, ritual.StageUnlocking, ritual.StageRetaining:
+	case ritual.StageCommitting:
 		p.state.Stage = StageUploading
-		p.state.Label = uploadLabel(to)
-		p.state.ReadyLight = false
+		p.state.Phase = PhaseWrapping
+	case ritual.StagePushing, ritual.StageUnlocking, ritual.StageRetaining:
+		p.state.Stage = StageUploading
+		p.state.Phase = PhaseSaving
 	}
 }
 
+// onStatusChanged maps run-level lifecycle outcomes to the ViewModel.
+// Failed populates ErrorText; Dismissed clears it and returns to Idle;
+// Done resets to a clean Idle. Lock-held state survives a subsequent Failed
+// because lifecycle resolves an acquisition-conflict as Failed even though
+// the UI must stay on the friendly "someone is playing" screen.
 func (p *Projection) onStatusChanged(e lifecycle.StatusChanged) {
 	switch e.Status {
-	case lifecycle.Idle, lifecycle.Done:
-		p.state = ViewModel{Stage: StageIdle}
+	case lifecycle.Idle, lifecycle.Done, lifecycle.Dismissed:
+		p.state = ViewModel{Stage: StageIdle, Phase: PhaseIdle}
+		p.everReady = false
+		p.pipelineStage = ""
 	case lifecycle.Failed:
-		if p.state.Stage == StageLocked {
-			return
-		}
 		p.state.Stage = StageFailed
+		p.state.Phase = PhaseFailed
 		if e.Err != nil {
 			p.state.ErrorText = e.Err.Error()
 		}
 	case lifecycle.Running:
 	}
-}
-
-func downloadLabel(stage string) string {
-	switch stage {
-	case ritual.StageChecking:
-		return "Checking…"
-	case ritual.StagePulling:
-		return "Downloading…"
-	case ritual.StageAcquiring:
-		return "Acquiring lock…"
-	}
-	return "Preparing…"
-}
-
-func uploadLabel(stage string) string {
-	switch stage {
-	case ritual.StageCommitting:
-		return "Snapshotting…"
-	case ritual.StagePushing:
-		return "Uploading…"
-	case ritual.StageUnlocking:
-		return "Releasing lock…"
-	case ritual.StageRetaining:
-		return "Pruning old refs…"
-	}
-	return "Finishing…"
-}
-
-func percent(done, total int64) int {
-	if total <= 0 {
-		return 0
-	}
-	p := int((done * 100) / total)
-	if p < 0 {
-		return 0
-	}
-	if p > 100 {
-		return 100
-	}
-	return p
 }

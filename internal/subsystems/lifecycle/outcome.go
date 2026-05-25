@@ -5,13 +5,15 @@ package lifecycle
 // pills read.
 type Outcome int
 
-// Outcome values. Terminal states are Done and Failed; from Failed the
-// only forward transition is Running (via RetryRequested).
+// Outcome values. Terminal states are Done, Failed, and Dismissed; from
+// Failed the only forward transitions are Running (fresh Start) or
+// Dismissed (user-acknowledged failure, returns to Idle).
 const (
 	Idle Outcome = iota
 	Running
 	Failed
 	Done
+	Dismissed
 )
 
 func (o Outcome) String() string {
@@ -24,6 +26,8 @@ func (o Outcome) String() string {
 		return "failed"
 	case Done:
 		return "done"
+	case Dismissed:
+		return "dismissed"
 	default:
 		return "unknown"
 	}

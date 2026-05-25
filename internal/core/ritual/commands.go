@@ -17,8 +17,10 @@ type StopRequested struct{}
 
 func (StopRequested) String() string { return "stop requested" }
 
-// RetryRequested commands the lifecycle to re-enter at the failed stage.
-// Only valid when the current Outcome is Failed.
-type RetryRequested struct{}
+// DismissRequested acknowledges a Failed outcome and returns the
+// lifecycle to Idle. Only valid when current Outcome is Failed.
+// Replaces the prior retry-from-failed semantic (see design-log/017): the
+// user explicitly clears the failure, then re-engages with a fresh Start.
+type DismissRequested struct{}
 
-func (RetryRequested) String() string { return "retry requested" }
+func (DismissRequested) String() string { return "dismiss requested" }

@@ -32,7 +32,7 @@ type WindowControl interface {
 }
 
 // ControlService is the Wails service the main window binds to. It exposes
-// the user commands (Start/Stop/Retry), the initial snapshot, and the
+// the user commands (Start/Stop/Dismiss), the initial snapshot, and the
 // "show logs window" action.
 type ControlService struct {
 	bus      ports.EventBus
@@ -75,10 +75,12 @@ func (c *ControlService) Stop() {
 	c.bus.Publish(ritual.StopRequested{})
 }
 
-// Retry publishes a RetryRequested command; the Ritual orchestrator
-// rejects the request if status is not Failed.
-func (c *ControlService) Retry() {
-	c.bus.Publish(ritual.RetryRequested{})
+// Dismiss publishes a DismissRequested command; the Ritual orchestrator
+// rejects the request if status is not Failed. Replaces the prior
+// retry-from-failed flow (see design-log/017): the user acknowledges the
+// failure, the UI returns to Idle, and a subsequent Start begins fresh.
+func (c *ControlService) Dismiss() {
+	c.bus.Publish(ritual.DismissRequested{})
 }
 
 // GetSnapshot returns the current GUI view model. The frontend calls this

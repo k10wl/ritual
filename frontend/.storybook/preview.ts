@@ -1,7 +1,7 @@
 import type { Preview } from "@storybook/web-components-vite";
 import { html } from "lit";
 import { setTransport } from "@wailsio/runtime";
-import { JoinAddress, Stage, ViewModel } from "../src/wails-api";
+import { JoinAddress, Phase, Stage, ViewModel } from "../src/wails-api";
 
 declare global {
     interface Window {
@@ -14,7 +14,7 @@ declare global {
 const M = {
     GetSnapshot: 2954345432,
     OpenRootFolder: 3559753188,
-    Retry: 1907515874,
+    Dismiss: 3052956532,
     SendConsole: 344753175,
     ShowLogs: 3352242658,
     Start: 4262819292,
@@ -24,35 +24,50 @@ const OBJ_CALL = 0;
 const OBJ_EVENTS = 3;
 
 const fixtures = {
-    idle: () => new ViewModel({ stage: Stage.StageIdle }),
-    locked: () =>
-        new ViewModel({ stage: Stage.StageLocked, lockHolder: "alice" }),
+    idle: () => new ViewModel({ stage: Stage.StageIdle, phase: Phase.PhaseIdle }),
+    // Lock conflict folded into Failed per design-log/017.
+    lockConflict: () =>
+        new ViewModel({
+            stage: Stage.StageFailed,
+            phase: Phase.PhaseFailed,
+            lockHolder: "alice",
+            errorText: "already locked by alice",
+        }),
     downloading: (progress: number) =>
         new ViewModel({
             stage: Stage.StageDownloading,
+            phase: Phase.PhaseDownloading,
             progress,
             bytesDone: progress * 10_000_000,
             bytesTotal: 1_000_000_000,
             speedMbps: 32,
-            label: "Downloading world…",
         }),
-    running: () =>
+    preparing: () =>
+        new ViewModel({
+            stage: Stage.StageDownloading,
+            phase: Phase.PhasePreparing,
+            bytesDone: 1_000_000_000,
+            bytesTotal: 1_000_000_000,
+        }),
+    playing: () =>
         new ViewModel({
             stage: Stage.StageRunning,
-            readyLight: true,
+            phase: Phase.PhasePlaying,
             addresses: [
                 new JoinAddress({ label: "LAN", address: "192.168.1.10:25565" }),
                 new JoinAddress({ label: "Tailscale", address: "100.64.0.5:25565" }),
             ],
         }),
-    uploading: (progress: number) =>
+    wrapping: () =>
+        new ViewModel({ stage: Stage.StageUploading, phase: Phase.PhaseWrapping }),
+    saving: (progress: number) =>
         new ViewModel({
             stage: Stage.StageUploading,
+            phase: Phase.PhaseSaving,
             progress,
             bytesDone: progress * 10_000_000,
             bytesTotal: 1_000_000_000,
             speedMbps: 22,
-            label: "Uploading world…",
         }),
 };
 
@@ -100,12 +115,20 @@ setTransport({
             case M.GetSnapshot:
                 return current;
             case M.Start:
-                ramp(fixtures.downloading, () => set(fixtures.running()));
+                // Walk download → preparing → playing per design-log/017.
+                ramp(fixtures.downloading, () => {
+                    set(fixtures.preparing());
+                    setTimeout(() => set(fixtures.playing()), 1200);
+                });
                 return undefined;
             case M.Stop:
-                ramp(fixtures.uploading, () => set(fixtures.idle()));
+                // Walk wrapping → saving → idle.
+                set(fixtures.wrapping());
+                setTimeout(() => {
+                    ramp(fixtures.saving, () => set(fixtures.idle()));
+                }, 1200);
                 return undefined;
-            case M.Retry:
+            case M.Dismiss:
                 set(fixtures.idle());
                 return undefined;
             default:

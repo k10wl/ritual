@@ -1,5 +1,5 @@
 // Package lifecycle owns the run-level controller: subscribes to the
-// command bus (ritual.StartRequested / StopRequested / RetryRequested),
+// command bus (ritual.StartRequested / StopRequested / DismissRequested),
 // drives the FSM via ritual.Runner over the pipeline entry strategy, and
 // publishes StatusChanged as Outcome transitions.
 //
@@ -77,8 +77,8 @@ func Attach(parent context.Context, bus ports.EventBus, entry machine.Strategy[r
 					c.start(ctx)
 				case ritual.StopRequested:
 					c.stop()
-				case ritual.RetryRequested:
-					c.retry(ctx)
+				case ritual.DismissRequested:
+					c.dismiss()
 				}
 			}
 		}
@@ -131,24 +131,18 @@ func (c *controller) stop() {
 	c.userStop.Store(true)
 }
 
-func (c *controller) retry(ctx context.Context) {
+// dismiss acknowledges a Failed outcome and returns the lifecycle to Idle.
+// The Failed→Dismissed→Idle path replaces retry-from-failed (see
+// design-log/017): users dismiss a failure to clear UI state, then
+// re-engage with a fresh Start. Rejecting dismiss outside Failed keeps the
+// API honest — Done/Idle/Running have no failure to acknowledge.
+func (c *controller) dismiss() {
 	if c.status != Failed {
-		c.bus.Publish(StatusChanged{Status: c.status, Err: fmt.Errorf("cannot retry: status is %s", c.status)})
+		c.bus.Publish(StatusChanged{Status: c.status, Err: fmt.Errorf("cannot dismiss: status is %s", c.status)})
 		return
 	}
-	c.setStatus(Running)
-	runCtx, cancel := context.WithCancel(ctx)
-	c.cancel = cancel
-
-	c.userStop.Store(false)
-	c.runner.RunState().Err = nil
-	go func() {
-		err := c.runner.Resume(runCtx, c.entry)
-		if err == nil {
-			err = c.runner.RunState().Err
-		}
-		c.resolveStatus(runCtx, err)
-	}()
+	c.setStatus(Dismissed)
+	c.setStatus(Idle)
 }
 
 // resolveStatus maps runner exit into Done/Failed. A user-initiated stop

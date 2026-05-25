@@ -4,18 +4,58 @@
 // accumulator. The projection has no Wails dependency.
 package projection
 
-// Stage is the coarse UI screen the frontend renders.
-// Values map 1:1 to stage components in frontend/src/stages.
+// Stage is the coarse UI bucket the dial colour reads from. Values map to
+// the four 007-defined dial colours (plus locked + failed overlays).
+//
+// Stage is intentionally less granular than Phase: Stage drives the dial's
+// outer ring colour and the gross bucket the user perceives ("downloading"
+// vs "playing" vs "saving"). Phase drives the inner-glyph + sub-copy +
+// ETA-visibility within each bucket. See design-log/017.
 type Stage string
 
 // Stage values. Keep JSON-stable: TypeScript matches on these exact strings.
+// Lock-held conflicts route through StageFailed with vm.LockHolder set —
+// design-log/017 folded the prior StageLocked into the Failed bucket so the
+// app has a single failure pathway.
 const (
 	StageIdle        Stage = "idle"
 	StageDownloading Stage = "downloading"
 	StageRunning     Stage = "running"
 	StageUploading   Stage = "uploading"
-	StageLocked      Stage = "locked"
 	StageFailed      Stage = "failed"
+)
+
+// Phase is the finer-grained sub-state the frontend uses to pick glyph,
+// sub-copy, and ETA visibility within a Stage bucket. Eight phases collapse
+// the eight runtime ritual stages plus the server lifecycle into beats the
+// user actually perceives. Per design-log/017:
+//
+//   - downloading: bytes flowing in (Pulling[download]). ETA visible.
+//   - preparing:   invisible work (Pulling[apply] + Acquiring + Running before
+//     ServerReady). ETA hidden. Dial sub: "Preparing…".
+//   - playing:     server reachable (Running after ServerReadyInfo).
+//   - wrapping:    server stopping + Committing (post hold-stop). ETA hidden.
+//     Dial sub: "Wrapping up…".
+//   - saving:      bytes flowing out (Pushing). ETA visible. After Pushing
+//     completes (Unlocking + Retaining), still saving but with empty sub —
+//     frontend detects via bytesDone>=bytesTotal.
+//   - locked:      lock holder reported during Acquiring. Idle overlay.
+//   - failed:      terminal until DismissRequested clears it.
+//   - idle:        nothing running.
+type Phase string
+
+// Phase values. Keep JSON-stable: TypeScript matches on these exact strings.
+// PhaseLocked was folded into PhaseFailed in design-log/017: lock conflicts
+// surface as a Failed beat with vm.LockHolder populated so the frontend
+// renders the friendly "{holder} is playing" title.
+const (
+	PhaseIdle        Phase = "idle"
+	PhaseDownloading Phase = "downloading"
+	PhasePreparing   Phase = "preparing"
+	PhasePlaying     Phase = "playing"
+	PhaseWrapping    Phase = "wrapping"
+	PhaseSaving      Phase = "saving"
+	PhaseFailed      Phase = "failed"
 )
 
 // JoinAddress pairs a human label with a dial address shown on the Running
@@ -41,11 +81,12 @@ type JoinAddress struct {
 // server-side and shipped pre-derived so a chart component reads them
 // directly without parsing strings or differencing successive snapshots.
 //
-// Label is the pre-formatted string for the simple render path; SpeedMbps
-// + LogicalMbps are there for richer widgets (dual-series sparkline,
-// tooltip showing both rates).
+// Per design-log/017 the projection no longer ships a per-substage Label
+// string: the dial reads `Phase` and looks up its copy locally. Stage-level
+// strings like "Snapshotting…" were dev/log copy and never reached the user.
 type ViewModel struct {
 	Stage       Stage         `json:"stage"`
+	Phase       Phase         `json:"phase"`
 	Progress    int           `json:"progress"`
 	BytesDone   int64         `json:"bytesDone"`
 	BytesTotal  int64         `json:"bytesTotal"`
@@ -53,9 +94,7 @@ type ViewModel struct {
 	FilesTotal  int           `json:"filesTotal"`
 	SpeedMbps   float64       `json:"speedMbps"`
 	LogicalMbps float64       `json:"logicalMbps"`
-	Label       string        `json:"label"`
 	ErrorText   string        `json:"errorText"`
 	LockHolder  string        `json:"lockHolder"`
-	ReadyLight  bool          `json:"readyLight"`
 	Addresses   []JoinAddress `json:"addresses"`
 }
