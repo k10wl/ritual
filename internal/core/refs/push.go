@@ -59,7 +59,16 @@ func (p *Pusher) OnPlan(fn PlanFn) { p.onPlan = fn }
 
 // Push uploads the ref identified by id to the destination: every
 // referenced objects/{hash} first (step 3 barrier), then refs/{id}.json
-// (step 5 commit).
+// (step 5 commit), then sweeps superseded sibling refs from `to` to
+// mirror Committer.sweepSupersededSiblings on the destination side.
+//
+// The remote sweep closes the asymmetry surfaced by design-log/016
+// livesync: per-tick pushes upload draft refs to remote, and the
+// post-session amend's local sweep only ever touched local. Without
+// this mirror, every successful tick leaks one orphan ref on remote
+// per session (parent-chained, older-timestamped) — see Phase 6
+// integration trace. Same predicate as the local sweep: same Parent,
+// strictly older Timestamp.
 func (p *Pusher) Push(ctx context.Context, id domain.RefID) error {
 	refRaw, ref, err := p.loadRef(ctx, id)
 	if err != nil {
@@ -90,6 +99,9 @@ func (p *Pusher) Push(ctx context.Context, id domain.RefID) error {
 	err = p.to.PutStream(ctx, refKey(id), bytes.NewReader(refRaw))
 	if err != nil {
 		return fmt.Errorf("push %s: upload ref: %w", id, err)
+	}
+	if err := sweepSuperseded(ctx, p.to, ref); err != nil {
+		return fmt.Errorf("push %s: %w", id, err)
 	}
 	return nil
 }

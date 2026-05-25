@@ -13,12 +13,14 @@ import (
 	"ritual/internal/core/stages/acquiring"
 	"ritual/internal/core/stages/checking"
 	"ritual/internal/core/stages/committing"
+	"ritual/internal/core/stages/draining"
 	"ritual/internal/core/stages/failed"
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/pushing"
 	"ritual/internal/core/stages/retaining"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/core/stages/unlocking"
+	"ritual/internal/subsystems/livesync"
 	"time"
 )
 
@@ -42,6 +44,10 @@ type Deps struct {
 	InspectFn         acquiring.InspectFn
 	ReleaseFn         unlocking.ReleaseFn
 	HeartbeatInterval time.Duration
+	// Drainable blocks Committing until the live-sync ticker has settled
+	// (design-log/016). nil → draining stage is a no-op pass-through; that
+	// path is used by tests and the CLI fakerun that have no ticker.
+	Drainable livesync.Drainable
 }
 
 // Build wires the chain and returns the entry strategy. failed.* nodes
@@ -63,7 +69,15 @@ func Build(d Deps) machine.Strategy[ritual.RunState] {
 	push.OnStop(unlock)
 	pruneLocal := retaining.New(d.LocalRetentions, d.Bus, failRetLocal, push)
 	commit := committing.New(d.Committer, d.CommitOpts, pruneLocal, failCommit)
-	run := running.New(d.CmdBuilder, d.Readiness, commit, unlock)
+	// Draining inserted only when a live-sync subsystem is wired. Skipped
+	// otherwise so tests and the CLI fakerun keep the historical chain
+	// shape (Running → Committing) — matches design-log/016 §Drain barrier
+	// "no-op pass-through when livesync absent".
+	var afterRunning machine.Strategy[ritual.RunState] = commit
+	if d.Drainable != nil {
+		afterRunning = draining.New(d.Drainable, commit)
+	}
+	run := running.New(d.CmdBuilder, d.Readiness, afterRunning, unlock)
 	acquire := acquiring.New(d.AcquireFn, d.InspectFn, d.HeartbeatInterval, run, failAcq)
 	pull := pulling.New(d.Puller, d.Applier, d.HeadResolver, acquire, failPull)
 	check := checking.New(d.Checks, pull, failCheck)

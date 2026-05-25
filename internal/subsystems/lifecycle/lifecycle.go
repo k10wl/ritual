@@ -38,13 +38,23 @@ func (s StatusChanged) String() string {
 // Controller holds the per-run mutable state. The Attach goroutine is the
 // only writer; bus subscribers see published events only.
 type controller struct {
-	bus      ports.EventBus
-	entry    machine.Strategy[ritual.RunState]
-	runner   *ritual.Runner
-	status   Outcome
-	cancel   context.CancelFunc
-	userStop atomic.Bool
+	bus          ports.EventBus
+	entry        machine.Strategy[ritual.RunState]
+	runner       *ritual.Runner
+	status       Outcome
+	cancel       context.CancelFunc
+	userStop     atomic.Bool
+	sessionHooks []func(*ritual.RunState)
 }
+
+// SessionHook fires synchronously inside start() after a fresh RunState
+// is constructed and before the runner goroutine is dispatched. Used by
+// subsystems that need a stable per-session reference — e.g. the live-
+// sync dispatcher (design-log/016) writing draft RefIDs into rs.RefID.
+//
+// Hooks run on the lifecycle consumer goroutine. Keep them cheap and
+// non-blocking; long work belongs on the bus.
+type SessionHook = func(*ritual.RunState)
 
 // Attach subscribes the controller to bus and spawns a goroutine that
 // dispatches command events until parent is cancelled or the channel
@@ -53,9 +63,10 @@ type controller struct {
 //
 // Subscription happens synchronously before Attach returns — callers that
 // Publish on the bus immediately after Attach returns are guaranteed
-// delivery.
-func Attach(parent context.Context, bus ports.EventBus, entry machine.Strategy[ritual.RunState]) func() {
-	c := &controller{bus: bus, entry: entry, status: Idle}
+// delivery. Variadic sessionHooks fire once per session start (see
+// SessionHook).
+func Attach(parent context.Context, bus ports.EventBus, entry machine.Strategy[ritual.RunState], sessionHooks ...SessionHook) func() {
+	c := &controller{bus: bus, entry: entry, status: Idle, sessionHooks: sessionHooks}
 	bus.Publish(StatusChanged{Status: Idle})
 
 	ch, unsub := bus.Subscribe()
@@ -102,6 +113,9 @@ func (c *controller) start(ctx context.Context) {
 	hostname, _ := os.Hostname()
 	runID := fmt.Sprintf("%s%s%d", hostname, config.LockIDSeparator, time.Now().UnixNano())
 	runState := &ritual.RunState{RunID: runID, Bus: c.bus}
+	for _, h := range c.sessionHooks {
+		h(runState)
+	}
 	c.runner = ritual.NewRunner(runState)
 
 	go func() {

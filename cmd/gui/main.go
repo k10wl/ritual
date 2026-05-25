@@ -21,12 +21,12 @@ import (
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/lock"
-	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/refs"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/subsystems/lifecycle"
+	"ritual/internal/subsystems/livesync"
 	"ritual/internal/subsystems/logging"
 	"ritual/internal/subsystems/pipeline"
 	"ritual/internal/subsystems/remote"
@@ -120,7 +120,36 @@ func main() {
 	})
 
 	ctx := wailsApp.Context()
-	stopLifecycle := lifecycle.Attach(ctx, runtime.bus, runtime.entry)
+	// Live-sync subsystem (design-log/016). 5-min Commit+Push tick during
+	// the Running stage; ServerReadyInfo starts it, lifecycle events stop
+	// it. parentFn tracks pulling.HeadResolvedInfo so the ticker never
+	// reads RunState directly. Dispatcher writes LiveDraftCommitted into
+	// rs.RefID (OQ4 Option A); session hook rebinds the target per run.
+	// Drainer pre-stage waits up to 10s (OQ5) for the ticker + dispatcher
+	// to settle before Committing reads rs.RefID.
+	parentFn, stopParent := livesync.ParentFromBus(runtime.bus)
+	defer stopParent()
+	ticker, engine, stopLiveSync := livesync.New(
+		runtime.bus,
+		runtime.committer,
+		runtime.pusher,
+		runtime.commitTargets,
+		parentFn,
+		livesync.DefaultInterval,
+		livesync.DefaultSaveTimeout,
+	)
+	defer stopLiveSync()
+	dispatcher, stopDispatcher := livesync.NewDispatcher(runtime.bus, nil)
+	defer stopDispatcher()
+	drainer := livesync.NewDrainer(ticker, engine, dispatcher, livesync.DefaultDrainTimeout)
+	pipelineDeps := runtime.pipelineDeps
+	pipelineDeps.Drainable = drainer
+	entry := pipeline.Build(pipelineDeps)
+
+	sessionHook := func(rs *ritual.RunState) {
+		dispatcher.SetTarget(func(id domain.RefID) { rs.RefID = id })
+	}
+	stopLifecycle := lifecycle.Attach(ctx, runtime.bus, entry, sessionHook)
 	defer stopLifecycle()
 	defer runtime.stopLogFile()
 	go runtime.projection.Run(ctx)
@@ -135,14 +164,17 @@ func main() {
 // guiRuntime bundles everything the Wails app needs after composition.
 // Kept internal to cmd/gui — not a public API.
 type guiRuntime struct {
-	bus         ports.EventBus
-	entry       machine.Strategy[ritual.RunState]
-	projection  *projection.Projection
-	logsink     *logsink.Sink
-	viewEmitter *wailsViewEmitter
-	logEmitter  *wailsLogEmitter
-	ticker      *progress.Ticker
-	stopLogFile func()
+	bus           ports.EventBus
+	pipelineDeps  pipeline.Deps
+	projection    *projection.Projection
+	logsink       *logsink.Sink
+	viewEmitter   *wailsViewEmitter
+	logEmitter    *wailsLogEmitter
+	ticker        *progress.Ticker
+	stopLogFile   func()
+	committer     ports.Committer
+	pusher        ports.Pusher
+	commitTargets []string
 }
 
 func buildRuntime() (*guiRuntime, error) {
@@ -305,7 +337,7 @@ func buildRuntime() (*guiRuntime, error) {
 	localLocker := observed.NewLocker(lock.New(localStorage, host), bus)
 	remoteLocker := observed.NewLocker(lock.New(remoteStorage, host), bus)
 	locker := lock.NewBoth(localLocker, remoteLocker)
-	entry := pipeline.Build(pipeline.Deps{
+	pipelineDeps := pipeline.Deps{
 		Bus:               bus,
 		Checks:            nil, // no conditions for POC
 		Puller:            puller,
@@ -322,7 +354,8 @@ func buildRuntime() (*guiRuntime, error) {
 		InspectFn:         locker.Inspect,
 		ReleaseFn:         locker.Release,
 		HeartbeatInterval: locker.HeartbeatInterval(),
-	})
+		// Drainable filled in by main() after the livesync ticker exists.
+	}
 
 	// Progress ticker over both storage sides. Remote side captures the
 	// network throughput (Pull/Push). Local side captures Apply (read from
@@ -352,14 +385,17 @@ func buildRuntime() (*guiRuntime, error) {
 	}
 
 	return &guiRuntime{
-		bus:         bus,
-		entry:       entry,
-		projection:  proj,
-		logsink:     sink,
-		viewEmitter: viewEmitter,
-		logEmitter:  logEmitter,
-		ticker:      remoteTicker,
-		stopLogFile: stopLogFile,
+		bus:           bus,
+		pipelineDeps:  pipelineDeps,
+		projection:    proj,
+		logsink:       sink,
+		viewEmitter:   viewEmitter,
+		logEmitter:    logEmitter,
+		ticker:        remoteTicker,
+		stopLogFile:   stopLogFile,
+		committer:     committer,
+		pusher:        pusher,
+		commitTargets: commitTargets,
 	}, nil
 }
 

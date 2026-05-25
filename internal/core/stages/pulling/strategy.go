@@ -36,6 +36,17 @@ type ApplyStartedInfo struct{}
 
 func (ApplyStartedInfo) String() string { return "apply started" }
 
+// HeadResolvedInfo carries the RefID that became the session's
+// pulled-head (rs.ParentRefID). Fires once per Pulling run, after the
+// workdir Apply completes — never on ErrNoHead. Live-sync (design-log/016)
+// subscribes so the ticker can build CommitOpts.Parent without reading
+// RunState. RefID is the canonical timestamp form; never empty.
+type HeadResolvedInfo struct {
+	RefID domain.RefID
+}
+
+func (h HeadResolvedInfo) String() string { return "head resolved " + string(h.RefID) }
+
 // Strategy implements the Pulling stage.
 type Strategy struct {
 	puller  ports.Puller
@@ -85,6 +96,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 		return s.onFail, nil
 	}
 	rs.ParentRefID = id
+	publish(rs.Bus, HeadResolvedInfo{RefID: id})
 	publish(rs.Bus, ritual.FinishInfo{Operation: "pull"})
 	return s.onOK, nil
 }

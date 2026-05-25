@@ -160,48 +160,15 @@ func (c *Committer) finalizeAmend(ctx context.Context, newRef *domain.Ref, amend
 	return nil
 }
 
-// sweepSupersededSiblings deletes every refs/*.json whose Parent matches
-// newRef.Parent and whose Timestamp is strictly older than newRef. Unparseable
-// refs are skipped — the object-GC pass handles their orphan blobs.
+// sweepSupersededSiblings deletes every refs/*.json on local storage
+// whose Parent matches newRef.Parent and whose Timestamp is strictly
+// older. Mirror runs on remote inside Pusher.Push — both sides share
+// sweepSuperseded so the predicate stays in lockstep.
 func (c *Committer) sweepSupersededSiblings(ctx context.Context, newRef *domain.Ref) error {
-	keys, err := c.blobs.List(ctx, "refs/")
-	if err != nil {
-		return fmt.Errorf("refs.Committer.Commit: list refs for amend sweep: %w", err)
-	}
-	newKey := refKey(newRef.Timestamp)
-	for _, key := range keys {
-		if key == newKey {
-			continue
-		}
-		sibling, err := c.readRefAt(ctx, key)
-		if err != nil {
-			continue
-		}
-		if sibling.Parent != newRef.Parent {
-			continue
-		}
-		if sibling.Timestamp >= newRef.Timestamp {
-			continue
-		}
-		err = c.blobs.Delete(ctx, key)
-		if err != nil {
-			return fmt.Errorf("refs.Committer.Commit: delete superseded sibling %s: %w", sibling.Timestamp, err)
-		}
+	if err := sweepSuperseded(ctx, c.blobs, newRef); err != nil {
+		return fmt.Errorf("refs.Committer.Commit: %w", err)
 	}
 	return nil
-}
-
-func (c *Committer) readRefAt(ctx context.Context, key string) (*domain.Ref, error) {
-	rc, err := c.blobs.GetStream(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	defer rc.Close()
-	ref := &domain.Ref{}
-	if err := json.NewDecoder(rc).Decode(ref); err != nil {
-		return nil, err
-	}
-	return ref, nil
 }
 
 // walkMatches delegates the workdir walk to the injected DirectoryScanner —
