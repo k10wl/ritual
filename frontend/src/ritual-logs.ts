@@ -1,4 +1,4 @@
-import { css, html, LitElement } from "lit";
+import { css, html, LitElement, PropertyValues } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import { onLog, sendConsole, type LogLine } from "./wails-api";
 
@@ -56,7 +56,8 @@ export class RitualLogs extends LitElement {
         this.focusEditor();
     }
 
-    updated() {
+    updated(changed: PropertyValues) {
+        if (!changed.has("rows")) return;
         const wrap = this.shadowRoot?.querySelector<HTMLElement>(".wrap");
         if (wrap) wrap.scrollTop = wrap.scrollHeight;
     }

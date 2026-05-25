@@ -1,4 +1,4 @@
-import { LitElement, css, html, TemplateResult } from "lit";
+import { LitElement, css, html, PropertyValues, TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { gsap } from "gsap";
 import "./primitives/stable-num";
@@ -12,6 +12,8 @@ const ROW_STAGGER_S = 0.055;
 const ROW_SLIDE_PX = -12;
 export const DIAL_TELEMETRY_EXIT_TOTAL_S = ROW_EXIT_S + ROW_STAGGER_S * 2;
 
+const SPLASH_ROUNDS = [3, 5] as const;
+
 const reducedMotion = (): boolean =>
     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 
@@ -21,7 +23,7 @@ function jitterStone(text: string, fast: boolean): TemplateResult {
     const idleRadius = fast ? Math.max(1, text.length) : 1;
     return html`<rune-decoder
         .text=${text}
-        .splashRounds=${[3, 5]}
+        .splashRounds=${SPLASH_ROUNDS}
         splash-radius="1"
         splash-tick-ms="22"
         idle-min-ms=${idleMin}
@@ -36,7 +38,16 @@ export class DialTelemetry extends LitElement {
     @property({ type: Number }) bytesDone = 0;
     @property({ type: Number }) bytesTotal = 0;
 
-    firstUpdated() {
+    // Entrance fires the first time real data arrives, not on bare mount —
+    // otherwise rows animate against the "·····" placeholder and the real
+    // numbers pop in flat. design-log/020 §H.
+    private _entered = false;
+
+    updated(changed: PropertyValues) {
+        if (this._entered) return;
+        if (!changed.has("bytesTotal") && !changed.has("speedBps") && !changed.has("bytesDone")) return;
+        if (this.bytesTotal <= 0 && this.speedBps <= 0 && this.bytesDone <= 0) return;
+        this._entered = true;
         this.playEnter();
     }
 

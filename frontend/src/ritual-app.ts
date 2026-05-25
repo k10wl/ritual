@@ -40,14 +40,11 @@ interface AppCtx {
     uptimeSub: string;
     lastProgressArc: number;
     lastNonFailPhase: Phase;
-    // Effective bytes-per-second for the current transfer beat. Prefers
-    // vm.logicalMbps (5-sample rolling DataAverage from the Go ticker) when
-    // it is positive; falls back to (bytesDone - bytesAtTransferStart) /
-    // elapsedSinceTransferStart when the ticker hasn't had a chance to
-    // settle (fast transfers, mock backend in the Live story, the first
-    // second of a real transfer before the rolling window fills). Single
-    // source of truth so the under-slot speed and the ETA derive from the
-    // same number — they can never disagree.
+    // Effective bytes-per-second for the current transfer beat. Single source
+    // of truth shared between the under-slot speed cell and the ETA — they
+    // can never disagree. Derivation lives in applyVm() (see computeSpeedBps)
+    // and lands on @state speedBps so render is a pure function of reactive
+    // state — design-log/020 §Class B.
     effectiveSpeedBps: number;
 }
 
@@ -168,6 +165,11 @@ export class RitualApp extends LitElement {
     @state() private lastNonFailPhase: Phase = Phase.PhaseIdle;
     @state() private uptimeSub = "";
     @state() private prep: PrepSettings = FALLBACK_PREP;
+    // Snapshot of effective transfer rate, derived once in applyVm() so the
+    // under-slot speed and the ETA always see the same number. Keeping the
+    // derivation off the render path keeps render() a pure function of
+    // reactive state — design-log/020 §Class B.
+    @state() private speedBps = 0;
     @query("prep-settings") private _prepEl!: PrepSettingsEl | null;
     private runStartedAt = 0;
     private uptimeTimer = 0;
@@ -209,13 +211,17 @@ export class RitualApp extends LitElement {
     private applyVm(vm: ViewModel) {
         const wasPlaying = this.vm.phase === Phase.PhasePlaying;
         const isPlaying = vm.phase === Phase.PhasePlaying;
+        // Order matters (design-log/020 §Class C): refresh the transfer-beat
+        // anchors and the speed snapshot BEFORE the arc/ctx read so the arc
+        // is computed against the new beat, not the stale one.
+        this.trackTransferBeat(vm);
+        this.speedBps = this.computeSpeedBps(vm);
         if (vm.phase !== Phase.PhaseFailed) {
             this.lastNonFailPhase = vm.phase;
             this.lastProgressArc = PHASE_VIEW[vm.phase]?.arc(vm, this.ctx()) ?? 0;
         }
         if (isPlaying && !wasPlaying) this.startUptime();
         if (!isPlaying && wasPlaying) this.stopUptime();
-        this.trackTransferBeat(vm);
         this.vm = vm;
     }
 
@@ -238,14 +244,16 @@ export class RitualApp extends LitElement {
         }
     }
 
-    private effectiveSpeedBps(): number {
-        if (this.vm.logicalMbps > 0) return this.vm.logicalMbps * MBPS_TO_BPS;
+    // Pure function of (vm, transfer-beat anchors, performance.now()). Called
+    // from applyVm() so render never reads wall-clock — design-log/020 §B.
+    private computeSpeedBps(vm: ViewModel): number {
+        if (vm.logicalMbps > 0) return vm.logicalMbps * MBPS_TO_BPS;
         if (this.transferStartedAt === 0) return 0;
         const elapsedS = (performance.now() - this.transferStartedAt) / 1000;
         // 100 ms floor: any shorter window and a single buffered Read can
         // pin the divisor close to zero and produce nonsense MB/s spikes.
         if (elapsedS <= 0.1) return 0;
-        const flowed = Math.max(0, this.vm.bytesDone - this.transferStartBytes);
+        const flowed = Math.max(0, vm.bytesDone - this.transferStartBytes);
         if (flowed <= 0) return 0;
         return flowed / elapsedS;
     }
@@ -255,7 +263,7 @@ export class RitualApp extends LitElement {
             uptimeSub: this.uptimeSub,
             lastProgressArc: this.lastProgressArc,
             lastNonFailPhase: this.lastNonFailPhase,
-            effectiveSpeedBps: this.effectiveSpeedBps(),
+            effectiveSpeedBps: this.speedBps,
         };
     }
 

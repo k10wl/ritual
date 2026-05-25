@@ -21,6 +21,8 @@ const ZOOM_S = 0.3;
 const ZOOM_IDLE = 1.35;
 const ZOOM_ACTIVE = 1.0;
 
+const SPLASH_ROUNDS = [3, 5] as const;
+
 type LucideChild = readonly [string, Record<string, string>];
 type LucideIcon = ReadonlyArray<LucideChild>;
 
@@ -72,10 +74,18 @@ export class RitualDial extends LitElement {
     @state() private holdProgress = 0;
     private pointerId: number | null = null;
     private holdTween?: gsap.core.Tween;
+    // Tween a plain proxy so onUpdate can write the @state field via its
+    // setter — Lit's change detection then sees the update through documented
+    // channels instead of needing a manual requestUpdate(). design-log/020 §E.
+    private holdProxy = { p: 0 };
     private labelEl?: HTMLElement;
     private subEl?: HTMLElement;
     private clusterEl?: HTMLElement;
     private ringsEl?: SVGElement;
+    // Last-settled label / sub heights. Updated in updated() after every
+    // render, used in the next render's updated() as the animate-from value.
+    // Kept off willUpdate() to keep that hook SSR-safe (no DOM reads).
+    // design-log/020 §D.
     private prevLabelH = 0;
     private prevSubH = 0;
 
@@ -165,12 +175,13 @@ export class RitualDial extends LitElement {
 
     private ensureHoldTween() {
         if (this.holdTween) return;
-        this.holdTween = gsap.to(this, {
-            holdProgress: 1,
+        this.holdProxy.p = 0;
+        this.holdTween = gsap.to(this.holdProxy, {
+            p: 1,
             duration: HOLD_S,
             ease: "none",
             paused: true,
-            onUpdate: () => this.requestUpdate(),
+            onUpdate: () => { this.holdProgress = this.holdProxy.p; },
             onComplete: () =>
                 this.dispatchEvent(new CustomEvent("hold-commit", { bubbles: true, composed: true })),
         });
@@ -190,6 +201,7 @@ export class RitualDial extends LitElement {
     private resetHold() {
         this.holdTween?.kill();
         this.holdTween = undefined;
+        this.holdProxy.p = 0;
         this.holdProgress = 0;
     }
 
@@ -199,30 +211,32 @@ export class RitualDial extends LitElement {
     }
 
     willUpdate(changed: PropertyValues) {
-        if (changed.has("label") && this.labelEl) this.prevLabelH = this.labelEl.offsetHeight;
-        if (changed.has("sub") && this.subEl) this.prevSubH = this.subEl.offsetHeight;
+        // No DOM reads here — willUpdate runs on the server too (per Lit
+        // lifecycle docs). Pre-render height snapshots happen in updated()
+        // of the previous cycle; see syncLabelHeight / syncSubHeight.
+        // design-log/020 §D.
         if (changed.has("state") && this.state !== "run" && changed.get("state") === "run") {
             this.resetHold();
         }
     }
 
-    private animateHeight(el: HTMLElement | undefined, prev: number) {
-        if (!el) return;
-        if (prev <= 0) return;
+    private syncHeight(el: HTMLElement | undefined, prev: number): number {
+        if (!el) return prev;
         const next = el.offsetHeight;
-        if (next === prev) return;
-        if (reducedMotion()) return;
-        gsap.killTweensOf(el);
-        gsap.fromTo(
-            el,
-            { height: prev },
-            {
-                height: next,
-                duration: RESIZE_S,
-                ease: "power2.inOut",
-                onComplete: () => { el.style.height = ""; },
-            },
-        );
+        if (prev > 0 && prev !== next && !reducedMotion()) {
+            gsap.killTweensOf(el);
+            gsap.fromTo(
+                el,
+                { height: prev },
+                {
+                    height: next,
+                    duration: RESIZE_S,
+                    ease: "power2.inOut",
+                    onComplete: () => { el.style.height = ""; },
+                },
+            );
+        }
+        return next;
     }
 
     firstUpdated() {
@@ -240,8 +254,16 @@ export class RitualDial extends LitElement {
     }
 
     updated(changed: PropertyValues) {
-        if (changed.has("label")) this.animateHeight(this.labelEl, this.prevLabelH);
-        if (changed.has("sub")) this.animateHeight(this.subEl, this.prevSubH);
+        // syncHeight tweens prev → current when the relevant prop changed,
+        // and always re-snapshots the post-update height as the next
+        // animate-from baseline. The unconditional re-snapshot keeps prev*H
+        // honest across resizes that happen for non-label/sub reasons.
+        this.prevLabelH = changed.has("label")
+            ? this.syncHeight(this.labelEl, this.prevLabelH)
+            : (this.labelEl?.offsetHeight ?? this.prevLabelH);
+        this.prevSubH = changed.has("sub")
+            ? this.syncHeight(this.subEl, this.prevSubH)
+            : (this.subEl?.offsetHeight ?? this.prevSubH);
         if (changed.has("state")) this.applyZoom(true);
         if (!changed.has("glyph")) return;
         const old = changed.get("glyph") as DialGlyph | undefined;
@@ -305,7 +327,7 @@ export class RitualDial extends LitElement {
         const idleRadius = isPlaceholder ? Math.max(1, this.sub.length) : 1;
         return html`<rune-decoder
             .text=${this.sub}
-            .splashRounds=${[3, 5]}
+            .splashRounds=${SPLASH_ROUNDS}
             splash-radius="1"
             splash-tick-ms="22"
             idle-min-ms=${idleMin}

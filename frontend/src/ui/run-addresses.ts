@@ -1,4 +1,4 @@
-import { LitElement, css, html } from "lit";
+import { LitElement, css, html, PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { gsap } from "gsap";
 import { MorphSVGPlugin } from "gsap/MorphSVGPlugin";
@@ -20,6 +20,8 @@ const ROW_STAGGER_S = 0.055;
 const ROW_SLIDE_PX = 12;
 const STAGGER_SLOTS = 4;
 export const RUN_ADDRESSES_EXIT_TOTAL_S = ROW_EXIT_S + ROW_STAGGER_S * STAGGER_SLOTS;
+
+const SPLASH_ROUNDS = [3, 5] as const;
 
 const reducedMotion = (): boolean =>
     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -59,6 +61,10 @@ export class RunAddresses extends LitElement {
     @state() private copiedIndex: number | null = null;
     private morphBackTimer = 0;
     private resetTimer = 0;
+    // Entrance plays once per mount, the first time `addresses` arrives with
+    // content. firstUpdated() used to fire it against an empty .row set when
+    // the property bind landed on the second update — design-log/020 §H.
+    private _entered = false;
 
     private clearTimers() {
         if (this.morphBackTimer) {
@@ -76,7 +82,11 @@ export class RunAddresses extends LitElement {
         this.clearTimers();
     }
 
-    firstUpdated() {
+    updated(changed: PropertyValues) {
+        if (this._entered) return;
+        if (!changed.has("addresses")) return;
+        if (this.addresses.length === 0) return;
+        this._entered = true;
         this.playEnter();
     }
 
@@ -185,7 +195,7 @@ export class RunAddresses extends LitElement {
                 <span class="label">
                     <rune-decoder
                         .text=${item.label}
-                        .splashRounds=${[3, 5]}
+                        .splashRounds=${SPLASH_ROUNDS}
                         splash-radius="1"
                         splash-tick-ms="22"
                         idle-min-ms="6000"
@@ -196,7 +206,7 @@ export class RunAddresses extends LitElement {
                 <span class="address">
                     <rune-decoder
                         .text=${item.address}
-                        .splashRounds=${[3, 5]}
+                        .splashRounds=${SPLASH_ROUNDS}
                         splash-radius="1"
                         splash-tick-ms="22"
                         idle-min-ms="6000"

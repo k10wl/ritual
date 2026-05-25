@@ -94,6 +94,10 @@ export class RuneField extends LitElement {
     @property({ attribute: false }) validate?: RuneFieldValidator;
 
     @state() private _error: string | null = null;
+    // True when the consumer has assigned content to the `hint` slot. Tracked
+    // via @slotchange so render stays a pure function of reactive state and
+    // doesn't walk light-DOM children — design-log/020 §G.
+    @state() private _hasHintSlot = false;
 
     @query("input") private _input!: HTMLInputElement;
 
@@ -209,7 +213,7 @@ export class RuneField extends LitElement {
 
     render() {
         const hintText = this._error ?? this.hint;
-        const hasHintSlot = hintText || this._hasNamedSlot("hint");
+        const showHint = !!(hintText || this._hasHintSlot);
         return html`
             ${this.label
                 ? html`<label part="label" for="input">${this.label}</label>`
@@ -229,11 +233,9 @@ export class RuneField extends LitElement {
                 />
                 <slot name="trailing"></slot>
             </div>
-            ${hasHintSlot
-                ? html`<div class="hint" part="hint">
-                      <slot name="hint">${hintText}</slot>
-                  </div>`
-                : null}
+            <div class="hint" part="hint" ?hidden=${!showHint}>
+                <slot name="hint" @slotchange=${this.#onHintSlot}>${hintText}</slot>
+            </div>
         `;
     }
 
@@ -262,9 +264,10 @@ export class RuneField extends LitElement {
         }));
     };
 
-    private _hasNamedSlot(name: string): boolean {
-        return Array.from(this.children).some((c) => c.getAttribute("slot") === name);
-    }
+    #onHintSlot = (e: Event) => {
+        const slot = e.target as HTMLSlotElement;
+        this._hasHintSlot = slot.assignedElements().length > 0;
+    };
 
     focus(opts?: FocusOptions) {
         this._input?.focus(opts);

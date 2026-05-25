@@ -48,10 +48,36 @@ describe("rune-sheet", () => {
         expect(header.textContent!.trim()).to.equal("Title");
     });
 
-    it("omits footer element when no footer-slotted children", async () => {
+    it("hides footer element when no footer-slotted children", async () => {
         const el = await fixture<RuneSheet>(html`<rune-sheet>Body</rune-sheet>`);
         await el.updateComplete;
-        const footer = el.shadowRoot!.querySelector("footer");
-        expect(footer).to.equal(null);
+        const footer = el.shadowRoot!.querySelector("footer")!;
+        expect(footer).to.exist;
+        expect(footer.hasAttribute("hidden")).to.equal(true);
+    });
+
+    it("reveals footer when a footer-slotted child is appended after mount", async () => {
+        const el = await fixture<RuneSheet>(html`<rune-sheet>Body</rune-sheet>`);
+        await el.updateComplete;
+        const footer = el.shadowRoot!.querySelector("footer")!;
+        expect(footer.hasAttribute("hidden")).to.equal(true);
+        const btn = document.createElement("button");
+        btn.setAttribute("slot", "footer");
+        btn.textContent = "OK";
+        el.appendChild(btn);
+        // slotchange is dispatched as a microtask after the slot's assigned
+        // nodes mutate; yield once so the handler can flip `_hasFooterSlot`
+        // and trigger the next update cycle before we read the wrapper.
+        await new Promise((r) => setTimeout(r, 0));
+        await el.updateComplete;
+        expect(footer.hasAttribute("hidden")).to.equal(false);
+    });
+
+    it("hides header when no heading and no header-slotted child", async () => {
+        const el = await fixture<RuneSheet>(html`<rune-sheet>Body</rune-sheet>`);
+        await el.updateComplete;
+        const header = el.shadowRoot!.querySelector("header")!;
+        expect(header).to.exist;
+        expect(header.hasAttribute("hidden")).to.equal(true);
     });
 });

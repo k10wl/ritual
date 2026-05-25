@@ -7,7 +7,7 @@
  */
 
 import { LitElement, css, html } from "lit";
-import { customElement, property, query } from "lit/decorators.js";
+import { customElement, property, query, state } from "lit/decorators.js";
 import { sharedStyles } from "./_base";
 
 export type RuneSheetDismissReason = "escape" | "backdrop" | "explicit";
@@ -23,6 +23,11 @@ export class RuneSheet extends LitElement {
 
     @query("dialog") private _dialog!: HTMLDialogElement;
     private _lastReason: RuneSheetDismissReason = "explicit";
+    // Slot occupancy flags, kept reactive via @slotchange so render stays a
+    // pure function of state and doesn't walk light-DOM children —
+    // design-log/020 §G.
+    @state() private _hasHeaderSlot = false;
+    @state() private _hasFooterSlot = false;
 
     static styles = [
         ...sharedStyles,
@@ -100,27 +105,22 @@ export class RuneSheet extends LitElement {
     }
 
     render() {
-        const headerSlotted = this.heading || this._hasNamedSlot("header");
-        const footerSlotted = this._hasNamedSlot("footer");
+        const showHeader = !!(this.heading || this._hasHeaderSlot);
         return html`
             <dialog
                 @cancel=${this.#onCancel}
                 @click=${this.#onBackdropClick}
                 part="dialog"
             >
-                ${headerSlotted
-                    ? html`<header part="header">
-                          <slot name="header">${this.heading}</slot>
-                      </header>`
-                    : null}
+                <header part="header" ?hidden=${!showHeader}>
+                    <slot name="header" @slotchange=${this.#onHeaderSlot}>${this.heading}</slot>
+                </header>
                 <div class="body" part="body">
                     <slot></slot>
                 </div>
-                ${footerSlotted
-                    ? html`<footer part="footer">
-                          <slot name="footer"></slot>
-                      </footer>`
-                    : null}
+                <footer part="footer" ?hidden=${!this._hasFooterSlot}>
+                    <slot name="footer" @slotchange=${this.#onFooterSlot}></slot>
+                </footer>
             </dialog>
         `;
     }
@@ -165,9 +165,15 @@ export class RuneSheet extends LitElement {
         this._lastReason = "explicit";
     };
 
-    private _hasNamedSlot(name: string): boolean {
-        return Array.from(this.children).some((c) => c.getAttribute("slot") === name);
-    }
+    #onHeaderSlot = (e: Event) => {
+        const slot = e.target as HTMLSlotElement;
+        this._hasHeaderSlot = slot.assignedElements().length > 0;
+    };
+
+    #onFooterSlot = (e: Event) => {
+        const slot = e.target as HTMLSlotElement;
+        this._hasFooterSlot = slot.assignedElements().length > 0;
+    };
 }
 
 declare global {
