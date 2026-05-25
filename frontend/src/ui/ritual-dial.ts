@@ -521,6 +521,7 @@ export class RitualDial extends LitElement {
             overflow: hidden;
         }
         .sub {
+            font-family: var(--font-mono);
             font-size: var(--fs-body);
             line-height: 18px;
             color: var(--text-muted);

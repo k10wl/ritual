@@ -73,11 +73,20 @@ export class DialTelemetry extends LitElement {
     }
 
     render() {
+        // Rushing applies ONLY to the speed cell — speed is the only number
+        // that can legitimately be "unknown" (no Tick has fired yet, or the
+        // logical-rate window hasn't settled). bytesDone is a counter the
+        // backend always knows; gating it on `rushing` made the done cell
+        // jitter through the rune-decoder for the whole transfer whenever
+        // logicalMbps happened to be zero. Pre-PlanInfo (bytesTotal <= 0)
+        // we use the placeholder for done too — that's the "no plan yet"
+        // beat, not "no rate yet".
         const rushing = this.speedBps <= 0;
+        const planned = this.bytesTotal > 0;
         const sp = formatSpeed(this.speedBps);
         const sz = formatSize(this.bytesDone, this.bytesTotal);
         const speedValue = rushing ? jitterStone(NUMERIC_PLACEHOLDER, true) : sp.value;
-        const doneValue = rushing ? jitterStone(NUMERIC_PLACEHOLDER, true) : sz.done;
+        const doneValue = planned ? sz.done : jitterStone(NUMERIC_PLACEHOLDER, true);
         return html`
             <div class="row">
                 <stable-num chars="6" align="right">${speedValue}</stable-num>

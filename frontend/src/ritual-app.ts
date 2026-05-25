@@ -40,6 +40,15 @@ interface AppCtx {
     uptimeSub: string;
     lastProgressArc: number;
     lastNonFailPhase: Phase;
+    // Effective bytes-per-second for the current transfer beat. Prefers
+    // vm.logicalMbps (5-sample rolling DataAverage from the Go ticker) when
+    // it is positive; falls back to (bytesDone - bytesAtTransferStart) /
+    // elapsedSinceTransferStart when the ticker hasn't had a chance to
+    // settle (fast transfers, mock backend in the Live story, the first
+    // second of a real transfer before the rolling window fills). Single
+    // source of truth so the under-slot speed and the ETA derive from the
+    // same number — they can never disagree.
+    effectiveSpeedBps: number;
 }
 
 const FALLBACK_VM: ViewModel = new ViewModel({ phase: Phase.PhaseIdle });
@@ -56,6 +65,10 @@ function nounFor(phase: Phase): string {
         case Phase.PhaseSaving:      return "saving";
         default:                     return "the run";
     }
+}
+
+function isTransferPhase(phase: Phase): boolean {
+    return phase === Phase.PhaseDownloading || phase === Phase.PhaseSaving;
 }
 
 function snapEta(secs: number): number {
@@ -75,15 +88,17 @@ function arcFromBytes(vm: ViewModel): number {
     return Math.min(1, Math.max(0, vm.bytesDone / vm.bytesTotal));
 }
 
-// Logical rate, not wire: bytesTotal/bytesDone are logical (Stream.Data /
-// PlanInfo). Pairing them with vm.speedMbps (wire) over-shoots ETA by the
-// compression factor on compressible payloads. SpeedMbps stays on the
-// ViewModel for logs + future dual-series chart. See design-log/018.
-function etaSub(vm: ViewModel): string {
-    const speedBps = vm.logicalMbps * MBPS_TO_BPS;
-    if (speedBps <= 0 || vm.bytesTotal <= 0) return formatEta(null);
+// ETA = remaining-bytes / effective-rate. The rate comes via ctx so the
+// under-slot speed and ETA always derive from the same number; see
+// AppCtx.effectiveSpeedBps for the fallback rules. Without ctx-routing the
+// pair could disagree (one zero, the other not) during the first ticks of
+// a transfer — and the dial sub jitters through rune-decoder whenever ETA
+// is null, so a sustained-zero ticker rate becomes a sustained jitter
+// instead of an honest "—" / running number. See design-log/018, /019.
+function etaSub(vm: ViewModel, ctx: AppCtx): string {
+    if (ctx.effectiveSpeedBps <= 0 || vm.bytesTotal <= 0) return formatEta(null);
     const remaining = Math.max(0, vm.bytesTotal - vm.bytesDone);
-    return formatEta(snapEta(remaining / speedBps));
+    return formatEta(snapEta(remaining / ctx.effectiveSpeedBps));
 }
 
 // Phase → dial view table. Single source of truth for glyph + label + arc +
@@ -127,7 +142,7 @@ const PHASE_VIEW: Record<Phase, DialView> = {
         // Save-tail per design-log/017: once all bytes are out (Unlocking +
         // Retaining), swap the visible label to "Wrapping up" / "Almost done"
         // — the arc plateau + housekeeping deserves its own beat copy.
-        sub: (vm) => (vm.bytesTotal > 0 && vm.bytesDone >= vm.bytesTotal ? "Almost done" : etaSub(vm)),
+        sub: (vm, ctx) => (vm.bytesTotal > 0 && vm.bytesDone >= vm.bytesTotal ? "Almost done" : etaSub(vm, ctx)),
     },
     [Phase.PhaseFailed]: {
         state: "fail", glyph: "x", label: "",
@@ -157,6 +172,17 @@ export class RitualApp extends LitElement {
     private runStartedAt = 0;
     private uptimeTimer = 0;
     private unsubscribe?: () => void;
+    // Transfer-rate fallback anchors. transferStartedAt = wall time the
+    // current Downloading/Saving beat began; transferStartBytes = the
+    // bytesDone value at that moment (non-zero on resume scenarios where
+    // the projection hasn't reset the counter). effectiveSpeedBps() takes
+    // (bytesDone - transferStartBytes) / (now - transferStartedAt) when
+    // vm.logicalMbps is 0 — keeps the speed cell + ETA honest under fast
+    // transfers or pre-Tick windows where the Go-side rolling average
+    // hasn't settled. Reset to 0 / 0 outside transfer phases so a stale
+    // start time can't bleed into a new beat.
+    private transferStartedAt = 0;
+    private transferStartBytes = 0;
 
     async connectedCallback() {
         super.connectedCallback();
@@ -189,7 +215,39 @@ export class RitualApp extends LitElement {
         }
         if (isPlaying && !wasPlaying) this.startUptime();
         if (!isPlaying && wasPlaying) this.stopUptime();
+        this.trackTransferBeat(vm);
         this.vm = vm;
+    }
+
+    // trackTransferBeat snapshots wall time + bytesDone at the moment a
+    // Downloading or Saving beat begins, and clears the anchor on exit.
+    // Used by effectiveSpeedBps() to compute a fallback rate when the
+    // Go-side rolling DataAverage hasn't settled. Treats Downloading and
+    // Saving as separate beats (each gets its own start) so a save that
+    // follows a download doesn't inherit the download's elapsed time.
+    private trackTransferBeat(vm: ViewModel) {
+        const wasTransfer = isTransferPhase(this.vm.phase);
+        const isTransfer = isTransferPhase(vm.phase);
+        const beatChanged = wasTransfer && isTransfer && this.vm.phase !== vm.phase;
+        if (isTransfer && (!wasTransfer || beatChanged)) {
+            this.transferStartedAt = performance.now();
+            this.transferStartBytes = vm.bytesDone;
+        } else if (!isTransfer) {
+            this.transferStartedAt = 0;
+            this.transferStartBytes = 0;
+        }
+    }
+
+    private effectiveSpeedBps(): number {
+        if (this.vm.logicalMbps > 0) return this.vm.logicalMbps * MBPS_TO_BPS;
+        if (this.transferStartedAt === 0) return 0;
+        const elapsedS = (performance.now() - this.transferStartedAt) / 1000;
+        // 100 ms floor: any shorter window and a single buffered Read can
+        // pin the divisor close to zero and produce nonsense MB/s spikes.
+        if (elapsedS <= 0.1) return 0;
+        const flowed = Math.max(0, this.vm.bytesDone - this.transferStartBytes);
+        if (flowed <= 0) return 0;
+        return flowed / elapsedS;
     }
 
     private ctx(): AppCtx {
@@ -197,6 +255,7 @@ export class RitualApp extends LitElement {
             uptimeSub: this.uptimeSub,
             lastProgressArc: this.lastProgressArc,
             lastNonFailPhase: this.lastNonFailPhase,
+            effectiveSpeedBps: this.effectiveSpeedBps(),
         };
     }
 
@@ -219,7 +278,7 @@ export class RitualApp extends LitElement {
         const vm = this.vm;
         const ctx = this.ctx();
         const telemetry = {
-            speedBps: vm.logicalMbps * MBPS_TO_BPS,
+            speedBps: ctx.effectiveSpeedBps,
             bytesDone: vm.bytesDone,
             bytesTotal: vm.bytesTotal,
         };
