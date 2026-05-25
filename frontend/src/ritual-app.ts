@@ -69,8 +69,12 @@ function arcFromBytes(vm: ViewModel): number {
     return Math.min(1, Math.max(0, vm.bytesDone / vm.bytesTotal));
 }
 
+// Logical rate, not wire: bytesTotal/bytesDone are logical (Stream.Data /
+// PlanInfo). Pairing them with vm.speedMbps (wire) over-shoots ETA by the
+// compression factor on compressible payloads. SpeedMbps stays on the
+// ViewModel for logs + future dual-series chart. See design-log/018.
 function etaSub(vm: ViewModel): string {
-    const speedBps = vm.speedMbps * MBPS_TO_BPS;
+    const speedBps = vm.logicalMbps * MBPS_TO_BPS;
     if (speedBps <= 0 || vm.bytesTotal <= 0) return formatEta(null);
     const remaining = Math.max(0, vm.bytesTotal - vm.bytesDone);
     return formatEta(snapEta(remaining / speedBps));
@@ -209,7 +213,7 @@ export class RitualApp extends LitElement {
         const vm = this.vm;
         const ctx = this.ctx();
         const telemetry = {
-            speedBps: vm.speedMbps * MBPS_TO_BPS,
+            speedBps: vm.logicalMbps * MBPS_TO_BPS,
             bytesDone: vm.bytesDone,
             bytesTotal: vm.bytesTotal,
         };

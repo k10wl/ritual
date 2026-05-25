@@ -20,14 +20,14 @@ const ADDRESSES = [
     new JoinAddress({ label: "Tailscale", address: "100.64.0.5:25565" }),
 ];
 
-const downloading = (progress: number, speedMbps = 32): ViewModel =>
+const downloading = (progress: number, logicalMbps = 32): ViewModel =>
     new ViewModel({
         stage: Stage.StageDownloading,
         phase: Phase.PhaseDownloading,
         progress,
         bytesDone: Math.floor(1_000_000_000 * (progress / 100)),
         bytesTotal: 1_000_000_000,
-        speedMbps,
+        logicalMbps,
     });
 
 const preparing = (): ViewModel =>
@@ -38,14 +38,14 @@ const preparing = (): ViewModel =>
         bytesTotal: 1_000_000_000,
     });
 
-const saving = (progress: number, speedMbps = 22): ViewModel =>
+const saving = (progress: number, logicalMbps = 22): ViewModel =>
     new ViewModel({
         stage: Stage.StageUploading,
         phase: Phase.PhaseSaving,
         progress,
         bytesDone: Math.floor(1_000_000_000 * (progress / 100)),
         bytesTotal: 1_000_000_000,
-        speedMbps,
+        logicalMbps,
     });
 
 const wrapping = (): ViewModel =>
@@ -81,7 +81,7 @@ const failedAt = (priorPhase: Phase, prior: ViewModel): ViewModel =>
         progress: prior.progress,
         bytesDone: prior.bytesDone,
         bytesTotal: prior.bytesTotal,
-        speedMbps: 0,
+        logicalMbps: 0,
         addresses: priorPhase === Phase.PhasePlaying ? ADDRESSES : [],
         errorText: "transport reset",
     });
