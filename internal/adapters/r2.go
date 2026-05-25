@@ -234,23 +234,36 @@ func (r *R2Repository) Rename(ctx context.Context, sourceKey string, destKey str
 	return nil
 }
 
-// List returns keys under the given prefix.
+// List returns every key under the given prefix. ListObjectsV2 caps at 1000
+// keys per response (S3 protocol limit); we follow ContinuationToken until
+// IsTruncated == false so callers see the full set. design-log/019 depends
+// on this — a single-page list would silently drop blobs past #1000 and
+// make PlanInfo under-announce on large projects.
 func (r *R2Repository) List(ctx context.Context, prefix string) ([]string, error) {
 	prefix = filepath.ToSlash(prefix)
-	result, err := r.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(r.bucket),
-		Prefix: aws.String(prefix),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list objects with prefix %s: %w", prefix, err)
-	}
-	keys := make([]string, 0, len(result.Contents))
-	for _, obj := range result.Contents {
-		if obj.Key != nil {
-			keys = append(keys, *obj.Key)
+	var (
+		keys  []string
+		token *string
+	)
+	for {
+		result, err := r.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(r.bucket),
+			Prefix:            aws.String(prefix),
+			ContinuationToken: token,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to list objects with prefix %s: %w", prefix, err)
 		}
+		for _, obj := range result.Contents {
+			if obj.Key != nil {
+				keys = append(keys, *obj.Key)
+			}
+		}
+		if result.IsTruncated == nil || !*result.IsTruncated {
+			return keys, nil
+		}
+		token = result.NextContinuationToken
 	}
-	return keys, nil
 }
 
 // Copy copies data from source key to destination key.

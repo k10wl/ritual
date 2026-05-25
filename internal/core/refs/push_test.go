@@ -305,7 +305,7 @@ func TestPusher_SurfacesRefPutFailureAfterBlobsLanded(t *testing.T) {
 	assertNoRefOnRemote(t, remote.bundle, ref.Timestamp)
 }
 
-func TestPusher_OnPlan_AnnouncesByteAndFileBudgetSummedFromRefObjects(t *testing.T) {
+func TestPusher_OnPlan_AnnouncesFullRefBudgetWhenRemoteIsEmpty(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
@@ -331,8 +331,39 @@ func TestPusher_OnPlan_AnnouncesByteAndFileBudgetSummedFromRefObjects(t *testing
 
 	require.Len(t, plans, 1, "OnPlan must fire exactly once per Push — duplicate plans would re-anchor the progress-bar denominator mid-run and confuse the user with a bar that resets")
 	assert.Equal(t, "push", plans[0].Operation, "PlanInfo.Operation must be 'push' so the projection can disambiguate from the Pulling-stage plan when both are observed in the same run")
-	assert.Equal(t, int64(4+8+16), plans[0].BytesTotal, "PlanInfo.BytesTotal must equal the sum of every referenced object's Size so the upload progress bar's denominator reflects the real network budget — without this the bar stays at 0%% the whole transfer")
-	assert.Equal(t, 3, plans[0].FilesTotal, "PlanInfo.FilesTotal must equal the unique-blob count so the GUI can render an 'N of M files' upload caption — same-hash duplicates collapse to one blob per Pusher's collectHashes contract")
+	assert.Equal(t, int64(4+8+16), plans[0].BytesTotal, "PlanInfo.BytesTotal must equal the delta — what will actually move. With an empty remote destination the delta equals the full ref total (28B); design-log/019.")
+	assert.Equal(t, 3, plans[0].FilesTotal, "PlanInfo.FilesTotal must equal the count of blobs missing remotely — same 'delta == full ref' on an empty destination; same-hash duplicates collapse to one blob per Pusher's collectHashes contract")
+}
+
+func TestPusher_OnPlan_BytesTotalIsDeltaAfterRemoteExistsGate(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	local := newFSBundle(t)
+	remote := newFSBundle(t)
+
+	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat":  []byte("AAAA"),
+		"worlds/region.mca": []byte("BBBBBBBB"),
+		"worlds/playerdata": []byte("CCCCCCCCCCCCCCCC"),
+	})
+	seedLocalForPush(t, local, ref, map[string][]byte{
+		"worlds/level.dat":  []byte("AAAA"),
+		"worlds/region.mca": []byte("BBBBBBBB"),
+		"worlds/playerdata": []byte("CCCCCCCCCCCCCCCC"),
+	})
+	remote.put(t, "objects/"+hashHex("AAAA"), []byte("AAAA"))
+	remote.put(t, "objects/"+hashHex("BBBBBBBB"), []byte("BBBBBBBB"))
+
+	var plans []ritual.PlanInfo
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
+	pusher.OnPlan(func(p ritual.PlanInfo) { plans = append(plans, p) })
+
+	require.NoError(t, pusher.Push(ctx, ref.Timestamp), "push must succeed with two of three blobs already on remote — idempotent per-blob")
+
+	require.Len(t, plans, 1, "OnPlan must fire exactly once per Push")
+	assert.Equal(t, int64(16), plans[0].BytesTotal, "PlanInfo.BytesTotal must equal the bytes that will actually move over the wire — only the one missing blob (16B), NOT the full ref total (4+8+16=28B). Progress bar, ETA and speed readouts all divide by this number; including blobs the Exists-gate will skip makes the bar finish at <100%% and inflates ETA proportional to dedup ratio.")
+	assert.Equal(t, 1, plans[0].FilesTotal, "PlanInfo.FilesTotal must count only blobs that need uploading — 1 missing, not 3 referenced — so the 'N of M files' caption matches reality")
 }
 
 // --- push fixtures (prefix-named to avoid collision with Pull/Commit/Apply helpers) ---

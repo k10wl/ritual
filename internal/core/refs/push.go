@@ -66,14 +66,19 @@ func (p *Pusher) Push(ctx context.Context, id domain.RefID) error {
 		return err
 	}
 	items, pathByHash := collectHashes(ref.Objects)
+	known, err := collectKnownHashes(ctx, p.to)
+	if err != nil {
+		return fmt.Errorf("push %s: pre-flight list: %w", id, err)
+	}
+	missing := filterMissing(items, known)
 	if p.onPlan != nil {
 		p.onPlan(ritual.PlanInfo{
 			Operation:  "push",
-			BytesTotal: sumSizes(ref.Objects),
-			FilesTotal: len(items),
+			BytesTotal: sumWeights(missing),
+			FilesTotal: len(missing),
 		})
 	}
-	err = p.runner.Run(ctx, items, func(ctx context.Context, hash string) error {
+	err = p.runner.Run(ctx, missing, func(ctx context.Context, hash string) error {
 		if err := transferBlob(ctx, p.from, p.to, blobKey(hash)); err != nil {
 			return fmt.Errorf("push %s: blob %s (%s): %w", id, hash, pathByHash[hash], err)
 		}

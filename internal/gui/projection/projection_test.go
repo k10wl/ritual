@@ -257,6 +257,18 @@ func TestProjection_PlanInfoDuringPulling_PopulatesBytesTotalAndFilesTotal(t *te
 	final := last(vms)
 	assert.Equal(t, int64(6000), final.BytesTotal, "PlanInfo.BytesTotal must populate ViewModel.BytesTotal so the arc denominator is non-zero before the first Tick")
 	assert.Equal(t, 3, final.FilesTotal, "PlanInfo.FilesTotal must populate ViewModel.FilesTotal so the frontend has the file count for the under-block caption")
+	assert.Equal(t, 0, final.Progress, "Non-empty plan must leave Progress at 0 so arcFromBytes derives the arc from bytesDone/bytesTotal (the live counter), not from a stale anchor")
+}
+
+func TestProjection_PlanInfoWithZeroDelta_AnchorsProgressTo100(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(ritual.PlanInfo{Operation: "pull", BytesTotal: 0, FilesTotal: 0})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(0), final.BytesTotal, "Empty-delta plan must carry BytesTotal=0 through — the projection does not invent a denominator the runtime won't fill")
+	assert.Equal(t, 0, final.FilesTotal, "FilesTotal=0 mirrors BytesTotal=0 — nothing will move, nothing to count")
+	assert.Equal(t, 100, final.Progress, "Empty-delta plan must anchor Progress=100 so arcFromBytes resolves the dial to complete-on-arrival when bytesTotal is zero — without this anchor the dial would stick at 0%% for the duration of the transfer stage (no Ticks fire when no blob streams). Design-log/019.")
 }
 
 func TestProjection_TickInPullingStage_PopulatesSpeedMbps(t *testing.T) {

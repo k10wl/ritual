@@ -329,7 +329,7 @@ func TestPuller_ResumesWhenBlobsAlreadyLocalButRefMissing(t *testing.T) {
 		"resumed pull must not re-fetch blobs already present locally — Exists-gate holds across the crash-resume boundary, otherwise bandwidth amplifies on every retry")
 }
 
-func TestPuller_OnPlan_AnnouncesByteAndFileBudgetSummedFromRefObjects(t *testing.T) {
+func TestPuller_OnPlan_AnnouncesFullRefBudgetWhenLocalIsEmpty(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
@@ -355,11 +355,11 @@ func TestPuller_OnPlan_AnnouncesByteAndFileBudgetSummedFromRefObjects(t *testing
 
 	require.Len(t, plans, 1, "OnPlan must fire exactly once per Pull — duplicate plans would re-anchor the progress-bar denominator mid-run and confuse the user with a bar that resets")
 	assert.Equal(t, "pull", plans[0].Operation, "PlanInfo.Operation must be 'pull' so the projection can disambiguate from the Pushing-stage plan when both are observed in the same run")
-	assert.Equal(t, int64(4+8+16), plans[0].BytesTotal, "PlanInfo.BytesTotal must equal the sum of every referenced object's Size so the progress-bar denominator reflects the real network budget — without this the bar stays at 0%% the whole transfer")
-	assert.Equal(t, 3, plans[0].FilesTotal, "PlanInfo.FilesTotal must equal the unique-blob count so the GUI can render an 'N of M files' caption — same-hash duplicates collapse to one blob per Puller's collectHashes contract")
+	assert.Equal(t, int64(4+8+16), plans[0].BytesTotal, "PlanInfo.BytesTotal must equal the delta — what will actually move. With an empty local destination the delta equals the full ref total (28B); design-log/019.")
+	assert.Equal(t, 3, plans[0].FilesTotal, "PlanInfo.FilesTotal must equal the count of blobs missing locally — same 'delta == full ref' on an empty destination; same-hash duplicates collapse to one blob per Puller's collectHashes contract")
 }
 
-func TestPuller_OnPlan_FiresEvenWhenAllBlobsAlreadyPresentLocally(t *testing.T) {
+func TestPuller_OnPlan_FiresWithZeroBudgetWhenAllBlobsAlreadyPresentLocally(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
@@ -378,8 +378,40 @@ func TestPuller_OnPlan_FiresEvenWhenAllBlobsAlreadyPresentLocally(t *testing.T) 
 
 	require.NoError(t, puller.Pull(ctx, ref.Timestamp), "pull must succeed when blobs are already present locally — idempotent re-runs are part of the ACID contract")
 
-	require.Len(t, plans, 1, "OnPlan must fire even when no blobs need transferring — the GUI still renders a denominator (N bytes already on disk) so the bar resolves to 100%% instantly instead of 0%% indefinitely")
-	assert.Equal(t, int64(4), plans[0].BytesTotal, "PlanInfo.BytesTotal must announce the full ref budget regardless of skip-gate hits — the bar represents 'what the ref points at', not 'what we transferred this run'")
+	require.Len(t, plans, 1, "OnPlan must fire exactly once per Pull regardless of how many blobs need transferring — the projection wires it to bus.Publish unconditionally so the dial can render an immediate 'complete-on-arrival' frame")
+	assert.Equal(t, int64(0), plans[0].BytesTotal, "PlanInfo.BytesTotal must announce only the delta — bytes the runtime will actually move. Everything already on disk → 0 budget; projection treats 0/0 as 100%% per design-log/019.")
+	assert.Equal(t, 0, plans[0].FilesTotal, "PlanInfo.FilesTotal must count only blobs missing locally — 0 here so the 'N of M files' caption doesn't lie about work that won't happen")
+}
+
+func TestPuller_OnPlan_BytesTotalIsDeltaAfterLocalExistsGate(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	remote := newFSBundle(t)
+	local := newFSBundle(t)
+
+	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat":  []byte("AAAA"),
+		"worlds/region.mca": []byte("BBBBBBBB"),
+		"worlds/playerdata": []byte("CCCCCCCCCCCCCCCC"),
+	})
+	seedRemote(t, remote, ref, map[string][]byte{
+		"worlds/level.dat":  []byte("AAAA"),
+		"worlds/region.mca": []byte("BBBBBBBB"),
+		"worlds/playerdata": []byte("CCCCCCCCCCCCCCCC"),
+	})
+	local.put(t, "objects/"+hashHex("AAAA"), []byte("AAAA"))
+	local.put(t, "objects/"+hashHex("BBBBBBBB"), []byte("BBBBBBBB"))
+
+	var plans []ritual.PlanInfo
+	puller := refs.NewPuller(remote.storage, local.storage, serialRunner)
+	puller.OnPlan(func(p ritual.PlanInfo) { plans = append(plans, p) })
+
+	require.NoError(t, puller.Pull(ctx, ref.Timestamp), "pull must succeed with two of three blobs already present locally")
+
+	require.Len(t, plans, 1, "OnPlan must fire exactly once per Pull")
+	assert.Equal(t, int64(16), plans[0].BytesTotal, "PlanInfo.BytesTotal must equal the bytes that will actually download — only the one missing blob (16B), NOT the full ref total (4+8+16=28B). Progress bar, ETA and speed readouts all divide by this number; including blobs the Exists-gate will skip makes the bar finish at <100%% and inflates ETA proportional to dedup ratio.")
+	assert.Equal(t, 1, plans[0].FilesTotal, "PlanInfo.FilesTotal must count only blobs that need downloading — 1 missing, not 3 referenced")
 }
 
 // --- test fixtures ---

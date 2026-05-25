@@ -118,6 +118,17 @@ func (p *Projection) fold(evt ports.Event) bool {
 	case ritual.PlanInfo:
 		p.state.BytesTotal = e.BytesTotal
 		p.state.FilesTotal = e.FilesTotal
+		// Empty delta — everything already present at destination per the
+		// pre-flight list (design-log/019). No Ticks will fire because no
+		// blob streams, so without this anchor the bar would sit at 0/0 for
+		// the duration of the transfer stage. Setting Progress = 100
+		// here gives arcFromBytes a value to fall back on when bytesTotal
+		// is zero, so the dial reads complete-on-arrival immediately.
+		if e.BytesTotal == 0 && e.FilesTotal == 0 {
+			p.state.Progress = 100
+		} else {
+			p.state.Progress = 0
+		}
 	case lifecycle.StatusChanged:
 		p.onStatusChanged(e)
 	default:

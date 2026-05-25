@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
@@ -71,14 +72,19 @@ func (p *Puller) Pull(ctx context.Context, id domain.RefID) error {
 		return err
 	}
 	items, pathByHash := collectHashes(ref.Objects)
+	known, err := collectKnownHashes(ctx, p.to)
+	if err != nil {
+		return fmt.Errorf("pull %s: pre-flight list: %w", id, err)
+	}
+	missing := filterMissing(items, known)
 	if p.onPlan != nil {
 		p.onPlan(ritual.PlanInfo{
 			Operation:  "pull",
-			BytesTotal: sumSizes(ref.Objects),
-			FilesTotal: len(items),
+			BytesTotal: sumWeights(missing),
+			FilesTotal: len(missing),
 		})
 	}
-	err = p.runner.Run(ctx, items, func(ctx context.Context, hash string) error {
+	err = p.runner.Run(ctx, missing, func(ctx context.Context, hash string) error {
 		if err := transferBlob(ctx, p.from, p.to, blobKey(hash)); err != nil {
 			return fmt.Errorf("pull %s: blob %s (%s): %w", id, hash, pathByHash[hash], err)
 		}
@@ -112,18 +118,48 @@ func (p *Puller) fetchRef(ctx context.Context, id domain.RefID) (*domain.Ref, []
 	return ref, raw, nil
 }
 
-// sumSizes totals the byte size of every object in a ref. Same-hash
-// duplicates count once because the unique-blob view is what hits the
-// network — the file count surfaced via FilesTotal matches.
-func sumSizes(objects map[string]domain.Object) int64 {
-	seen := make(map[string]struct{}, len(objects))
-	var total int64
-	for _, obj := range objects {
-		if _, ok := seen[obj.Hash]; ok {
+// collectKnownHashes lists every blob in dst's objects/ store and returns
+// the hash set. Pusher/Puller use this to filter the source ref's blob list
+// before announcing PlanInfo so the bar denominator reflects what will
+// actually move, not the full ref total. One List call instead of N Exists:
+// O(N/page-size) RTTs versus O(N/concurrency), so the cost is constant in
+// file count for typical projects (≤1000 blobs → one R2 ListObjectsV2 page).
+// The runtime per-blob Exists gate in transferBlob remains authoritative;
+// this set is advisory — a blob present in dst but absent from this set
+// (race / mid-list landing) is uploaded again and the destination no-ops
+// the write; a blob in this set but actually gone (scrub-on-failure left
+// the ref but not the bytes) is detected by the runtime gate.
+func collectKnownHashes(ctx context.Context, dst ports.StorageRepository) (map[string]struct{}, error) {
+	keys, err := dst.List(ctx, "objects/")
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		known[strings.TrimPrefix(k, "objects/")] = struct{}{}
+	}
+	return known, nil
+}
+
+// filterMissing drops items whose hash is in known, preserving input order
+// so the transfer runner's weight-desc dispatch still puts heaviest first.
+func filterMissing(items []ports.BlobItem, known map[string]struct{}) []ports.BlobItem {
+	missing := make([]ports.BlobItem, 0, len(items))
+	for _, it := range items {
+		if _, present := known[it.Key]; present {
 			continue
 		}
-		seen[obj.Hash] = struct{}{}
-		total += obj.Size
+		missing = append(missing, it)
+	}
+	return missing
+}
+
+// sumWeights totals BlobItem.Weight across a slice. Used to derive
+// PlanInfo.BytesTotal from the post-filter survivor list.
+func sumWeights(items []ports.BlobItem) int64 {
+	var total int64
+	for _, it := range items {
+		total += it.Weight
 	}
 	return total
 }

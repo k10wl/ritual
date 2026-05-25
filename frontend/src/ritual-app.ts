@@ -65,7 +65,13 @@ function snapEta(secs: number): number {
 }
 
 function arcFromBytes(vm: ViewModel): number {
-    if (vm.bytesTotal <= 0) return 0;
+    // Empty-delta transfer: the pre-flight list (design-log/019) found
+    // every blob already at the destination, so PlanInfo announces
+    // bytesTotal == 0 and no Tick fires. Projection sets progress = 100
+    // in that case so the dial reads complete-on-arrival instead of
+    // sticking at zero. Pre-PlanInfo state also has bytesTotal == 0 but
+    // progress == 0, which arcFromBytes maps to 0 — no flash.
+    if (vm.bytesTotal <= 0) return Math.max(0, Math.min(1, vm.progress / 100));
     return Math.min(1, Math.max(0, vm.bytesDone / vm.bytesTotal));
 }
 
