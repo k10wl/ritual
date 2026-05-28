@@ -1,7 +1,7 @@
 # 023 — Disable main-window resize
 
 **Date:** 2026-05-25
-**Status:** Draft
+**Status:** Implemented (Phase A; Phase B = smoke deferred to next live run)
 **Related:** [[007-hig-ux-coherence]] (single-dial layout assumes a fixed canvas), [[011-dial-frame-flip]] (`.frame { min-height: 480px }` is sized for one window shape), [[020-lit-render-purity]] (entrance animations assume a known viewport).
 
 ## Background
@@ -127,3 +127,10 @@ Diff in plain words:
 
 - **Lost.** Power-users on 4K monitors can't enlarge the dial. Counter: the dial's pixel layout is tuned, not fluid — enlarging would just upscale; macOS/Windows accessibility zoom handles the real "I need it bigger" case.
 - **Gained.** One canvas = one set of layout assumptions; entrance animations (020) operate on known geometry; [[024-custom-titlebar]] becomes viable without a resize-handle hack.
+
+## Implementation Results
+
+- `cmd/gui/main.go:91-103` — applied the Phase A diff as designed. `DisableResize: true`, `MaximiseButtonState: application.ButtonHidden`, dropped `MinWidth/MinHeight`. Mac block (`InvisibleTitleBarHeight`, `MacBackdropTranslucent`, `MacTitleBarHiddenInset`) untouched. Logs window untouched.
+- API symbols verified via `go doc github.com/wailsapp/wails/v3/pkg/application.{WebviewWindowOptions,ButtonState}` — `application.ButtonHidden` is the correct constant.
+- `go build ./...` clean.
+- Phase B live smoke (Windows + Mac) deferred to next operator session — Phase A is the entire code change and behaviour is window-manager-level.

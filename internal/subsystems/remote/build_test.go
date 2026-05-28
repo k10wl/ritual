@@ -82,6 +82,37 @@ func TestBuild_ModeR2WithEnvVars_AttemptsR2BranchAndReportsAdapterFailureCleanly
 	require.NotNil(t, storage, "if NewR2Repository accepts the fake creds without I/O the factory must still return a non-nil storage — operational issues surface lazily on the first Get/Put rather than at construction time")
 }
 
+func TestResolveModeFromEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		set  string
+		want remote.Mode
+	}{
+		{"unset defaults to R2", "", remote.ModeR2},
+		{"mock keyword opts into ModeMock", "mock", remote.ModeMock},
+		{"any other value falls through to R2", "r2", remote.ModeR2},
+		{"garbage value falls through to R2", "asdf", remote.ModeR2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.set == "" {
+				old, had := os.LookupEnv(remote.EnvRemoteMode)
+				_ = os.Unsetenv(remote.EnvRemoteMode)
+				t.Cleanup(func() {
+					if had {
+						_ = os.Setenv(remote.EnvRemoteMode, old)
+					}
+				})
+			} else {
+				t.Setenv(remote.EnvRemoteMode, tc.set)
+			}
+			if got := remote.ResolveModeFromEnv(); got != tc.want {
+				t.Fatalf("ResolveModeFromEnv() = %v, want %v (RITUAL_REMOTE_MODE=%q): only \"mock\" must select the dev backend; everything else lands on R2 per design-log/030 §Q1 fail-fast posture", got, tc.want, tc.set)
+			}
+		})
+	}
+}
+
 func clearR2Env(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{

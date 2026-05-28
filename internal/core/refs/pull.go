@@ -124,11 +124,10 @@ func (p *Puller) fetchRef(ctx context.Context, id domain.RefID) (*domain.Ref, []
 // actually move, not the full ref total. One List call instead of N Exists:
 // O(N/page-size) RTTs versus O(N/concurrency), so the cost is constant in
 // file count for typical projects (≤1000 blobs → one R2 ListObjectsV2 page).
-// The runtime per-blob Exists gate in transferBlob remains authoritative;
-// this set is advisory — a blob present in dst but absent from this set
-// (race / mid-list landing) is uploaded again and the destination no-ops
-// the write; a blob in this set but actually gone (scrub-on-failure left
-// the ref but not the bytes) is detected by the runtime gate.
+// Single filter (design-log/025): the pre-flight List determines which
+// blobs ship. The race window — a blob landing at dst between List and
+// transfer — is accepted; PutStream is content-addressed and idempotent,
+// so the duplicate upload is byte-identical and the destination unchanged.
 func collectKnownHashes(ctx context.Context, dst ports.StorageRepository) (map[string]struct{}, error) {
 	keys, err := dst.List(ctx, "objects/")
 	if err != nil {

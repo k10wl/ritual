@@ -22,10 +22,12 @@ var ErrBlobCleanup = errors.New("refs: blob cleanup failed")
 // transferBlob mirrors a single content-addressed key from one storage
 // to another. Behaviour:
 //
-//   - Exists-gate at the destination: a key already present is a no-op.
-//   - Stream source → destination.
+//   - Stream source → destination. The pre-flight List in
+//     collectKnownHashes is the single filter (design-log/025); a concurrent
+//     landing between List and transfer results in a byte-identical
+//     duplicate upload, which the destination accepts as a no-op.
 //   - On any GetStream/PutStream/Close failure, scrub the destination
-//     under `key` so the next call sees Exists == false and starts fresh.
+//     under `key` so the next call starts fresh.
 //     Scrub Delete that hits fs.ErrNotExist is tolerated (nothing landed).
 //   - Errors classify via ErrBlobTransfer; cleanup failures add
 //     ErrBlobCleanup through errors.Join so callers can distinguish
@@ -34,14 +36,6 @@ var ErrBlobCleanup = errors.New("refs: blob cleanup failed")
 // Direction-agnostic — the caller decides which side is remote and which
 // is local. Used by both Puller (remote→local) and Pusher (local→remote).
 func transferBlob(ctx context.Context, from, to ports.StorageRepository, key string) error {
-	present, err := to.Exists(ctx, key)
-	if err != nil {
-		return fmt.Errorf("exists %s: %w", key, err)
-	}
-	if present {
-		return nil
-	}
-
 	rc, err := from.GetStream(ctx, key)
 	if err != nil {
 		return fmt.Errorf("%w (%s): %w", ErrBlobTransfer, key, err)

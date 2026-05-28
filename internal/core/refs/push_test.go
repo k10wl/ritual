@@ -91,6 +91,31 @@ func TestPusher_SkipsBlobsAlreadyOnRemote(t *testing.T) {
 		"§Push step 2: missing blob must be uploaded exactly once")
 }
 
+func TestPusher_DoesNotCallExistsOnObjectsDuringTransfer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	local := newFSBundle(t)
+	remote := newFSBundle(t)
+
+	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
+		"worlds/level.dat":  []byte("AAAA"),
+		"worlds/region.mca": []byte("BBBBBBBB"),
+	})
+	seedLocalForPush(t, local, ref, map[string][]byte{
+		"worlds/level.dat":  []byte("AAAA"),
+		"worlds/region.mca": []byte("BBBBBBBB"),
+	})
+
+	pusher := refs.NewPusher(local.storage, remote.storage, serialRunner)
+	err := pusher.Push(ctx, ref.Timestamp)
+	require.NoError(t, err,
+		"push with empty remote must succeed — happy-path precondition for the gate-absence check")
+
+	assert.Equal(t, 0, remote.existsHitsPrefix("objects/"),
+		"design-log/025: per-blob Exists gate removed from transferBlob — the pre-flight List in collectKnownHashes is the single filter, so no objects/* Exists calls during a clean Push")
+}
+
 func TestPusher_ReturnsErrorWhenLocalRefMissing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()

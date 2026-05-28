@@ -121,6 +121,10 @@ export class RitualShell extends LitElement {
             gap: var(--space-5);
             padding: 150px var(--space-4) var(--space-4);
             box-sizing: border-box;
+            transition: padding-top var(--motion-base, 220ms ease);
+        }
+        :host([state="idle"]) .stage {
+            padding-top: 60px;
         }
         ::slotted(*) {
             width: 100%;

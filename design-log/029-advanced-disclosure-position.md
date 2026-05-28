@@ -1,7 +1,7 @@
 # 029 — Advanced disclosure clipping below viewport
 
 **Date:** 2026-05-25
-**Status:** Draft
+**Status:** Implemented (Phase A; Phase B + Phase C story deferred)
 **Related:** [[014-prep-advanced-settings]] (the disclosure being repositioned), [[023-disable-resize]] (locks viewport at 560×720 so the overflow is no longer escapable by resize), [[007-hig-ux-coherence]] (canvas tuning), [[011-dial-frame-flip]] (`.frame { min-height: 480px }` constraint).
 
 ## Background
@@ -138,3 +138,10 @@ Trim the dial frame's reserved canvas on IDLE:
 - Repositioning prep-settings to a popover / sidebar / titlebar gear — see [[024-custom-titlebar]] Q5 for the gear option, deferred there.
 - Adding more advanced fields beyond port + memory — separate log when a new field is actually needed.
 - Default-open disclosure — [[014]] decision stands.
+
+## Implementation Results
+
+- `frontend/src/ui/ritual-shell.ts` — added `transition: padding-top var(--motion-base, 220ms ease)` on `.stage` and a `:host([state="idle"]) .stage { padding-top: 60px }` override per Phase A. Recovers 90px on IDLE, animates back to 150px on transition.
+- Phase B (dial-frame `min-height` IDLE override) **not applied** — Phase A's 90px is expected to be sufficient per the §Background budget; revisit only if live smoke shows residual overflow.
+- Phase C storybook regression story (IDLE shell + expanded prep-settings inside a 560×720 frame) deferred — no `ritual-shell.stories.ts` exists yet and the design system rule (#1 audit gate) says spin one up when a regression case actually justifies it. Note: future contributors editing this padding should add the story at that point.
+- Live verification deferred to next operator session — CSS-only change, no Go/TS rebuild churn.

@@ -1,7 +1,7 @@
 # 030 — R2 as default backend + runtime `.env` loader
 
 **Date:** 2026-05-25
-**Status:** Draft
+**Status:** Implemented (with Taskfile-aligned deviation, see §Implementation Results)
 **Related:** [[022-divergence-from-origin-delta-sync]] (back-port candidate `76c0682` from origin — Task-only dotenv, never landed locally), [[016-live-sync-resurrected]] (production storage path).
 
 ## Background
@@ -287,3 +287,26 @@ Origin used `R2_BUCKET_NAME` as the Taskfile-side key (vs the runtime's `RITUAL_
 - **Secrets in OS keychain** (Windows Credential Manager / macOS Keychain). The `.env.local` approach is fine for a desktop tool; keychain integration is a separate quality-of-life log if the team ever wants it.
 - **Multiple R2 bucket profiles** (e.g. dev bucket vs prod bucket). Could add `RITUAL_PROFILE=dev` → loads `.env.dev.local`. Not needed yet.
 - **CI integration.** Documenting how to plumb GitHub Actions secrets / etc. into the test runner; belongs in `docs/`.
+
+## Implementation Results
+
+Default backend was already flipped to R2 by commit 84bf4de (`const remoteMode = remote.ModeR2`), which also back-ported the Taskfile `dotenv:` block. Remaining gap: the **runtime** Go-side loader + mode resolver. Shipped now.
+
+**Deviation — Taskfile-aligned file naming.** The shipped Taskfile uses `.env.{{.RITUAL_ENV}}.local` (default `dev`) + remaps `R2_BUCKET_NAME` → `RITUAL_R2_BUCKET` etc. (`Taskfile.yml:48-54`). To keep one convention across `task gui:*` flows and the shipped binary, the Go loader was aligned to the Taskfile rather than to §Q5's simpler `.env.local`/`.env` pair. The remap is mirrored Go-side so a single `.env.dev.local` works in both paths.
+
+Changes:
+
+- `go.mod` — added direct dependency on `github.com/joho/godotenv v1.5.1`.
+- `internal/config/dotenv.go` (new) — `LoadEnvFiles()` reads `.env.{$RITUAL_ENV}.local` (default `dev`) from exe-adjacent dir then CWD; first match wins. `mirrorTaskfileNames()` mirrors `R2_*` → `RITUAL_R2_*` only when the runtime name isn't already set. Operator shell exports beat both file values and the remap (`godotenv.Load` semantics + per-key guard).
+- `internal/config/dotenv_test.go` (new) — 6 cases: default profile, profile selector (`dev`/`prod`), missing file no-op, shell-beats-file, remap, remap-respects-shell.
+- `internal/subsystems/remote/build.go` — added `EnvRemoteMode` const + `ResolveModeFromEnv() Mode`. Default `ModeR2`, only `"mock"` selects `ModeMock`. Replaced the stale "flip the constant + rebuild" prose at the top of the package with a one-liner pointing at design-log/030.
+- `internal/subsystems/remote/build_test.go` — added `TestResolveModeFromEnv` (4 subcases: unset, "mock", "r2", garbage).
+- `cmd/gui/main.go` — `config.LoadEnvFiles()` is the first call in `main()`. The 20-line "HOW TO FLIP MOCK → REAL R2" comment block + `const remoteMode = …` line collapsed into a 5-line summary + `remote.Build(ctx, remote.ResolveModeFromEnv(), bus)`.
+- `.gitignore` / `.env.example` — already shipped (commit 84bf4de). No change.
+- `docs/r2-setup.md` — deferred; the new shape is self-documenting via the `EnvRemoteMode` / `EnvR2*` constants and the `dotenv: loaded …` log line.
+
+Verification:
+
+- `go build ./...` clean.
+- `go test ./...` — 32 packages green, including the new config + remote subcases.
+- Smoke against the actual app deferred to next operator session: `RITUAL_REMOTE_MODE=mock` should boot without creds; default boot should log `dotenv: loaded …/.env.dev.local` and `store=r2::<bucket>`.

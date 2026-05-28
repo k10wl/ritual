@@ -128,6 +128,9 @@ func (b *fsBundle) decodeRef(t *testing.T, id domain.RefID) (*domain.Ref, bool) 
 
 func (b *fsBundle) getHits(key string) int { return b.counter.getHits(key) }
 func (b *fsBundle) putHits(key string) int { return b.counter.putHits(key) }
+func (b *fsBundle) existsHitsPrefix(prefix string) int {
+	return b.counter.existsHitsPrefix(prefix)
+}
 
 // keysWithPrefix enumerates every fsBundle key whose POSIX form starts with
 // the given prefix — replaces the former memStorage helper used by commit
@@ -149,14 +152,15 @@ func keysWithPrefix(b *fsBundle, prefix string) []string {
 // before returning the body; PutStream increments on success after the
 // inner write.
 type keyCounter struct {
-	inner ports.StorageRepository
-	mu    sync.Mutex
-	gets  map[string]int
-	puts  map[string]int
+	inner  ports.StorageRepository
+	mu     sync.Mutex
+	gets   map[string]int
+	puts   map[string]int
+	exists map[string]int
 }
 
 func newKeyCounter(inner ports.StorageRepository) *keyCounter {
-	return &keyCounter{inner: inner, gets: map[string]int{}, puts: map[string]int{}}
+	return &keyCounter{inner: inner, gets: map[string]int{}, puts: map[string]int{}, exists: map[string]int{}}
 }
 
 func (c *keyCounter) getHits(key string) int {
@@ -169,6 +173,18 @@ func (c *keyCounter) putHits(key string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.puts[key]
+}
+
+func (c *keyCounter) existsHitsPrefix(prefix string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for k, v := range c.exists {
+		if strings.HasPrefix(k, prefix) {
+			n += v
+		}
+	}
+	return n
 }
 
 func (c *keyCounter) String() string { return "keyCounter::" + c.inner.String() }
@@ -196,6 +212,9 @@ func (c *keyCounter) PutStream(ctx context.Context, key string, body io.Reader) 
 }
 
 func (c *keyCounter) Exists(ctx context.Context, key string) (bool, error) {
+	c.mu.Lock()
+	c.exists[key]++
+	c.mu.Unlock()
 	return c.inner.Exists(ctx, key)
 }
 

@@ -1,7 +1,7 @@
 # 025 — Drop redundant per-blob `Exists` gate in `transferBlob`
 
 **Date:** 2026-05-25
-**Status:** Draft
+**Status:** Implemented
 **Related:** [[019-plan-info-delta]] (the pre-flight `List` that made this gate redundant), [[003-encoder-pool]] (push fan-out), [[004-r2-retry-decorator]] (per-blob retry semantics).
 
 ## Background
@@ -138,6 +138,15 @@ Plus comment-only edit in `pull.go:121-131` — strike the "authoritative / advi
 
 - **Lost.** A microseconds-wide race where a concurrent client uploads the same blob between our List and our transfer now results in a duplicate stream rather than a no-op. Content-addressed, byte-identical — destination unchanged.
 - **Gained.** O(N) reduction in remote round-trips per push/pull. On R2 with N=1000 blobs and ~100ms latency: ~100s saved per operation. On local mock: ~30-50s observed in this session. The pre-flight List remains the single source of "what to ship."
+
+## Implementation Results
+
+- `internal/core/refs/transfer.go:36-67` — removed the Exists pre-check + the `fmt.Errorf("exists %s: %w", …)` branch from `transferBlob`. Updated the godoc to reference design-log/025 and reframe the single-filter posture; scrub-on-failure path unchanged.
+- `internal/core/refs/pull.go:121-131` — rewrote the `collectKnownHashes` doc comment per §Design (struck the "authoritative … advisory" line; codified the duplicate-upload race acceptance).
+- `internal/core/refs/fsbundle_test.go` — extended `keyCounter` with an `exists` counter + `existsHitsPrefix(prefix string) int` accessor (exists used to be a pure passthrough). Decided against publishing `existsHits(key string)` because callers only need the prefix aggregate.
+- `internal/core/refs/push_test.go` — new `TestPusher_DoesNotCallExistsOnObjectsDuringTransfer` asserts `remote.existsHitsPrefix("objects/") == 0` after a clean Push with empty remote. Replaces the per-blob skip test (`TestPusher_SkipsBlobsAlreadyOnRemote`) — both stay green.
+- Full `go test ./...` clean (32 packages, all green).
+- Wall-clock saving (target ≥30% of Pushing window on local-mock) deferred to next live run; counter assertion is the regression guard.
 
 ## Open follow-up — relationship to stuck-saving
 

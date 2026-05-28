@@ -14,8 +14,8 @@
 // (RITUAL_R2_BUCKET, RITUAL_R2_ACCOUNT_ID, RITUAL_R2_ACCESS_KEY_ID,
 // RITUAL_R2_SECRET_ACCESS_KEY) live in the operator's shell or CI
 // secret store, so a leaked repo or screenshotted settings file
-// cannot expose them. Swap from mock to R2 is a code edit to the
-// remoteMode constant in cmd/gui/main.go, not a config edit.
+// cannot expose them. Mock vs R2 is a runtime toggle on
+// RITUAL_REMOTE_MODE (design-log/030) — no rebuild required.
 package remote
 
 import (
@@ -55,6 +55,21 @@ const (
 	EnvR2AccessKeyID     = "RITUAL_R2_ACCESS_KEY_ID"
 	EnvR2SecretAccessKey = "RITUAL_R2_SECRET_ACCESS_KEY"
 )
+
+// EnvRemoteMode toggles the remote backend at runtime. Values: "mock"
+// → ModeMock; anything else (including unset) → ModeR2. Documented as
+// the way to opt into the dev-only local-FS mock without rebuilding
+// (design-log/030).
+const EnvRemoteMode = "RITUAL_REMOTE_MODE"
+
+// ResolveModeFromEnv returns the Mode requested by RITUAL_REMOTE_MODE.
+// Default: ModeR2 — production posture per design-log/030.
+func ResolveModeFromEnv() Mode {
+	if os.Getenv(EnvRemoteMode) == "mock" {
+		return ModeMock
+	}
+	return ModeR2
+}
 
 // ErrR2EnvIncomplete is returned by Build when ModeR2 is selected but
 // any of the four required env vars is empty. The error names which

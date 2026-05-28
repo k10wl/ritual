@@ -48,6 +48,8 @@ func init() {
 }
 
 func main() {
+	config.LoadEnvFiles()
+
 	runtime, err := buildRuntime()
 	if err != nil {
 		log.Fatalf("build runtime: %v", err)
@@ -89,11 +91,13 @@ func main() {
 	})
 
 	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:  "main",
-		Title: config.ProductName,
-		Width: 560, Height: 720,
-		MinWidth: 420, MinHeight: 560,
-		BackgroundColour: application.NewRGB(27, 38, 54),
+		Name:                "main",
+		Title:               config.ProductName,
+		Width:               560,
+		Height:              720,
+		DisableResize:       true,
+		MaximiseButtonState: application.ButtonHidden,
+		BackgroundColour:    application.NewRGB(27, 38, 54),
 		Mac: application.MacWindow{
 			InvisibleTitleBarHeight: 50,
 			Backdrop:                application.MacBackdropTranslucent,
@@ -198,30 +202,12 @@ func buildRuntime() (*guiRuntime, error) {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
 
-	// HOW TO FLIP MOCK → REAL R2 (alpha MQA workflow):
-	//
-	//   1. Export the four R2 credentials in the shell that launches
-	//      the GUI:
-	//          set RITUAL_R2_BUCKET=<r2-bucket-name>
-	//          set RITUAL_R2_ACCOUNT_ID=<cloudflare-account-id>
-	//          set RITUAL_R2_ACCESS_KEY_ID=<r2-access-key-id>
-	//          set RITUAL_R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
-	//
-	//   2. Change the line below from `remote.ModeMock` to
-	//      `remote.ModeR2` and rebuild. This is a CODE-LEVEL toggle —
-	//      do NOT commit credentials to settings.json or any source
-	//      file. Env vars stay in the operator's shell or CI secret
-	//      store; a leaked repo cannot expose them.
-	//
-	//   3. Logs will show storage events under `store=r2::<bucket>`
-	//      instead of `store=fs::remote`. Boot fails fast with
-	//      ErrR2EnvIncomplete when any of the four env vars is missing.
-	//
-	//   4. Revert by changing the constant back to `remote.ModeMock`
-	//      and rebuilding. <root>/remote-mock/ is recreated fresh.
-	const remoteMode = remote.ModeR2
-
-	rawRemote, err := remote.Build(context.Background(), remoteMode, bus)
+	// Remote backend selected at runtime by RITUAL_REMOTE_MODE
+	// (design-log/030). Default ModeR2 reads credentials from
+	// RITUAL_R2_* — typically loaded by config.LoadEnvFiles from
+	// .env.{RITUAL_ENV}.local at startup. Set RITUAL_REMOTE_MODE=mock
+	// to opt into the local-FS dev backend without a rebuild.
+	rawRemote, err := remote.Build(context.Background(), remote.ResolveModeFromEnv(), bus)
 	if err != nil {
 		return nil, fmt.Errorf("remote storage: %w", err)
 	}
