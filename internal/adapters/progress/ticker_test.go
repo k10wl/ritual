@@ -181,6 +181,58 @@ done:
 		"audit fix #9 regression: with counters never touched the ticker must publish ZERO Tick events across the entire window — pre-fix one Tick per interval flooded the bus + on-disk log with zero-delta lines an operator had to scroll past to find anything signal")
 }
 
+// TestTicker_HeartbeatDuringActiveTransferStall locks the back-port from
+// design-log/022 (origin a7949ae): a transfer marked in-flight that then
+// stalls — R2 PutStream blocked on a TCP retransmit, 31s silences observed —
+// must still pulse heartbeat ticks so the projection can render
+// "Stalled — waiting on R2…" instead of a dead-frozen dial at <100%.
+//
+// This is the deliberate inverse of TestTicker_StableCounters_NoTicks: there
+// the transfer flag is false (idle stage) and silence is correct; here the
+// flag is true (bytes-in-flight beat) and the counters happen to be frozen,
+// so the silence gate must NOT suppress the tick. NowMbps==0 marks the stall.
+func TestTicker_HeartbeatDuringActiveTransferStall(t *testing.T) {
+	counters := &adapters.StorageCounters{}
+	bus := adapters.NewEventBus(64)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	const interval = 20 * time.Millisecond
+	ticker := progress.NewTicker(singleSide(counters), singleSide(counters), bus, interval)
+
+	// Mark a transfer in-flight but never advance the counters. Pre-fix the
+	// StableCounters gate (cur==prev → continue) swallows every interval, the
+	// bus goes quiet, and the dial freezes with no liveness signal.
+	ticker.SetTransferActive(true)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 6*interval)
+	defer cancel()
+	go ticker.Run(ctx)
+
+	var ticks []progress.Tick
+	for {
+		select {
+		case evt, ok := <-ch:
+			if !ok {
+				goto done
+			}
+			if tick, ok := evt.(progress.Tick); ok {
+				ticks = append(ticks, tick)
+			}
+		case <-ctx.Done():
+			goto done
+		}
+	}
+done:
+
+	require.GreaterOrEqual(t, len(ticks), 2,
+		"a transfer marked active but stalled (counters frozen) must still publish heartbeat ticks across the window — without them the projection has no liveness pulse and the dial sits dead-frozen below 100%% through a multi-second R2 stall")
+	for i, tick := range ticks {
+		assert.Equal(t, 0.0, tick.Remote.Up.Instant,
+			"heartbeat tick %d must carry zero rate — no bytes moved during the stall, the tick exists purely as a liveness pulse the projection turns into the 'Stalled — waiting on R2…' caption", i)
+	}
+}
+
 // TestTicker_OneFinalZeroDeltaAfterActivityStops locks the second half of
 // audit fix #9: after activity ceases the ticker must emit exactly one
 // zero-delta tick — the "we're done" marker — then go silent. This is the

@@ -5,6 +5,7 @@ package progress
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"ritual/internal/adapters"
@@ -54,6 +55,12 @@ type Ticker struct {
 
 	start, last time.Time
 
+	// transferActive marks an in-flight network transfer (Push/Pull body).
+	// While set, Run emits heartbeat ticks even when the byte counters are
+	// frozen, so a stalled R2 PutStream still pulses liveness. Set by the
+	// transfer goroutine, read by Run — atomic for that cross-goroutine race.
+	transferActive atomic.Bool
+
 	// Eight windowStates: 2 sides × 2 directions × 2 layers (wire + logical).
 	// Layer split is what drives Stream.Average vs Stream.DataAverage.
 	remoteDownWire, remoteUpWire windowState
@@ -93,6 +100,17 @@ func NewTicker(remote, local CounterSide, bus ports.EventBus, interval time.Dura
 	}
 }
 
+// SetTransferActive marks whether a network transfer (Push/Pull body) is
+// currently in-flight. While true, Run emits heartbeat ticks even when the
+// byte counters are frozen — an R2 PutStream blocked on a TCP retransmit
+// (31s silences observed) otherwise leaves the silence gate suppressing every
+// tick, freezing the dial below 100% with no liveness signal. Callers set it
+// true at the start of the transfer phase and false once bytes stop flowing.
+// Safe for concurrent use: the transfer goroutine sets it while Run reads it.
+func (t *Ticker) SetTransferActive(active bool) {
+	t.transferActive.Store(active)
+}
+
 // Run blocks until ctx is cancelled, emitting one Tick per interval when any
 // counter advanced. One trailing zero-delta tick fires after activity stops.
 func (t *Ticker) Run(ctx context.Context) {
@@ -111,7 +129,12 @@ func (t *Ticker) Run(ctx context.Context) {
 		case now := <-ticker.C:
 			cur := t.readCounters()
 			active := cur != prev
-			if !active && !wasActive {
+			// Heartbeat: an explicitly-marked transfer that has stalled
+			// (counters frozen, active==false) must still pulse so the
+			// projection can render "Stalled — waiting on R2…" instead of a
+			// dead-frozen dial. Idle stages leave transferActive false and
+			// stay silent — see TestTicker_StableCounters_NoTicks.
+			if !active && !wasActive && !t.transferActive.Load() {
 				continue
 			}
 

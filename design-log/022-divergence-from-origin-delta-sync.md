@@ -80,3 +80,28 @@ Skip:
 - `feat/delta-sync` builds clean (`go build ./...` ok).
 - `origin/feat/delta-sync` history is captured here (subject lines + bodies summarised) so a future back-port doesn't need to re-fetch context.
 - A follow-up design log (or per-back-port commit messages) closes each item in the "Back-port candidates" list.
+
+## Implementation Results
+
+Code audit of HEAD `8c563f0` against the four back-port candidates:
+
+| # | Candidate | Origin SHA | Status on local | Evidence |
+|---|-----------|------------|-----------------|----------|
+| 1 | Ref-attested live set perf | `4e010eb` | ✅ **Landed** | `refs/pull.go` `collectKnownHashes()` does one `dst.List("objects/")` pre-flight; `refs/transfer.go` `transferBlob` has no per-blob `Exists` gate; `push_test.go` `TestPusher_DoesNotCallExistsOnObjectsDuringTransfer` asserts it. Shipped via [[025-drop-redundant-exists-gate]]. |
+| 4 | R2 dotenv | `76c0682` | ✅ **Landed** | `internal/config/dotenv.go` `LoadEnvFiles()` + `RITUAL_R2_*` mirror map. Shipped via [[030-r2-default-and-dotenv]]. |
+| 2 | Honest push + stall heartbeat | `a7949ae` | 🟡 **Heartbeat half landed** | See below. Honest-push half still pending (depends on #3). |
+| 3 | Apply/Retain `ItemDoneInfo` | `9fdf1f6` | ⬜ **Absent** | No `ItemDoneInfo` type; `apply.go` runs items with no per-item callback. Genuine gap. |
+
+### Why the suite stayed green with #2/#3 absent
+
+Apply tests assert file-placement correctness only (progress "delegated elsewhere" per the file header); push tests assert transfer correctness + the 025 Exists-gate removal, never *when* the bar hits 100% relative to `PutStream` ack; ticker tests cover idle-silence and the final zero-delta but never a mid-transfer stall; projection tests cover only Pulling/Pushing `Tick → BytesDone`, never Applying/Retaining and never that a Tick is the *only* driver of `BytesDone`. The frozen-bar and race-to-100% are composition-root timing symptoms no pure-function test asserts. Fix is to add behavioural regression tests alongside each back-port.
+
+### #2 heartbeat — landed (this commit)
+
+`internal/adapters/progress/ticker.go`:
+- New `transferActive atomic.Bool` field + `SetTransferActive(bool)` method (mirrors origin's `Ticker.SetTransferActive`).
+- `Run` gate now `if !active && !wasActive && !t.transferActive.Load() { continue }` — an explicitly-marked transfer that stalls (counters frozen) still pulses heartbeat ticks; idle stages leave the flag false and stay silent.
+
+Red→green: `TestTicker_HeartbeatDuringActiveTransferStall` (deliberate inverse of `TestTicker_StableCounters_NoTicks`). Package `-race` clean; `StableCounters_NoTicks` and `OneFinalZeroDeltaAfterActivityStops` not regressed.
+
+**Still pending for #2:** projection renders "Stalled — waiting on R2…" when a heartbeat tick has `NowMbps==0`; composition root (`cmd/gui/main.go`) calls `SetTransferActive` around the Push/Pull body. Honest-push (drive `BytesDone` from acked `PutStream`) deferred behind #3's `ItemDoneInfo` plumbing.
