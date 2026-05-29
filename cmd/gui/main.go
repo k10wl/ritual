@@ -25,16 +25,17 @@ import (
 	"ritual/internal/core/refs"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pulling"
+	"ritual/internal/gui/control"
+	"ritual/internal/gui/logsink"
+	"ritual/internal/gui/netinfo"
+	"ritual/internal/gui/projection"
 	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/subsystems/livesync"
 	"ritual/internal/subsystems/logging"
 	"ritual/internal/subsystems/pipeline"
 	"ritual/internal/subsystems/remote"
 	"ritual/internal/subsystems/retention"
-	"ritual/internal/gui/control"
-	"ritual/internal/gui/logsink"
-	"ritual/internal/gui/netinfo"
-	"ritual/internal/gui/projection"
+	"ritual/internal/subsystems/transferwatch"
 	"sync/atomic"
 	"time"
 
@@ -159,6 +160,10 @@ func main() {
 	go runtime.projection.Run(ctx)
 	go runtime.logsink.Run(ctx)
 	go runtime.ticker.Run(ctx)
+	// Arm the ticker's stall-heartbeat for the wire-transfer windows only, so a
+	// quiet R2 PutStream still pulses liveness. Subscribes on New (before Run)
+	// to avoid missing the first StateChanged. Design-log/022 #2.
+	go transferwatch.New(runtime.bus, runtime.ticker).Run(ctx)
 
 	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)
@@ -470,4 +475,3 @@ type wailsWindowControl struct{ win *application.WebviewWindow }
 
 func (c *wailsWindowControl) Show()  { c.win.Show() }
 func (c *wailsWindowControl) Focus() { c.win.Focus() }
-

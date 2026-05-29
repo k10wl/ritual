@@ -149,18 +149,25 @@ func (p *Projection) fold(evt ports.Event) bool {
 // LogicalMbps reads from Stream.DataAverage — drives the chart's second
 // series (decompress/install rate).
 func (p *Projection) onTick(t progress.Tick) bool {
+	var s progress.Stream
 	switch p.pipelineStage {
 	case ritual.StagePulling:
-		p.state.BytesDone = t.Remote.Down.Data
-		p.state.SpeedMbps = t.Remote.Down.Average
-		p.state.LogicalMbps = t.Remote.Down.DataAverage
+		s = t.Remote.Down
 	case ritual.StagePushing:
-		p.state.BytesDone = t.Remote.Up.Data
-		p.state.SpeedMbps = t.Remote.Up.Average
-		p.state.LogicalMbps = t.Remote.Up.DataAverage
+		s = t.Remote.Up
 	default:
 		return false
 	}
+	p.state.BytesDone = s.Data
+	p.state.SpeedMbps = s.Average
+	p.state.LogicalMbps = s.DataAverage
+	// Stalled: a heartbeat tick (Instant==0) arriving while bytes are still
+	// owed (BytesDone < BytesTotal) means the transfer is mid-flight but the
+	// link has gone quiet — an R2 PutStream blocked on a TCP retransmit. The
+	// frontend turns this into "Stalled — waiting on R2…". A zero-rate tick
+	// once BytesDone>=BytesTotal is the trailing completion marker, not a
+	// stall, so it must leave Stalled false. Design-log/022 #2.
+	p.state.Stalled = s.Instant == 0 && p.state.BytesTotal > 0 && p.state.BytesDone < p.state.BytesTotal
 	return true
 }
 
@@ -170,6 +177,10 @@ func (p *Projection) onTick(t progress.Tick) bool {
 // within the Running and Pulling windows respectively.
 func (p *Projection) onStateChanged(to string) {
 	p.pipelineStage = to
+	// A stage transition is a fresh beat: clear any stall caption so it never
+	// bleeds from the transfer window into Apply/Unlocking/Retaining. onTick
+	// re-derives it from the next tick's rate if the new stage still transfers.
+	p.state.Stalled = false
 	switch to {
 	case ritual.StageChecking, ritual.StagePulling:
 		p.state.Stage = StageDownloading

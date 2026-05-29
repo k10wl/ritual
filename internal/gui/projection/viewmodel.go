@@ -97,4 +97,12 @@ type ViewModel struct {
 	ErrorText   string        `json:"errorText"`
 	LockHolder  string        `json:"lockHolder"`
 	Addresses   []JoinAddress `json:"addresses"`
+
+	// Stalled marks a byte-flowing beat (downloading / saving) whose link has
+	// gone quiet mid-transfer — the latest tick carried a zero "now" rate while
+	// bytes are still owed (BytesDone < BytesTotal). The frontend turns this
+	// into "Stalled — waiting on R2…" so a multi-second R2 retransmit silence
+	// reads as live-but-waiting rather than a dead-frozen dial. False once bytes
+	// resume, at completion, and outside the transfer stages. Design-log/022 #2.
+	Stalled bool `json:"stalled"`
 }

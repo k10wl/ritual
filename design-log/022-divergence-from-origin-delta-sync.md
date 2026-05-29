@@ -104,4 +104,14 @@ Apply tests assert file-placement correctness only (progress "delegated elsewher
 
 Red→green: `TestTicker_HeartbeatDuringActiveTransferStall` (deliberate inverse of `TestTicker_StableCounters_NoTicks`). Package `-race` clean; `StableCounters_NoTicks` and `OneFinalZeroDeltaAfterActivityStops` not regressed.
 
-**Still pending for #2:** projection renders "Stalled — waiting on R2…" when a heartbeat tick has `NowMbps==0`; composition root (`cmd/gui/main.go`) calls `SetTransferActive` around the Push/Pull body. Honest-push (drive `BytesDone` from acked `PutStream`) deferred behind #3's `ItemDoneInfo` plumbing.
+### #2 heartbeat — wired end-to-end (follow-up commit)
+
+The heartbeat is now vertical, ticker → caption:
+
+- **`internal/subsystems/transferwatch/`** (new) — `Watch` subscribes to the bus and calls `SetTransferActive(true)` on entering `StagePulling`/`StagePushing`, `false` on `pulling.ApplyStartedInfo` (apply is local) and every other transition. Brackets exactly the two byte-flowing windows so idle/local beats stay silent. `cmd/gui/main.go` starts `go transferwatch.New(bus, ticker).Run(ctx)`.
+- **`projection`** — new `ViewModel.Stalled bool`; `onTick` sets it when `Stream.Instant==0 && BytesTotal>0 && BytesDone<BytesTotal` (a zero "now" rate with bytes still owed — *not* the trailing completion marker); cleared on every stage transition. Tests: `ZeroRateTickMidPush_MarksStalled`, `BytesResumeAfterStall_ClearsStalled`, `FinalZeroDeltaAtCompletion_NotStalled`, `StageChange_ClearsStalled`.
+- **frontend** — `ritual-app.derive()` overrides the dial sub with "Stalled — waiting on R2…" when `vm.stalled`. New `StalledUpload` story walks ramp → stall → resume → tail.
+
+Full Go suite green; `tsc --noEmit` clean; package `-race` clean on `transferwatch` + `progress`.
+
+**Still pending for #2:** honest-push — drive `BytesDone` from acked `PutStream` returns rather than the compressor read-rate. Deferred behind #3's `ItemDoneInfo` plumbing (the acked-bytes signal *is* an `ItemDoneInfo` event). Tackled with #3.

@@ -310,13 +310,20 @@ export class RitualApp extends LitElement {
                 : `Couldn't finish ${nounFor(this.lastNonFailPhase)}`;
         }
 
+        // A wire stall — projection sets vm.stalled when the link goes quiet
+        // mid-transfer (a quiet R2 PutStream, surfaced via the ticker's
+        // heartbeat) — overrides the ETA sub with an honest waiting caption so
+        // the dial reads live-but-waiting rather than a silently frozen ETA.
+        // vm.stalled is only ever true during a transfer phase. Design-log/022 #2.
+        const sub = vm.stalled ? "Stalled — waiting on R2…" : view.sub(vm, ctx);
+
         return {
             dial: {
                 state: view.state,
                 arc: view.arc(vm, ctx),
                 glyph: view.glyph,
                 label,
-                sub: view.sub(vm, ctx),
+                sub,
             },
             underSlot: view.underSlot,
             telemetry,

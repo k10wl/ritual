@@ -321,6 +321,55 @@ func TestProjection_LogicalDrivesProgress_AverageDrivesSpeed(t *testing.T) {
 	assert.InDelta(t, 110.0, final.LogicalMbps, 0.001, "LogicalMbps must equal Down.DataAverage — the logical (decompress/install) rate; distinct from SpeedMbps, often higher on compressible payloads")
 }
 
+func TestProjection_ZeroRateTickMidPush_MarksStalled(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 2})
+		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 700, Instant: 8.0, Average: 8.0}}})
+		// Heartbeat during an R2 stall: counters frozen, zero "now" rate, bytes
+		// still owed (700 < 1000).
+		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 700, Instant: 0, Average: 4.0}}})
+	})
+	final := last(vms)
+	assert.True(t, final.Stalled, "a heartbeat Tick with Up.Instant==0 mid-Pushing (bytes still owed) must set Stalled so the frontend renders 'Stalled — waiting on R2…' instead of a silently frozen dial — design-log/022 #2")
+	assert.Equal(t, int64(700), final.BytesDone, "a stall must not rewind BytesDone — the bar holds at the last real position while the link is quiet")
+}
+
+func TestProjection_BytesResumeAfterStall_ClearsStalled(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 2})
+		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 700, Instant: 0, Average: 4.0}}})  // stalled
+		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 900, Instant: 6.0, Average: 5.0}}}) // resumed
+	})
+	final := last(vms)
+	assert.False(t, final.Stalled, "once bytes flow again (Instant>0) Stalled must clear so the caption returns to live throughput")
+}
+
+func TestProjection_FinalZeroDeltaAtCompletion_NotStalled(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 2})
+		// Transfer completes; the ticker's trailing zero-delta marker has
+		// Instant==0 but BytesDone has reached BytesTotal — this is "done", not
+		// a stall, and must NOT light the Stalled caption.
+		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 1000, Instant: 0, Average: 0}}})
+	})
+	final := last(vms)
+	assert.False(t, final.Stalled, "a zero-rate Tick once BytesDone>=BytesTotal is the completion marker, not a stall — Stalled must stay false so the dial shows complete, not 'waiting on R2'")
+}
+
+func TestProjection_StageChange_ClearsStalled(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 2})
+		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 700, Instant: 0, Average: 4.0}}}) // stalled
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StageUnlocking})                                            // moved on
+	})
+	final := last(vms)
+	assert.False(t, final.Stalled, "leaving the transfer stage must clear Stalled — a stall caption must never bleed into the next beat (Unlocking/Retaining)")
+}
+
 func TestProjection_Snapshot_ReturnsCurrentState(t *testing.T) {
 	bus := adapters.NewEventBus(16)
 	rec := &recorder{}

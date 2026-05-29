@@ -48,6 +48,20 @@ const saving = (progress: number, logicalMbps = 22): ViewModel =>
         logicalMbps,
     });
 
+// A saving beat whose link has gone quiet mid-transfer: projection sets
+// stalled (driven by the ticker heartbeat over a frozen counter), so the dial
+// swaps its ETA sub for "Stalled — waiting on R2…". Design-log/022 #2.
+const savingStalled = (progress: number): ViewModel =>
+    new ViewModel({
+        stage: Stage.StageUploading,
+        phase: Phase.PhaseSaving,
+        progress,
+        bytesDone: Math.floor(1_000_000_000 * (progress / 100)),
+        bytesTotal: 1_000_000_000,
+        logicalMbps: 0,
+        stalled: true,
+    });
+
 const wrapping = (): ViewModel =>
     new ViewModel({ stage: Stage.StageUploading, phase: Phase.PhaseWrapping });
 
@@ -156,6 +170,20 @@ export const HappyPath = () => {
         ...ramp(saving, 0, 100, 18, 140),
         { vm: savingTail(), holdMs: 1200 },
         { vm: idle(), holdMs: 2000 },
+    ];
+    return html`<app-driver .beats=${beats}></app-driver>`;
+};
+
+// Wire-stall story: an upload stalls mid-transfer (a quiet R2 PutStream). The
+// dial holds its arc and "Saving" label while the sub reads "Stalled — waiting
+// on R2…", then clears the moment bytes resume. Design-log/022 #2.
+export const StalledUpload = () => {
+    const beats: Beat[] = [
+        ...ramp(saving, 0, 47, 8, 140),
+        { vm: savingStalled(47), holdMs: 4000 },
+        ...ramp(saving, 47, 100, 10, 140),
+        { vm: savingTail(), holdMs: 1200 },
+        { vm: idle(), holdMs: 1500 },
     ];
     return html`<app-driver .beats=${beats}></app-driver>`;
 };
