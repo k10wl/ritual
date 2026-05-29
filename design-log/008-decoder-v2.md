@@ -1,7 +1,7 @@
 # 008 — Decoder v2
 
 **Date:** 2026-05-21
-**Status:** Approved
+**Status:** Implemented (verified 2026-05-29 — shipped as `<rune-decoder>` per [012](012-decoder-drop-v1.md); `decoder/index.ts`)
 
 ## Background
 

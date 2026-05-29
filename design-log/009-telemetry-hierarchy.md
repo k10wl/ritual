@@ -1,7 +1,7 @@
 # 009 — Telemetry hierarchy: ETA-hero, plain digits, decoder = identity only
 
 **Date:** 2026-05-21
-**Status:** Draft
+**Status:** Implemented (verified 2026-05-29 — VM wiring live in `ritual-app.ts`; `<dial-telemetry>` fed by real ViewModel, not just Storybook)
 **Refines:** [007 — HIG UX Coherence: one dial](007-hig-ux-coherence.md), [008 — Decoder v2](008-decoder-v2.md)
 
 ## Background

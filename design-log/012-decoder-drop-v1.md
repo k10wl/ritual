@@ -1,7 +1,7 @@
 # 012 — Drop decoder v1, unbrand v2 → `decoder`
 
 **Date:** 2026-05-21
-**Status:** Approved
+**Status:** Implemented (verified 2026-05-29 — `decoder-text` v1 gone, `decoder-v2/`→`decoder/`, tag `<rune-decoder>`)
 
 ## Background
 

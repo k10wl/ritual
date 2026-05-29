@@ -1,6 +1,6 @@
 # 017 — Stage bucket honesty: phase beats, ETA discipline, dismiss-to-idle
 
-- **Status:** Draft
+- **Status:** Implemented (commit `43f2e07`; verified 2026-05-29 — `Phase` type + `ServerReadyInfo`/`ServerStoppingInfo` gates in `projection/`)
 - **Date:** 2026-05-25
 - **Area:** GUI / Projection / Lifecycle
 - **Related:** [007 HIG one dial](007-hig-ux-coherence.md), [009 Telemetry hierarchy](009-telemetry-hierarchy.md), [013 Dialed GUI cutover](013-dialed-gui-cutover.md), [010 Run addresses](010-run-addresses.md)

@@ -1,7 +1,7 @@
 # 010 — RUN-stage addresses: copy-on-row IP list, identity-decoder reveal
 
 **Date:** 2026-05-21
-**Status:** In Progress
+**Status:** Implemented (verified 2026-05-29 — `<run-addresses>` rendered in `ritual-app.ts` during PhasePlaying with live `vm.addresses`)
 **Refines:** [007 — HIG UX Coherence](007-hig-ux-coherence.md), [009 — Telemetry hierarchy](009-telemetry-hierarchy.md)
 
 ## Background
