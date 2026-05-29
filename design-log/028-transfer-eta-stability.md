@@ -1,7 +1,7 @@
 # 028 — Transfer ETA stability (kill the swing)
 
 **Date:** 2026-05-25
-**Status:** Draft
+**Status:** Implemented (pending live smoke — Phase D)
 **Related:** [[001-progress-projection]] (three speed flavours: `Average`, `Smooth`, `DataAverage`), [[009-telemetry-hierarchy]] (ETA in dial sub), [[018-logical-rate-in-ui]] (`logicalMbps` = `Stream.DataAverage` for ETA + under-slot), [[027-saving-worlds-prep-eta]] (parallel ETA work for server start/stop — different data source).
 
 ## Background
@@ -208,3 +208,41 @@ Q7 proposed `0.7 * session + 0.3 * recent` hybrid; deferred to a follow-up after
 - **Stall detection.** "No bytes_done growth in N seconds" UI hint; would belong in a separate small log.
 - **Hybrid weighting.** Session + recent blend if session-wide alone reads as too sluggish post-ship.
 - **Per-beat history.** Predicting "this push usually takes ~3 minutes" from previous sessions, parallel to [[027-saving-worlds-prep-eta]]'s prep/wrap history. Reasonable extension once #027's history substrate exists; would let ETA show a prediction even before the first byte flows.
+
+## Implementation Results — 2026-05-29
+
+Shipped Phases A–C. Phase D (live smoke against the user's repro) deferred — pending a real session.
+
+**Landed entirely in the `projection` module + a one-line frontend swap. The `progress` adapter and ticker were not touched.**
+
+### Deviation from §Q8 — no `SessionAverage` on `Stream`
+
+§Q8 put `SessionAverage` on `progress.Stream`, reasoning the ticker owns the beat-start clock. Avoided: `progress.Tick` already carries cumulative `Elapsed`, and the projection already resets per beat and knows `BytesTotal`/`BytesDone`. So the projection computes the beat-wide average itself. Net effect: zero changes to the progress adapter/ticker, no new `Stream` field, no log-line churn.
+
+- `viewmodel.go` — added `EtaSeconds int64` (`json:"etaSeconds"`).
+- `projection.go` — three beat anchors on the struct (`etaBeatStarted`, `etaBeatElapsed`, `etaBeatBytes`); `resetEtaBeat()` called from `onStateChanged` (every stage change) and the `PlanInfo` fold; `etaFromSessionAvg(elapsed, done)` called in `onTick`.
+- `frontend/src/ritual-app.ts` — `etaSub` now `vm.etaSeconds <= 0 ? placeholder : formatEta(vm.etaSeconds)`. Deleted the local `snapEta` (no longer used; the Go value is already integer seconds and monotone). Bindings regenerated via `task gui:bindings`.
+
+### Deviation from §Q2 — delta form, not absolute
+
+§Q2 wrote `rate = bytes_done / elapsed_since_beat_start`. Implemented as **delta-from-anchor**: `(done - etaBeatBytes) / (elapsed - etaBeatElapsed)`. Reason: on resume a beat can start with `done > 0` at `elapsed ≈ 0`, and the absolute form divides by ~zero → infinite rate. The delta form matches the frontend's existing resume handling (`transferStartBytes`) and is correct for the fresh-beat case too (anchor bytes = 0).
+
+### Deviation from §Q9 — speed cell left on `DataAverage`
+
+§Q9/§Design proposed switching the live speed cell `LogicalMbps` from `DataAverage` → `Smoothed`. **Not done.** `Smoothed` is the *wire* EWMA; switching would regress [[018-logical-rate-in-ui]], which deliberately makes that cell show the *logical* rate to match the bytes counter beside it. The user's complaint was the ETA swing — fixed here; the speed cell stays honest-and-logical. If the speed cell still reads as agro post-smoke, revisit as a separate logical-EWMA change (would need a new ticker flavour, not a source swap).
+
+### Tests
+
+`internal/gui/projection/projection_test.go` — 5 new tests, all green (`go test ./internal/gui/projection/` ok):
+- first tick of a beat anchors → `EtaSeconds == 0` (placeholder, §Q5);
+- second tick derives from beat-wide average (800 B / 200 Bps → 4s, §Q2);
+- mid-beat slowdown does **not** raise the estimate (monotonic guard, §Q10);
+- `PlanInfo` re-baselines and the guard releases for a larger plan (§Q4);
+- empty plan keeps `EtaSeconds == 0` (no divide-by-zero, [[019-plan-info-delta]]).
+
+Frontend `tsc --noEmit` clean; full `go build ./...` ok.
+
+### Not done
+
+- **Phase C story** — the existing `dial-composition.stories.ts` still computes its own ETA from `speedBps` via a local `snapEta` mock (story playground, not wired to `vm.etaSeconds`). Left as-is; a synthetic-swing story demonstrating stability is still a worthwhile follow-up.
+- **Phase D live smoke** — needs a real ~880 MB session to confirm the monotone-downward read and the ±15% wall-clock target.

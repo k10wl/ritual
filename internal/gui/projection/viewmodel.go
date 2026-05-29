@@ -85,18 +85,29 @@ type JoinAddress struct {
 // string: the dial reads `Phase` and looks up its copy locally. Stage-level
 // strings like "Snapshotting…" were dev/log copy and never reached the user.
 type ViewModel struct {
-	Stage       Stage         `json:"stage"`
-	Phase       Phase         `json:"phase"`
-	Progress    int           `json:"progress"`
-	BytesDone   int64         `json:"bytesDone"`
-	BytesTotal  int64         `json:"bytesTotal"`
-	FilesDone   int           `json:"filesDone"`
-	FilesTotal  int           `json:"filesTotal"`
-	SpeedMbps   float64       `json:"speedMbps"`
-	LogicalMbps float64       `json:"logicalMbps"`
-	ErrorText   string        `json:"errorText"`
-	LockHolder  string        `json:"lockHolder"`
-	Addresses   []JoinAddress `json:"addresses"`
+	Stage       Stage   `json:"stage"`
+	Phase       Phase   `json:"phase"`
+	Progress    int     `json:"progress"`
+	BytesDone   int64   `json:"bytesDone"`
+	BytesTotal  int64   `json:"bytesTotal"`
+	FilesDone   int     `json:"filesDone"`
+	FilesTotal  int     `json:"filesTotal"`
+	SpeedMbps   float64 `json:"speedMbps"`
+	LogicalMbps float64 `json:"logicalMbps"`
+	// EtaSeconds is the remaining transfer time during byte-flowing beats
+	// (downloading / saving), computed Go-side from the beat-wide average rate
+	// — bytes flowed since the beat began over elapsed since the beat began —
+	// not the volatile 5-second rolling rate that SpeedMbps reports. Monotone
+	// non-increasing within a beat (never climbs while bytes flow); re-baselines
+	// on every stage change and PlanInfo. 0 means "no estimate yet" (first tick
+	// of a beat, empty plan, or a non-transfer phase): the dial shows the
+	// decoder placeholder rather than a fake number. The frontend renders this
+	// directly — no division in JS. Design-log/028. Supersedes the old
+	// remaining/effectiveSpeedBps division that inherited SpeedMbps's swing.
+	EtaSeconds int64         `json:"etaSeconds"`
+	ErrorText  string        `json:"errorText"`
+	LockHolder string        `json:"lockHolder"`
+	Addresses  []JoinAddress `json:"addresses"`
 
 	// Stalled marks a byte-flowing beat (downloading / saving) whose link has
 	// gone quiet mid-transfer — the latest tick carried a zero "now" rate while

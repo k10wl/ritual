@@ -2,6 +2,8 @@ package projection
 
 import (
 	"context"
+	"time"
+
 	"ritual/internal/adapters/progress"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
@@ -37,6 +39,18 @@ type Projection struct {
 	state         ViewModel
 	pipelineStage string
 	everReady     bool
+
+	// ETA beat anchors. A "beat" is one transfer window with a fixed plan; ETA
+	// is the beat-wide average (flowed since beat start / elapsed since beat
+	// start), which by construction cannot swing the way a 5-second rolling
+	// rate does (design-log/028 §Q2). etaBeatStarted is false until the first
+	// Tick of a beat anchors etaBeatElapsed (the cumulative ticker Elapsed at
+	// that moment) and etaBeatBytes (logical bytes already counted — non-zero
+	// on resume). resetEtaBeat clears them on every stage change and PlanInfo so
+	// a new plan re-baselines and the monotonic guard never bleeds across beats.
+	etaBeatStarted bool
+	etaBeatElapsed time.Duration
+	etaBeatBytes   int64
 }
 
 // New subscribes to bus immediately and returns a Projection ready for Run.
@@ -118,6 +132,10 @@ func (p *Projection) fold(evt ports.Event) bool {
 	case ritual.PlanInfo:
 		p.state.BytesTotal = e.BytesTotal
 		p.state.FilesTotal = e.FilesTotal
+		// A fresh plan means more (or different) work: re-baseline the ETA beat
+		// so the monotonic guard re-anchors against the new BytesTotal instead
+		// of clamping to a stale estimate. Design-log/028 §Q4/Q10.
+		p.resetEtaBeat()
 		// Empty delta — everything already present at destination per the
 		// pre-flight list (design-log/019). No Ticks will fire because no
 		// blob streams, so without this anchor the bar would sit at 0/0 for
@@ -137,6 +155,53 @@ func (p *Projection) fold(evt ports.Event) bool {
 	return true
 }
 
+// resetEtaBeat re-anchors the ETA beat and clears the current estimate. Called
+// on every stage change and PlanInfo so the next Tick re-baselines the
+// beat-wide average against the current plan; clearing EtaSeconds to 0 also
+// resets the monotonic guard (etaFromSessionAvg only clamps against a positive
+// previous value) so an estimate from a finished beat can't pin a new one.
+func (p *Projection) resetEtaBeat() {
+	p.etaBeatStarted = false
+	p.state.EtaSeconds = 0
+}
+
+// etaFromSessionAvg derives a stable remaining-time estimate from the beat-wide
+// average rate rather than the volatile rolling rate (design-log/028 §Q2). The
+// first Tick of a beat only anchors (elapsed + bytes already counted) and
+// returns 0 — the dial shows the decoder placeholder until a second Tick gives
+// a positive elapsed delta, the ~3-5s grace window of design-log/009 §Q5.
+// Thereafter rate = (done - anchorBytes) / (elapsed - anchorElapsed); ETA =
+// remaining / rate. Monotone non-increasing within a beat (§Q10): never climbs
+// above the previous estimate — only PlanInfo/stage change (via resetEtaBeat)
+// lets it grow, because then there is literally more work. Returns 0 (→ no
+// estimate) for an empty plan, a completed beat, or a non-positive sample so
+// the frontend never renders a fake or infinite number.
+func (p *Projection) etaFromSessionAvg(elapsed time.Duration, done int64) int64 {
+	if !p.etaBeatStarted {
+		p.etaBeatStarted = true
+		p.etaBeatElapsed = elapsed
+		p.etaBeatBytes = done
+		return 0
+	}
+	remaining := p.state.BytesTotal - done
+	if p.state.BytesTotal <= 0 || remaining <= 0 {
+		return 0
+	}
+	dt := (elapsed - p.etaBeatElapsed).Seconds()
+	flowed := done - p.etaBeatBytes
+	if dt <= 0 || flowed <= 0 {
+		// No measurable progress yet this beat — hold the current estimate
+		// (still 0 right after the anchor tick) rather than divide by zero.
+		return p.state.EtaSeconds
+	}
+	rateBytesPerSec := float64(flowed) / dt
+	next := int64(float64(remaining) / rateBytesPerSec)
+	if prev := p.state.EtaSeconds; prev > 0 && next > prev {
+		return prev
+	}
+	return next
+}
+
 // onTick applies a network-progress snapshot to the ViewModel. Pure picker:
 // the ticker already derived everything, projection chooses which series
 // drives the visible state for the current pipeline stage. Gated on
@@ -147,7 +212,8 @@ func (p *Projection) fold(evt ports.Event) bool {
 // SpeedMbps reads from Stream.Average — 5-second rolling wire rate, matches
 // curl's --progress-bar convention (design-log/001 §Refinement).
 // LogicalMbps reads from Stream.DataAverage — drives the chart's second
-// series (decompress/install rate).
+// series (decompress/install rate). EtaSeconds is derived separately from the
+// beat-wide average (etaFromSessionAvg), not from any rolling rate above.
 func (p *Projection) onTick(t progress.Tick) bool {
 	var s progress.Stream
 	switch p.pipelineStage {
@@ -161,6 +227,7 @@ func (p *Projection) onTick(t progress.Tick) bool {
 	p.state.BytesDone = s.Data
 	p.state.SpeedMbps = s.Average
 	p.state.LogicalMbps = s.DataAverage
+	p.state.EtaSeconds = p.etaFromSessionAvg(t.Elapsed, s.Data)
 	// Stalled: a heartbeat tick (Instant==0) arriving while bytes are still
 	// owed (BytesDone < BytesTotal) means the transfer is mid-flight but the
 	// link has gone quiet — an R2 PutStream blocked on a TCP retransmit. The
@@ -181,6 +248,9 @@ func (p *Projection) onStateChanged(to string) {
 	// bleeds from the transfer window into Apply/Unlocking/Retaining. onTick
 	// re-derives it from the next tick's rate if the new stage still transfers.
 	p.state.Stalled = false
+	// Same for ETA: each stage is its own beat (download then save are not one
+	// continuous transfer), so re-anchor the beat-wide average. Design-log/028.
+	p.resetEtaBeat()
 	switch to {
 	case ritual.StageChecking, ritual.StagePulling:
 		p.state.Stage = StageDownloading

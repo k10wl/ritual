@@ -68,12 +68,6 @@ function isTransferPhase(phase: Phase): boolean {
     return phase === Phase.PhaseDownloading || phase === Phase.PhaseSaving;
 }
 
-function snapEta(secs: number): number {
-    if (secs < 60) return Math.round(secs);
-    if (secs < 600) return Math.round(secs / 10) * 10;
-    return Math.round(secs / 60) * 60;
-}
-
 function arcFromBytes(vm: ViewModel): number {
     // Empty-delta transfer: the pre-flight list (design-log/019) found
     // every blob already at the destination, so PlanInfo announces
@@ -85,17 +79,16 @@ function arcFromBytes(vm: ViewModel): number {
     return Math.min(1, Math.max(0, vm.bytesDone / vm.bytesTotal));
 }
 
-// ETA = remaining-bytes / effective-rate. The rate comes via ctx so the
-// under-slot speed and ETA always derive from the same number; see
-// AppCtx.effectiveSpeedBps for the fallback rules. Without ctx-routing the
-// pair could disagree (one zero, the other not) during the first ticks of
-// a transfer — and the dial sub jitters through rune-decoder whenever ETA
-// is null, so a sustained-zero ticker rate becomes a sustained jitter
-// instead of an honest "—" / running number. See design-log/018, /019.
-function etaSub(vm: ViewModel, ctx: AppCtx): string {
-    if (ctx.effectiveSpeedBps <= 0 || vm.bytesTotal <= 0) return formatEta(null);
-    const remaining = Math.max(0, vm.bytesTotal - vm.bytesDone);
-    return formatEta(snapEta(remaining / ctx.effectiveSpeedBps));
+// ETA reads vm.etaSeconds directly — computed Go-side from the beat-wide
+// average rate and already monotone non-increasing within a beat
+// (design-log/028). No division here: deriving it from the volatile
+// effectiveSpeedBps (the under-slot speed number) is exactly what made the
+// estimate swing "4min → 30s → 2min in 3 seconds". 0 means "no estimate yet"
+// — first tick of a beat, empty plan, or non-transfer phase — and renders as
+// the decoder placeholder (design-log/009 §Q5), not a fake number.
+function etaSub(vm: ViewModel, _ctx: AppCtx): string {
+    if (vm.etaSeconds <= 0) return formatEta(null);
+    return formatEta(vm.etaSeconds);
 }
 
 // Phase → dial view table. Single source of truth for glyph + label + arc +

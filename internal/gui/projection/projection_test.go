@@ -339,7 +339,7 @@ func TestProjection_BytesResumeAfterStall_ClearsStalled(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
 		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 2})
-		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 700, Instant: 0, Average: 4.0}}})  // stalled
+		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 700, Instant: 0, Average: 4.0}}})   // stalled
 		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 900, Instant: 6.0, Average: 5.0}}}) // resumed
 	})
 	final := last(vms)
@@ -364,7 +364,7 @@ func TestProjection_StageChange_ClearsStalled(t *testing.T) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
 		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 2})
 		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 700, Instant: 0, Average: 4.0}}}) // stalled
-		bus.Publish(ritual.StateChangedInfo{To: ritual.StageUnlocking})                                            // moved on
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StageUnlocking})                                             // moved on
 	})
 	final := last(vms)
 	assert.False(t, final.Stalled, "leaving the transfer stage must clear Stalled — a stall caption must never bleed into the next beat (Unlocking/Retaining)")
@@ -377,4 +377,70 @@ func TestProjection_Snapshot_ReturnsCurrentState(t *testing.T) {
 	snap := p.Snapshot()
 	assert.Equal(t, projection.StageIdle, snap.Stage, "Snapshot before Run must return Idle — consumers rely on this to render the first frame before the subscriber loop starts")
 	assert.Equal(t, projection.PhaseIdle, snap.Phase, "initial Phase must be Idle so the dial chooses the play glyph")
+}
+
+// --- design-log/028: stable transfer ETA (EtaSeconds) ---
+
+func TestProjection_FirstTickOfBeat_LeavesEtaZeroToAnchor(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(ritual.PlanInfo{Operation: "pull", BytesTotal: 1000, FilesTotal: 1})
+		bus.Publish(progress.Tick{Elapsed: 1 * time.Second, Remote: progress.Side{Down: progress.Stream{Data: 0}}})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(0), final.EtaSeconds, "the first Tick of a beat only anchors elapsed+bytes; EtaSeconds stays 0 so the dial shows the decoder placeholder, not a number derived from a single sample (design-log/028 §Q5)")
+}
+
+func TestProjection_SecondTick_DerivesEtaFromBeatWideAverage(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(ritual.PlanInfo{Operation: "pull", BytesTotal: 1000, FilesTotal: 1})
+		bus.Publish(progress.Tick{Elapsed: 1 * time.Second, Remote: progress.Side{Down: progress.Stream{Data: 0}}})
+		// +1s, +200B → beat-wide rate 200 B/s, 800 B remaining → 4s.
+		bus.Publish(progress.Tick{Elapsed: 2 * time.Second, Remote: progress.Side{Down: progress.Stream{Data: 200}}})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(4), final.EtaSeconds, "EtaSeconds = remaining / beat-wide rate = 800 / (200B over 1s) = 4s; derived from the session average, never the rolling Average/DataAverage that swings (design-log/028 §Q2)")
+}
+
+func TestProjection_EtaNeverClimbsWithinABeat_MonotonicGuard(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 1})
+		bus.Publish(progress.Tick{Elapsed: 1 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 0}}})
+		// Fast start: +1s, +500B → 500 B/s, 500 remaining → 1s.
+		bus.Publish(progress.Tick{Elapsed: 2 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 500}}})
+		// Link nearly dies: +10s, +10B → beat-wide rate collapses; the naive
+		// estimate would balloon to ~10s. The guard must hold it at the prior 1s.
+		bus.Publish(progress.Tick{Elapsed: 12 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 510}}})
+	})
+	assert.Equal(t, int64(1), vms[len(vms)-2].EtaSeconds, "after the fast first second the estimate is 1s")
+	assert.Equal(t, int64(1), last(vms).EtaSeconds, "a mid-beat slowdown must NOT push the estimate up — within a fixed plan EtaSeconds is monotone non-increasing so the countdown never reads as broken (design-log/028 §Q10)")
+}
+
+func TestProjection_PlanInfoReBaselinesEta_NotClampedByPriorBeat(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 1})
+		bus.Publish(progress.Tick{Elapsed: 1 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 0}}})
+		bus.Publish(progress.Tick{Elapsed: 2 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 500}}}) // eta now 1s
+		// A new, larger plan arrives: there is literally more work, so the guard
+		// must release and the beat re-anchor rather than clamp to the old 1s.
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 5000, FilesTotal: 1})
+		bus.Publish(progress.Tick{Elapsed: 3 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 500}}}) // anchor
+		bus.Publish(progress.Tick{Elapsed: 4 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 600}}}) // +100B/s, 4400 left → 44s
+	})
+	final := last(vms)
+	assert.Equal(t, int64(44), final.EtaSeconds, "PlanInfo re-baselines the beat: 4400 remaining / 100 B/s = 44s. The monotonic guard must not clamp this to the prior beat's 1s — a bigger plan is genuinely more time (design-log/028 §Q4)")
+}
+
+func TestProjection_EmptyPlan_KeepsEtaZero(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(ritual.PlanInfo{Operation: "pull", BytesTotal: 0, FilesTotal: 0})
+		bus.Publish(progress.Tick{Elapsed: 1 * time.Second, Remote: progress.Side{Down: progress.Stream{Data: 0}}})
+		bus.Publish(progress.Tick{Elapsed: 2 * time.Second, Remote: progress.Side{Down: progress.Stream{Data: 0}}})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(0), final.EtaSeconds, "an empty delta (design-log/019) has no bytes to time; EtaSeconds stays 0 so the frontend shows no estimate instead of dividing by zero")
 }
