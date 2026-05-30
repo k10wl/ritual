@@ -16,15 +16,18 @@ import {
     ViewModel,
     JoinAddress,
 } from "./wails-api";
-import type { SyncDirection } from "./ui/prep-settings";
 import type { DialGlyph, DialState } from "./ui/ritual-dial";
 import { formatEta } from "./ui/telemetry-format";
 import "./ui/ritual-shell";
 import "./ui/ritual-dial";
 import "./ui/dial-telemetry";
 import "./ui/run-addresses";
-import "./ui/prep-settings";
-import type { PrepSettings, PrepSettingsEl } from "./ui/prep-settings";
+import "./ui/primitives/rune-stack";
+import "./ui/advanced-view";
+import type { RuneStack } from "./ui/primitives/rune-stack";
+import type { NavView } from "./ui/contexts/nav-context";
+import type { SyncConfirmDetail, SyncVerdict } from "./ui/sync-view";
+import type { PrepSettings, PrepSettingsChangeDetail } from "./ui/prep-settings";
 
 const MBPS_TO_BPS = 1_000_000 / 8;
 const FALLBACK_PREP: PrepSettings = { port: 25565, memoryMB: 4096 };
@@ -50,9 +53,6 @@ interface AppCtx {
     // and lands on @state speedBps so render is a pure function of reactive
     // state — design-log/020 §Class B.
     effectiveSpeedBps: number;
-    // True when the remote HEAD is newer than local (design-log/031). Only
-    // the IDLE sub reads it — every other phase ignores it.
-    behind: boolean;
 }
 
 const FALLBACK_VM: ViewModel = new ViewModel({ phase: Phase.PhaseIdle });
@@ -115,12 +115,14 @@ const PHASE_VIEW: Record<Phase, DialView> = {
     [Phase.$zero]: {
         state: "idle", glyph: "play", label: "Start", underSlot: null,
         arc: () => 0,
-        sub: (_vm, ctx) => (ctx.behind ? "Remote is newer" : ""),
+        // Staleness is no longer surfaced on the dial (design-log/034): the
+        // Files → Sync view reports it on demand. The resting dial stays calm.
+        sub: () => "",
     },
     [Phase.PhaseIdle]: {
         state: "idle", glyph: "play", label: "Start", underSlot: null,
         arc: () => 0,
-        sub: (_vm, ctx) => (ctx.behind ? "Remote is newer" : ""),
+        sub: () => "",
     },
     [Phase.PhaseDownloading]: {
         state: "prep", glyph: "download", label: "Downloading", underSlot: "telemetry",
@@ -174,16 +176,12 @@ export class RitualApp extends LitElement {
     @state() private lastNonFailPhase: Phase = Phase.PhaseIdle;
     @state() private uptimeSub = "";
     @state() private prep: PrepSettings = FALLBACK_PREP;
-    // Launch staleness verdict (design-log/031). True when the remote HEAD is
-    // newer than local; drives the quiet IDLE "Remote is newer" dial caption.
-    // Boolean only — no count. Fetched once on mount; degrades to false.
-    @state() private behind = false;
     // Snapshot of effective transfer rate, derived once in applyVm() so the
     // under-slot speed and the ETA always see the same number. Keeping the
     // derivation off the render path keeps render() a pure function of
     // reactive state — design-log/020 §Class B.
     @state() private speedBps = 0;
-    @query("prep-settings") private _prepEl!: PrepSettingsEl | null;
+    @query("rune-stack") private _stack!: RuneStack | null;
     private runStartedAt = 0;
     private uptimeTimer = 0;
     private unsubscribe?: () => void;
@@ -211,11 +209,6 @@ export class RitualApp extends LitElement {
             this.prep = { port: p.port, memoryMB: p.memoryMB };
         } catch {
             // keep FALLBACK_PREP if the binding is unavailable
-        }
-        try {
-            this.behind = (await getSyncStatus()).behind;
-        } catch {
-            // offline / unavailable → stay false, show no caption (031 OQ3)
         }
         this.unsubscribe = onView((vm) => this.applyVm(vm));
     }
@@ -282,7 +275,6 @@ export class RitualApp extends LitElement {
             lastProgressArc: this.lastProgressArc,
             lastNonFailPhase: this.lastNonFailPhase,
             effectiveSpeedBps: this.speedBps,
-            behind: this.behind,
         };
     }
 
@@ -357,16 +349,55 @@ export class RitualApp extends LitElement {
             return;
         }
         if (phase !== Phase.PhaseIdle && phase !== Phase.$zero) return;
-        const settings = this._prepEl?.read() ?? this.prep;
-        void start(settings.port, settings.memoryMB);
+        // Settings live in a pushed pane now (design-log/034), so the live
+        // <prep-settings> element isn't query-able from here — Start reads the
+        // last valid values tracked into `this.prep` via onPrepChange.
+        void start(this.prep.port, this.prep.memoryMB);
     };
 
-    // Server-free sync gesture from prep-settings (design-log/031). The dial
-    // animates via the same onView stream as a session — Download/Upload
-    // publish bus commands the projection folds into ViewModel updates.
-    private onSync = (e: CustomEvent<{ direction: SyncDirection }>) => {
+    // ── Advanced navigation tenant (design-log/034) ─────────────────────────
+    // One flat staged pane pushed from the quiet IDLE "advanced" link: two
+    // sections, Server (port/memory, ex-inline disclosure 014/029) and Sync
+    // (031 gestures). No menu, no nesting. The child events bubble up here:
+    // `change` tracks the latest valid settings, `sync` runs the gesture.
+    private advancedView: NavView = {
+        id: "advanced",
+        title: "advanced",
+        render: () => html`<advanced-view
+            .config=${this.prep}
+            .check=${this.checkSync}
+            @change=${this.onPrepChange}
+            @sync=${this.onSyncConfirmed}
+        ></advanced-view>`,
+    };
+
+    private openAdvanced = () => this._stack?.push(this.advancedView);
+
+    // Settings (port/memory) live in the staged pane now, so the live form
+    // isn't query-able on Start — track the last valid values into this.prep.
+    private onPrepChange = (e: CustomEvent<PrepSettingsChangeDetail>) => {
+        if (e.detail.valid && e.detail.settings) this.prep = e.detail.settings;
+    };
+
+    // HEAD probe injected into <sync-view>. getSyncStatus already returns both
+    // heads; the trichotomy is derived here (RefID is a timestamp, so the
+    // lexical compare is chronological). Errors propagate so sync-view shows
+    // "Couldn't reach the remote" rather than a false verdict.
+    private checkSync = async (): Promise<SyncVerdict> => {
+        const s = await getSyncStatus();
+        return {
+            behind: s.behind,
+            ahead: s.localHead !== s.remoteHead && s.localHead > s.remoteHead,
+        };
+    };
+
+    // Confirmed Download/Upload (design-log/031). The flow animates the root
+    // dial via the same onView stream as a session, so unwind the stack to the
+    // dial to watch it run.
+    private onSyncConfirmed = (e: CustomEvent<SyncConfirmDetail>) => {
         if (e.detail.direction === "download") void download();
         else void upload();
+        this._stack?.popToRoot();
     };
 
     private onHoldCommit = () => {
@@ -394,32 +425,64 @@ export class RitualApp extends LitElement {
 
     render() {
         const d = this.derive();
+        // rune-stack is the app root: the dial screen is the root pane (default
+        // slot); Files / Sync are pushed panes that slide the whole screen left
+        // (design-log/034). No modals anywhere.
         return html`
-            <ritual-shell .state=${d.dial.state} @ambient-action=${this.onAmbientAction}>
-                <ritual-dial
-                    .state=${d.dial.state}
-                    .arc=${d.dial.arc}
-                    .glyph=${d.dial.glyph}
-                    .label=${d.dial.label}
-                    .sub=${d.dial.sub}
-                    @tap=${this.onTap}
-                    @hold-commit=${this.onHoldCommit}
-                ></ritual-dial>
-                <div class="under-slot" ?data-shown=${d.underSlot !== null}>
-                    ${this.underSlotChild(d)}
-                </div>
-                ${d.dial.state === "idle"
-                    ? html`<prep-settings
-                        .config=${this.prep}
-                        @sync=${this.onSync}
-                      ></prep-settings>`
-                    : null}
-            </ritual-shell>
+            <rune-stack>
+                <ritual-shell .state=${d.dial.state} @ambient-action=${this.onAmbientAction}>
+                    <ritual-dial
+                        .state=${d.dial.state}
+                        .arc=${d.dial.arc}
+                        .glyph=${d.dial.glyph}
+                        .label=${d.dial.label}
+                        .sub=${d.dial.sub}
+                        @tap=${this.onTap}
+                        @hold-commit=${this.onHoldCommit}
+                    ></ritual-dial>
+                    <div class="under-slot" ?data-shown=${d.underSlot !== null}>
+                        ${this.underSlotChild(d)}
+                    </div>
+                    ${d.dial.state === "idle"
+                        ? html`<button class="advanced-entry" @click=${this.openAdvanced}>
+                              <span class="chev">›</span> Advanced
+                          </button>`
+                        : null}
+                </ritual-shell>
+            </rune-stack>
         `;
     }
 
     static styles = css`
         :host { display: contents; }
+        rune-stack { display: block; height: 100vh; }
+
+        /* Quiet ambient affordance — same low-attention register as the footer
+           links; sits where the old inline "Advanced" disclosure did. */
+        .advanced-entry {
+            align-self: center;
+            background: none;
+            border: 0;
+            padding: var(--space-2);
+            cursor: pointer;
+            color: var(--text-faint);
+            font-family: var(--font-mono);
+            font-size: var(--fs-caption);
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-2);
+            transition: color var(--motion-fast, 120ms ease);
+        }
+        .advanced-entry:hover { color: var(--text-muted); }
+        .advanced-entry:focus-visible {
+            outline: 1px solid var(--text-muted);
+            outline-offset: 2px;
+            border-radius: var(--radius-sm);
+        }
+        .advanced-entry .chev { font-size: var(--fs-body); line-height: 1; }
         .under-slot {
             opacity: 0;
             transform: translateY(-4px);

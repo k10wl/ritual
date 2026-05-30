@@ -1,9 +1,11 @@
 import { LitElement, css, html } from "lit";
 import { customElement } from "lit/decorators.js";
 
+export type AmbientAction = "logs" | "folder";
+
 @customElement("ambient-footer")
 export class AmbientFooter extends LitElement {
-    private emit(action: "logs" | "folder") {
+    private emit(action: AmbientAction) {
         this.dispatchEvent(new CustomEvent("ambient-action", { detail: action, bubbles: true, composed: true }));
     }
 
