@@ -1,7 +1,7 @@
 import type { Preview } from "@storybook/web-components-vite";
 import { html } from "lit";
 import { setTransport } from "@wailsio/runtime";
-import { JoinAddress, Phase, Stage, ViewModel } from "../src/wails-api";
+import { JoinAddress, Phase, Stage, SyncStatus, ViewModel } from "../src/wails-api";
 
 declare global {
     interface Window {
@@ -19,6 +19,9 @@ const M = {
     ShowLogs: 3352242658,
     Start: 4262819292,
     Stop: 4133576568,
+    Download: 686511792,
+    Upload: 297268657,
+    GetSyncStatus: 3603871625,
 };
 const OBJ_CALL = 0;
 const OBJ_EVENTS = 3;
@@ -41,6 +44,7 @@ const fixtures = {
             bytesDone: progress * 10_000_000,
             bytesTotal: 1_000_000_000,
             speedMbps: 32,
+            etaSeconds: Math.max(0, Math.round((100 - progress) * 1.2)),
         }),
     preparing: () =>
         new ViewModel({
@@ -68,6 +72,7 @@ const fixtures = {
             bytesDone: progress * 10_000_000,
             bytesTotal: 1_000_000_000,
             speedMbps: 22,
+            etaSeconds: Math.max(0, Math.round((100 - progress) * 1.2)),
         }),
 };
 
@@ -130,6 +135,21 @@ setTransport({
                 return undefined;
             case M.Dismiss:
                 set(fixtures.idle());
+                return undefined;
+            case M.GetSyncStatus:
+                // Fixture: report "behind" so the IDLE staleness caption is
+                // visible in stories (design-log/031). Live behaviour is a
+                // remote-vs-local HEAD compare.
+                return new SyncStatus({ behind: true, localHead: "", remoteHead: "2026-05-30T08-00-00.000Z" });
+            case M.Download:
+                // Download is ONE honest beat (design-log/031 addendum): ⬇
+                // "Downloading" filling to 100%, then idle. No prepare, no save.
+                ramp(fixtures.downloading, () => set(fixtures.idle()));
+                return undefined;
+            case M.Upload:
+                // Upload is ONE honest beat (design-log/031 addendum): ⬆
+                // "Saving" filling to 100%, then idle. No spin-up, no spin-down.
+                ramp(fixtures.saving, () => set(fixtures.idle()));
                 return undefined;
             default:
                 return undefined;

@@ -35,11 +35,22 @@ func (s StatusChanged) String() string {
 	return fmt.Sprintf("status: %s", s.Status)
 }
 
+// Entries holds the three pipeline entry strategies the controller can
+// drive (design-log/031). Session is the play-a-world chain; Download and
+// Upload are the server-free sync flows. A nil entry means that gesture is
+// not wired — startWith rejects it. The composition root builds all three
+// from pipeline.Build / BuildDownload / BuildUpload.
+type Entries struct {
+	Session  machine.Strategy[ritual.RunState]
+	Download machine.Strategy[ritual.RunState]
+	Upload   machine.Strategy[ritual.RunState]
+}
+
 // Controller holds the per-run mutable state. The Attach goroutine is the
 // only writer; bus subscribers see published events only.
 type controller struct {
 	bus          ports.EventBus
-	entry        machine.Strategy[ritual.RunState]
+	entries      Entries
 	runner       *ritual.Runner
 	status       Outcome
 	cancel       context.CancelFunc
@@ -65,8 +76,8 @@ type SessionHook = func(*ritual.RunState)
 // Publish on the bus immediately after Attach returns are guaranteed
 // delivery. Variadic sessionHooks fire once per session start (see
 // SessionHook).
-func Attach(parent context.Context, bus ports.EventBus, entry machine.Strategy[ritual.RunState], sessionHooks ...SessionHook) func() {
-	c := &controller{bus: bus, entry: entry, status: Idle, sessionHooks: sessionHooks}
+func Attach(parent context.Context, bus ports.EventBus, entries Entries, sessionHooks ...SessionHook) func() {
+	c := &controller{bus: bus, entries: entries, status: Idle, sessionHooks: sessionHooks}
 	bus.Publish(StatusChanged{Status: Idle})
 
 	ch, unsub := bus.Subscribe()
@@ -85,7 +96,11 @@ func Attach(parent context.Context, bus ports.EventBus, entry machine.Strategy[r
 				}
 				switch event.(type) {
 				case ritual.StartRequested:
-					c.start(ctx)
+					c.startWith(ctx, c.entries.Session, ritual.FlowSession, true)
+				case ritual.DownloadRequested:
+					c.startWith(ctx, c.entries.Download, ritual.FlowDownload, false)
+				case ritual.UploadRequested:
+					c.startWith(ctx, c.entries.Upload, ritual.FlowUpload, false)
 				case ritual.StopRequested:
 					c.stop()
 				case ritual.DismissRequested:
@@ -100,26 +115,42 @@ func Attach(parent context.Context, bus ports.EventBus, entry machine.Strategy[r
 	}
 }
 
-func (c *controller) start(ctx context.Context) {
+// startWith drives entry as a fresh run. Shared by all three gestures
+// (design-log/031): the session start runs sessionHooks (livesync
+// dispatcher binding); Download/Upload pass runHooks=false because no
+// livesync ticker runs outside a Running session. A nil entry means the
+// gesture is not wired — reject rather than nil-panic. The single status
+// guard gives free mutual exclusion: any gesture is refused while another
+// run is in flight.
+func (c *controller) startWith(ctx context.Context, entry machine.Strategy[ritual.RunState], flow ritual.Flow, runHooks bool) {
+	if entry == nil {
+		c.bus.Publish(StatusChanged{Status: c.status, Err: fmt.Errorf("cannot start: gesture not configured")})
+		return
+	}
 	if c.status == Running {
 		c.bus.Publish(StatusChanged{Status: c.status, Err: fmt.Errorf("cannot start: already %s", c.status)})
 		return
 	}
 	c.userStop.Store(false)
 	c.setStatus(Running)
+	// Announce which flow is in flight so the projection can render Download
+	// and Upload with honest, direction-specific dial beats (design-log/031).
+	c.bus.Publish(ritual.FlowStartedInfo{Flow: flow})
 	runCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 
 	hostname, _ := os.Hostname()
 	runID := fmt.Sprintf("%s%s%d", hostname, config.LockIDSeparator, time.Now().UnixNano())
 	runState := &ritual.RunState{RunID: runID, Bus: c.bus}
-	for _, h := range c.sessionHooks {
-		h(runState)
+	if runHooks {
+		for _, h := range c.sessionHooks {
+			h(runState)
+		}
 	}
 	c.runner = ritual.NewRunner(runState)
 
 	go func() {
-		err := c.runner.Run(runCtx, c.entry)
+		err := c.runner.Run(runCtx, entry)
 		if err == nil {
 			err = runState.Err
 		}

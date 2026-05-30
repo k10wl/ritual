@@ -56,7 +56,7 @@ func main() {
 		log.Fatalf("build runtime: %v", err)
 	}
 
-	controlSvc := control.NewControlService(runtime.bus, runtime.projection, nil)
+	controlSvc := control.NewControlService(runtime.bus, runtime.projection, runtime.syncProber, nil)
 
 	wailsApp := application.New(application.Options{
 		Name:        config.ProductName,
@@ -149,12 +149,19 @@ func main() {
 	drainer := livesync.NewDrainer(ticker, engine, dispatcher, livesync.DefaultDrainTimeout)
 	pipelineDeps := runtime.pipelineDeps
 	pipelineDeps.Drainable = drainer
-	entry := pipeline.Build(pipelineDeps)
+	// Three flows from shared stage nodes (design-log/031). Download/Upload
+	// ignore d.Drainable (no Running, no livesync), so passing the session
+	// deps verbatim is harmless.
+	entries := lifecycle.Entries{
+		Session:  pipeline.Build(pipelineDeps),
+		Download: pipeline.BuildDownload(pipelineDeps),
+		Upload:   pipeline.BuildUpload(pipelineDeps),
+	}
 
 	sessionHook := func(rs *ritual.RunState) {
 		dispatcher.SetTarget(func(id domain.RefID) { rs.RefID = id })
 	}
-	stopLifecycle := lifecycle.Attach(ctx, runtime.bus, entry, sessionHook)
+	stopLifecycle := lifecycle.Attach(ctx, runtime.bus, entries, sessionHook)
 	defer stopLifecycle()
 	defer runtime.stopLogFile()
 	go runtime.projection.Run(ctx)
@@ -184,6 +191,7 @@ type guiRuntime struct {
 	committer     ports.Committer
 	pusher        ports.Pusher
 	commitTargets []string
+	syncProber    control.SyncProber
 }
 
 func buildRuntime() (*guiRuntime, error) {
@@ -286,9 +294,13 @@ func buildRuntime() (*guiRuntime, error) {
 	puller := refs.NewPuller(remoteStorage, localStorage, runner)
 	applier := refs.NewApplier(localStorage, workdirStorage, scanner, runner)
 	headResolver := pulling.NewHeadResolver(remoteStorage)
+	localHeadResolver := pulling.NewHeadResolver(localStorage)
 	committer := refs.NewCommitter(scanner, workdirStorage, localStorage, runner)
 	pusher := refs.NewPusher(localStorage, remoteStorage, runner)
 	commitTargets := config.DefaultCommitTargets
+
+	// Launch staleness prober (design-log/031): remote HEAD vs local HEAD.
+	syncProber := control.NewHeadSyncProber(localHeadResolver, headResolver)
 
 	// Wire pull/push plan callbacks into the bus so the projection can
 	// populate ViewModel.BytesTotal before the first progress.Tick lands —
@@ -387,6 +399,7 @@ func buildRuntime() (*guiRuntime, error) {
 		committer:     committer,
 		pusher:        pusher,
 		commitTargets: commitTargets,
+		syncProber:    syncProber,
 	}, nil
 }
 

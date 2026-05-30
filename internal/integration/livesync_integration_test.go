@@ -113,7 +113,7 @@ func (r *testRitual) startRitualWithLiveSync(t *testing.T, tickInterval, saveTim
 	sessionHook := func(rs *ritual.RunState) {
 		dispatcher.SetTarget(func(id domain.RefID) { rs.RefID = id })
 	}
-	stop := lifecycle.Attach(r.ctx, r.bus, entry, sessionHook)
+	stop := lifecycle.Attach(r.ctx, r.bus, lifecycle.Entries{Session: entry}, sessionHook)
 	t.Cleanup(stop)
 	r.bus.Publish(ritual.StartRequested{})
 	return server

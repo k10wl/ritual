@@ -50,6 +50,26 @@ type ErrorInfo struct {
 
 func (e ErrorInfo) String() string { return fmt.Sprintf("error %s: %v", e.Operation, e.Err) }
 
+// Flow identifies which pipeline a run is driving (design-log/031). The
+// projection folds FlowStartedInfo to disambiguate the sync flows from the
+// session: Download and Upload reuse the session's stage nodes, so stage
+// name alone can't tell the dial which direction is in flight.
+type Flow string
+
+const (
+	FlowSession  Flow = "session"
+	FlowDownload Flow = "download"
+	FlowUpload   Flow = "upload"
+)
+
+// FlowStartedInfo is published by the lifecycle at the start of every run,
+// before the runner drives the first stage. The GUI projection uses it to
+// render Download as one honest "downloading" beat and Upload as one
+// "saving" beat, instead of inheriting the session's stage→phase map.
+type FlowStartedInfo struct{ Flow Flow }
+
+func (f FlowStartedInfo) String() string { return "flow started " + string(f.Flow) }
+
 // StateChangedInfo fires on every state machine transition.
 type StateChangedInfo struct{ From, To, RunID string }
 

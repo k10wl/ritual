@@ -29,9 +29,28 @@ const onSubmit = (e: Event) => {
     console.log("prep-settings submit", detail);
 };
 
+const onSync = (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    // eslint-disable-next-line no-console
+    console.log("prep-settings sync", detail);
+};
+
 export const Closed = () => html`
     <div style="padding:var(--space-4); max-width:380px;">
-        <prep-settings @change=${onChange} @submit=${onSubmit}></prep-settings>
+        <prep-settings @change=${onChange} @submit=${onSubmit} @sync=${onSync}></prep-settings>
+    </div>
+`;
+
+// Sync gestures (design-log/031): open the disclosure to reveal the Download
+// / Upload rows below port+memory; each press opens a rune-sheet confirm.
+// The `sync` event fires only on confirm — logged to the console.
+export const SyncGestures = () => html`
+    <div style="padding:var(--space-4); max-width:380px;">
+        <prep-settings @change=${onChange} @submit=${onSubmit} @sync=${onSync}></prep-settings>
+        <p style="margin-top:var(--space-4); color:var(--text-muted); font-size:var(--fs-caption);">
+            Open “Advanced”, then press Download or Upload. Confirm fires <code>sync</code>;
+            Cancel / Escape / backdrop dismiss without firing.
+        </p>
     </div>
 `;
 

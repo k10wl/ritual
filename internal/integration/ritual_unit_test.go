@@ -51,7 +51,7 @@ func setupRitual(
 		HeartbeatInterval: locker.HeartbeatInterval(),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	stop := lifecycle.Attach(ctx, bus, entry)
+	stop := lifecycle.Attach(ctx, bus, lifecycle.Entries{Session: entry})
 	return func() {
 		stop()
 		cancel()

@@ -331,7 +331,7 @@ func (r *testRitual) startRitualFull(t *testing.T, preflightChecks []checks.Chec
 	require.NoError(t, err, "logging.Build must succeed — startRitualFull mirrors cmd/gui's audit-fix-#6 wiring so every run lands a <root>/logs/<ts>.log")
 	t.Cleanup(loggingStop)
 
-	stop := lifecycle.Attach(r.ctx, r.bus, entry)
+	stop := lifecycle.Attach(r.ctx, r.bus, lifecycle.Entries{Session: entry})
 	t.Cleanup(stop)
 	r.bus.Publish(ritual.StartRequested{})
 	return server
@@ -927,7 +927,7 @@ func (r *testRitual) startRitualWithFlakyPuller(t *testing.T, flaky *failOnceInt
 	require.NoError(t, err, "logging.Build must succeed — startRitualWithFlakyPuller mirrors cmd/gui's audit-fix-#6 wiring so every run lands a <root>/logs/<ts>.log")
 	t.Cleanup(loggingStop)
 
-	stop := lifecycle.Attach(r.ctx, r.bus, entry)
+	stop := lifecycle.Attach(r.ctx, r.bus, lifecycle.Entries{Session: entry})
 	t.Cleanup(stop)
 	r.bus.Publish(ritual.StartRequested{})
 	return server

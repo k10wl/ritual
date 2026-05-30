@@ -2,17 +2,21 @@ import { css, html, LitElement } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import {
     dismiss,
+    download,
     getPrep,
     getSnapshot,
+    getSyncStatus,
     onView,
     openRootFolder,
     showLogs,
     start,
     stop,
+    upload,
     Phase,
     ViewModel,
     JoinAddress,
 } from "./wails-api";
+import type { SyncDirection } from "./ui/prep-settings";
 import type { DialGlyph, DialState } from "./ui/ritual-dial";
 import { formatEta } from "./ui/telemetry-format";
 import "./ui/ritual-shell";
@@ -46,6 +50,9 @@ interface AppCtx {
     // and lands on @state speedBps so render is a pure function of reactive
     // state — design-log/020 §Class B.
     effectiveSpeedBps: number;
+    // True when the remote HEAD is newer than local (design-log/031). Only
+    // the IDLE sub reads it — every other phase ignores it.
+    behind: boolean;
 }
 
 const FALLBACK_VM: ViewModel = new ViewModel({ phase: Phase.PhaseIdle });
@@ -87,6 +94,15 @@ function arcFromBytes(vm: ViewModel): number {
 // — first tick of a beat, empty plan, or non-transfer phase — and renders as
 // the decoder placeholder (design-log/009 §Q5), not a fake number.
 function etaSub(vm: ViewModel, _ctx: AppCtx): string {
+    // No transfer plan yet (bytesTotal == 0): we are in a non-byte stage —
+    // Checking, or a sync flow's prep/commit/retain beat (design-log/031).
+    // Return "" so the dial shows no sub at all, NOT the `·····` placeholder,
+    // which decodes fast and would jitter for the whole non-transfer span.
+    if (vm.bytesTotal <= 0) return "";
+    // Plan complete (all bytes out): the calm save-tail caption, letters only.
+    if (vm.bytesDone >= vm.bytesTotal) return "Almost done";
+    // Plan live but no estimate yet — the brief first-tick grace window
+    // (design-log/009 §Q5): the placeholder decode is intentional here.
     if (vm.etaSeconds <= 0) return formatEta(null);
     return formatEta(vm.etaSeconds);
 }
@@ -99,12 +115,12 @@ const PHASE_VIEW: Record<Phase, DialView> = {
     [Phase.$zero]: {
         state: "idle", glyph: "play", label: "Start", underSlot: null,
         arc: () => 0,
-        sub: () => "",
+        sub: (_vm, ctx) => (ctx.behind ? "Remote is newer" : ""),
     },
     [Phase.PhaseIdle]: {
         state: "idle", glyph: "play", label: "Start", underSlot: null,
         arc: () => 0,
-        sub: () => "",
+        sub: (_vm, ctx) => (ctx.behind ? "Remote is newer" : ""),
     },
     [Phase.PhaseDownloading]: {
         state: "prep", glyph: "download", label: "Downloading", underSlot: "telemetry",
@@ -129,10 +145,10 @@ const PHASE_VIEW: Record<Phase, DialView> = {
     [Phase.PhaseSaving]: {
         state: "final", glyph: "upload", label: "Saving", underSlot: "telemetry",
         arc: arcFromBytes,
-        // Save-tail per design-log/017: once all bytes are out (Unlocking +
-        // Retaining), swap the visible label to "Wrapping up" / "Almost done"
-        // — the arc plateau + housekeeping deserves its own beat copy.
-        sub: (vm, ctx) => (vm.bytesTotal > 0 && vm.bytesDone >= vm.bytesTotal ? "Almost done" : etaSub(vm, ctx)),
+        // Save-tail per design-log/017: once all bytes are out, etaSub returns
+        // "Almost done" (the arc-plateau housekeeping beat). The label still
+        // swaps to "Wrapping up" in derive() on the same bytes-complete test.
+        sub: etaSub,
     },
     [Phase.PhaseFailed]: {
         state: "fail", glyph: "x", label: "",
@@ -158,6 +174,10 @@ export class RitualApp extends LitElement {
     @state() private lastNonFailPhase: Phase = Phase.PhaseIdle;
     @state() private uptimeSub = "";
     @state() private prep: PrepSettings = FALLBACK_PREP;
+    // Launch staleness verdict (design-log/031). True when the remote HEAD is
+    // newer than local; drives the quiet IDLE "Remote is newer" dial caption.
+    // Boolean only — no count. Fetched once on mount; degrades to false.
+    @state() private behind = false;
     // Snapshot of effective transfer rate, derived once in applyVm() so the
     // under-slot speed and the ETA always see the same number. Keeping the
     // derivation off the render path keeps render() a pure function of
@@ -191,6 +211,11 @@ export class RitualApp extends LitElement {
             this.prep = { port: p.port, memoryMB: p.memoryMB };
         } catch {
             // keep FALLBACK_PREP if the binding is unavailable
+        }
+        try {
+            this.behind = (await getSyncStatus()).behind;
+        } catch {
+            // offline / unavailable → stay false, show no caption (031 OQ3)
         }
         this.unsubscribe = onView((vm) => this.applyVm(vm));
     }
@@ -257,6 +282,7 @@ export class RitualApp extends LitElement {
             lastProgressArc: this.lastProgressArc,
             lastNonFailPhase: this.lastNonFailPhase,
             effectiveSpeedBps: this.speedBps,
+            behind: this.behind,
         };
     }
 
@@ -335,6 +361,14 @@ export class RitualApp extends LitElement {
         void start(settings.port, settings.memoryMB);
     };
 
+    // Server-free sync gesture from prep-settings (design-log/031). The dial
+    // animates via the same onView stream as a session — Download/Upload
+    // publish bus commands the projection folds into ViewModel updates.
+    private onSync = (e: CustomEvent<{ direction: SyncDirection }>) => {
+        if (e.detail.direction === "download") void download();
+        else void upload();
+    };
+
     private onHoldCommit = () => {
         if (this.vm.phase === Phase.PhasePlaying) void stop();
     };
@@ -375,7 +409,10 @@ export class RitualApp extends LitElement {
                     ${this.underSlotChild(d)}
                 </div>
                 ${d.dial.state === "idle"
-                    ? html`<prep-settings .config=${this.prep}></prep-settings>`
+                    ? html`<prep-settings
+                        .config=${this.prep}
+                        @sync=${this.onSync}
+                      ></prep-settings>`
                     : null}
             </ritual-shell>
         `;

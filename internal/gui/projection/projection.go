@@ -39,6 +39,12 @@ type Projection struct {
 	state         ViewModel
 	pipelineStage string
 	everReady     bool
+	// activeFlow disambiguates the sync flows from the session (design-log/031):
+	// Download and Upload reuse the session's stage nodes, so onStateChanged
+	// keys on this — not stage name alone — to render Download as one honest
+	// "downloading" beat and Upload as one "saving" beat. Set by FlowStartedInfo,
+	// reset to FlowSession on the idle transition.
+	activeFlow ritual.Flow
 
 	// ETA beat anchors. A "beat" is one transfer window with a fixed plan; ETA
 	// is the beat-wide average (flowed since beat start / elapsed since beat
@@ -60,11 +66,12 @@ type Projection struct {
 func New(bus ports.EventBus, emitter Emitter, addresses AddressProvider) *Projection {
 	ch, unsub := bus.Subscribe()
 	return &Projection{
-		ch:        ch,
-		unsub:     unsub,
-		emitter:   emitter,
-		addresses: addresses,
-		state:     ViewModel{Stage: StageIdle, Phase: PhaseIdle},
+		ch:         ch,
+		unsub:      unsub,
+		emitter:    emitter,
+		addresses:  addresses,
+		state:      ViewModel{Stage: StageIdle, Phase: PhaseIdle},
+		activeFlow: ritual.FlowSession,
 	}
 }
 
@@ -96,13 +103,20 @@ func (p *Projection) Run(ctx context.Context) {
 // relevant. Irrelevant events return false to avoid emitting duplicates.
 func (p *Projection) fold(evt ports.Event) bool {
 	switch e := evt.(type) {
+	case ritual.FlowStartedInfo:
+		// Internal-only: records which flow is in flight for onStateChanged.
+		// Paints nothing itself, so report no change (no redundant emit).
+		p.activeFlow = e.Flow
+		return false
 	case ritual.StateChangedInfo:
 		p.onStateChanged(e.To)
 	case pulling.ApplyStartedInfo:
 		// Pulling's network phase is done; apply is running invisibly. Phase
 		// flips from `downloading` to `preparing` so the dial swaps glyph
-		// (download → brain-cog) and drops ETA. See design-log/017 §Q1.
-		if p.pipelineStage == ritual.StagePulling {
+		// (download → brain-cog) and drops ETA. See design-log/017 §Q1. Only
+		// the session does this server-prep flip — a Download stays in its one
+		// honest `downloading` beat (design-log/031).
+		if p.activeFlow == ritual.FlowSession && p.pipelineStage == ritual.StagePulling {
 			p.state.Phase = PhasePreparing
 		}
 	case running.ServerReadyInfo:
@@ -251,11 +265,35 @@ func (p *Projection) onStateChanged(to string) {
 	// Same for ETA: each stage is its own beat (download then save are not one
 	// continuous transfer), so re-anchor the beat-wide average. Design-log/028.
 	p.resetEtaBeat()
+	// Sync flows render as a single honest beat regardless of which shared
+	// stage is running (design-log/031): Download is always `downloading` (⬇),
+	// Upload is always `saving` (⬆). This skips the session-only Preparing /
+	// Wrapping beats whose copy ("Spinning up", "Spinning down") assumes a
+	// server. The terminal Done/Failed transitions fall through to the
+	// lifecycle's StatusChanged reset, so don't paint them here.
+	switch p.activeFlow {
+	case ritual.FlowDownload:
+		if to != ritual.StageDone && to != ritual.StageFailed {
+			p.state.Stage = StageDownloading
+			p.state.Phase = PhaseDownloading
+		}
+		return
+	case ritual.FlowUpload:
+		if to != ritual.StageDone && to != ritual.StageFailed {
+			p.state.Stage = StageUploading
+			p.state.Phase = PhaseSaving
+		}
+		return
+	}
 	switch to {
 	case ritual.StageChecking, ritual.StagePulling:
 		p.state.Stage = StageDownloading
 		p.state.Phase = PhaseDownloading
-	case ritual.StageAcquiring:
+	case ritual.StageAcquiring, ritual.StageProbing:
+		// Acquiring (both flows) and Probing (Upload's head-only resolve,
+		// design-log/031) are invisible prep work — brain-cog + "Preparing…",
+		// no ETA. Probing does no byte transfer, so it never reaches the
+		// downloading phase.
 		p.state.Stage = StageDownloading
 		p.state.Phase = PhasePreparing
 	case ritual.StageRunning:
@@ -286,6 +324,7 @@ func (p *Projection) onStatusChanged(e lifecycle.StatusChanged) {
 		p.state = ViewModel{Stage: StageIdle, Phase: PhaseIdle}
 		p.everReady = false
 		p.pipelineStage = ""
+		p.activeFlow = ritual.FlowSession
 	case lifecycle.Failed:
 		p.state.Stage = StageFailed
 		p.state.Phase = PhaseFailed

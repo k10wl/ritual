@@ -320,7 +320,10 @@ export class RitualDial extends LitElement {
     }
 
     private renderSub() {
-        if (/\d/.test(this.sub)) return this.sub;
+        // Empty / whitespace-only or digit-bearing subs render plain — never
+        // hand them to the decoder. An empty sub (a non-transfer beat, see
+        // etaSub) would otherwise be treated as a placeholder and jitter.
+        if (this.sub.trim() === "" || /\d/.test(this.sub)) return this.sub;
         const isPlaceholder = !/[a-zA-Z]/.test(this.sub);
         const idleMin = isPlaceholder ? 50 : 1400;
         const idleMax = isPlaceholder ? 120 : 2800;

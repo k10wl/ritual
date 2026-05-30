@@ -5,6 +5,11 @@ package ritual
 const (
 	StageChecking   = "Checking"
 	StagePulling    = "Pulling"
+	// StageProbing is the head-only sibling of Pulling used by the Upload
+	// flow (design-log/031): it resolves the remote HEAD ref id object-free
+	// (no blob download, no workdir apply) so the fresh commit can parent on
+	// it — local files stay authoritative. Maps to the `preparing` phase.
+	StageProbing    = "Probing"
 	StageAcquiring  = "Acquiring"
 	StageRunning    = "Running"
 	StageDraining   = "Draining"

@@ -15,6 +15,7 @@ import (
 	"ritual/internal/core/stages/committing"
 	"ritual/internal/core/stages/draining"
 	"ritual/internal/core/stages/failed"
+	"ritual/internal/core/stages/probing"
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/pushing"
 	"ritual/internal/core/stages/retaining"
@@ -81,6 +82,52 @@ func Build(d Deps) machine.Strategy[ritual.RunState] {
 	acquire := acquiring.New(d.AcquireFn, d.InspectFn, d.HeartbeatInterval, run, failAcq)
 	pull := pulling.New(d.Puller, d.Applier, d.HeadResolver, acquire, failPull)
 	check := checking.New(d.Checks, pull, failCheck)
+
+	return check
+}
+
+// BuildDownload wires the server-free Download flow (design-log/031):
+// Checking → Pulling → Retaining(local) → Done. Read-only on the remote, so
+// no Acquiring, no Pushing, no Unlocking — a Download never mutates remote
+// state and must not block a teammate who is about to play. Local retention
+// runs after the pull so repeated refreshes don't pile up local refs. The
+// trailing retaining's nil onOK terminates the chain (Done).
+func BuildDownload(d Deps) machine.Strategy[ritual.RunState] {
+	failCheck := failed.New(ritual.StageChecking)
+	failPull := failed.New(ritual.StagePulling)
+	failRetLocal := failed.New(ritual.StageRetainingLocal)
+
+	pruneLocal := retaining.New(d.LocalRetentions, d.Bus, failRetLocal, nil)
+	pull := pulling.New(d.Puller, d.Applier, d.HeadResolver, pruneLocal, failPull)
+	check := checking.New(d.Checks, pull, failCheck)
+
+	return check
+}
+
+// BuildUpload wires the server-free Upload flow (design-log/031): the
+// session chain with Pulling swapped for Probing (head-only, no download/
+// apply — local files win) and Running + Draining removed. Probing writes
+// rs.ParentRefID = remote HEAD so the unchanged CommitOptsResolver records
+// Parent = HEAD (lineage). failed.* terminals mirror Build, plus
+// failed.New(StageProbing).
+func BuildUpload(d Deps) machine.Strategy[ritual.RunState] {
+	failCheck := failed.New(ritual.StageChecking)
+	failProbe := failed.New(ritual.StageProbing)
+	failAcq := failed.New(ritual.StageAcquiring)
+	failCommit := failed.New(ritual.StageCommitting)
+	failPush := failed.New(ritual.StagePushing)
+	failRetLocal := failed.New(ritual.StageRetainingLocal)
+	failRetRemote := failed.New(ritual.StageRetainingRemote)
+
+	unlock := unlocking.New(d.ReleaseFn, nil)
+	pruneRemote := retaining.New(d.RemoteRetentions, d.Bus, failRetRemote, unlock)
+	push := pushing.New(d.Pusher, pruneRemote, failPush)
+	push.OnStop(unlock)
+	pruneLocal := retaining.New(d.LocalRetentions, d.Bus, failRetLocal, push)
+	commit := committing.New(d.Committer, d.CommitOpts, pruneLocal, failCommit)
+	acquire := acquiring.New(d.AcquireFn, d.InspectFn, d.HeartbeatInterval, commit, failAcq)
+	probe := probing.New(d.HeadResolver, acquire, failProbe)
+	check := checking.New(d.Checks, probe, failCheck)
 
 	return check
 }
