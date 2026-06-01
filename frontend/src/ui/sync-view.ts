@@ -22,10 +22,15 @@ import "./primitives/decoder";
 
 export type SyncDirection = "download" | "upload";
 
-/** What a check found: at most one is true under the HEAD-timestamp trichotomy. */
+/**
+ * What a check found. Unlike 031's exclusive trichotomy, 035 lets `behind` and
+ * `ahead` co-occur: `ahead` keys on any uncanonical local state (`dirty ||
+ * unpushed`), so the remote can be newer (`behind`) while local also has work to
+ * publish. Both-true renders Publish primary + a loud "remote is newer" warning.
+ */
 export interface SyncVerdict {
     behind: boolean; // remote HEAD newer than local → something to Download
-    ahead: boolean; // local HEAD newer than remote → something to Upload
+    ahead: boolean; // local has uncanonical work (dirty || unpushed) → Publish
 }
 
 export interface SyncConfirmDetail {
@@ -43,8 +48,10 @@ const CONFIRM_COPY: Record<SyncDirection, { body: string; cta: string }> = {
         cta: "Download",
     },
     upload: {
-        body: "Publish your local worlds as a new remote version. This can't be undone from inside the app.",
-        cta: "Upload",
+        // Data-sacred framing (design-log/035 §Q4c / OQ2): publishing creates a
+        // version, it never destroys — nothing is lost.
+        body: "Publish your local worlds as the version everyone gets. Your current state becomes the latest — nothing is lost.",
+        cta: "Publish",
     },
 };
 
@@ -104,6 +111,25 @@ export class SyncView extends LitElement {
             grid-template-columns: 1fr 1fr;
             gap: var(--space-3);
         }
+        /* Loud "remote is newer" warning shown alongside Publish when behind &&
+           ahead — a prominent treatment (warning color/weight), NOT the muted
+           echo of the passive cue. The whole intervention is the warning text;
+           publishing is never blocked (design-log/035 §Q4c). */
+        .warn {
+            margin: 0;
+            padding: var(--space-3);
+            border-radius: var(--radius-sm);
+            color: var(--warning, #e0a106);
+            background: color-mix(in srgb, var(--warning, #e0a106) 12%, transparent);
+            border: 1px solid color-mix(in srgb, var(--warning, #e0a106) 40%, transparent);
+            font-weight: 600;
+            line-height: 1.5;
+        }
+        .actions {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-3);
+        }
     `;
 
     firstUpdated() {
@@ -141,8 +167,11 @@ export class SyncView extends LitElement {
                 return "Couldn't reach the remote.";
             case "checked": {
                 const { behind, ahead } = this._verdict;
-                if (behind) return "A newer world is waiting.";
+                // ahead takes precedence: local work to publish is the headline;
+                // the behind case adds a loud warning beside Publish, not a
+                // status swap (design-log/035 §Q4c).
                 if (ahead) return "You have local changes to publish.";
+                if (behind) return "A newer world is waiting.";
                 return "Everything's up to date.";
             }
             default:
@@ -158,10 +187,24 @@ export class SyncView extends LitElement {
                 return html`<rune-button variant="tinted" @press=${this.#runCheck}>Try again</rune-button>`;
             case "checked": {
                 const { behind, ahead } = this._verdict;
+                // Both-true: Publish is primary, with a loud warning + a
+                // secondary "Download latest". Non-blocking (design-log/035
+                // §Q4b/c) — the warning is the whole intervention.
+                if (ahead && behind)
+                    return html`
+                        <p class="warn">
+                            The remote is newer. Publishing makes your version the latest and
+                            buries the newer one.
+                        </p>
+                        <div class="actions">
+                            <rune-button variant="primary" @press=${this.#ask("upload")}>Publish</rune-button>
+                            <rune-button variant="tinted" @press=${this.#ask("download")}>Download latest</rune-button>
+                        </div>
+                    `;
+                if (ahead)
+                    return html`<rune-button variant="primary" @press=${this.#ask("upload")}>Publish</rune-button>`;
                 if (behind)
                     return html`<rune-button variant="primary" @press=${this.#ask("download")}>⬇ Download</rune-button>`;
-                if (ahead)
-                    return html`<rune-button variant="primary" @press=${this.#ask("upload")}>⬆ Upload</rune-button>`;
                 return html`<rune-button variant="plain" size="sm" @press=${this.#runCheck}>Check again</rune-button>`;
             }
             default:

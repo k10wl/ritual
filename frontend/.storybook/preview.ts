@@ -78,6 +78,40 @@ const fixtures = {
 
 let current: ViewModel = fixtures.idle();
 let timer: ReturnType<typeof setInterval> | null = null;
+// Tracks whether the in-flight run was launched skip-sync (design-log/036) so
+// Stop can narrate the honest tail: a normal run saves (wrapping → saving →
+// idle), a skip-sync run saves nothing (wrapping → idle).
+let skipSyncRun = false;
+
+// Controllable sync verdict (design-log/035). The interactive Live story flips
+// behind/dirty/unpushed via its boolean controls; M.GetSyncStatus returns this.
+// Default = clean so the base Live story is quiet unless a story opts in.
+let syncStatus: SyncStatus = new SyncStatus({
+    behind: false,
+    dirty: false,
+    unpushed: false,
+    localHead: "",
+    remoteHead: "",
+});
+
+export const setSyncStatus = (s: Partial<SyncStatus>) => {
+    syncStatus = new SyncStatus({
+        behind: false,
+        dirty: false,
+        unpushed: false,
+        localHead: "",
+        remoteHead: "",
+        ...s,
+    });
+};
+
+// Extract the skip-sync flag from a Start call. Wails' Call.ByID packs the
+// method's positional params into `args.args` — Start(port, memory, skipSync),
+// so skipSync is args.args[2]. Robust to the array being absent (defaults false).
+const startSkipSync = (args: unknown): boolean => {
+    const a = (args as { args?: unknown[] } | undefined)?.args;
+    return Array.isArray(a) ? Boolean(a[2]) : false;
+};
 
 const set = (vm: ViewModel) => {
     current = vm;
@@ -120,6 +154,17 @@ setTransport({
             case M.GetSnapshot:
                 return current;
             case M.Start:
+                skipSyncRun = startSkipSync(args);
+                if (skipSyncRun) {
+                    // Skip-sync local-only launch (design-log/036): for testing —
+                    // NOT pulling and NOT pushing, and it saves nothing. No
+                    // download ramp; straight to a brief preparing beat, then
+                    // playing.
+                    cancelTimer();
+                    set(fixtures.preparing());
+                    setTimeout(() => set(fixtures.playing()), 1200);
+                    return undefined;
+                }
                 // Walk download → preparing → playing per design-log/017.
                 ramp(fixtures.downloading, () => {
                     set(fixtures.preparing());
@@ -127,6 +172,13 @@ setTransport({
                 });
                 return undefined;
             case M.Stop:
+                if (skipSyncRun) {
+                    // Skip-sync saves nothing (design-log/036 §Q2): wrapping →
+                    // idle, NO saving ramp — there is no ref write to narrate.
+                    set(fixtures.wrapping());
+                    setTimeout(() => set(fixtures.idle()), 1200);
+                    return undefined;
+                }
                 // Walk wrapping → saving → idle.
                 set(fixtures.wrapping());
                 setTimeout(() => {
@@ -137,10 +189,12 @@ setTransport({
                 set(fixtures.idle());
                 return undefined;
             case M.GetSyncStatus:
-                // Fixture: report "behind" so the IDLE staleness caption is
-                // visible in stories (design-log/031). Live behaviour is a
-                // remote-vs-local HEAD compare.
-                return new SyncStatus({ behind: true, localHead: "", remoteHead: "2026-05-30T08-00-00.000Z" });
+                // Controllable verdict (design-log/035): the interactive Live
+                // story sets this via setSyncStatus() so reviewers can surface the
+                // IDLE "Unpublished changes" cue and the Sync pane's Publish action
+                // + loud behind-warning without a live backend. Live behaviour is a
+                // remote-vs-local HEAD compare merged with a workdir-dirty scan.
+                return syncStatus;
             case M.Download:
                 // Download is ONE honest beat (design-log/031 addendum): ⬇
                 // "Downloading" filling to 100%, then idle. No prepare, no save.

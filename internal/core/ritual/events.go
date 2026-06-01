@@ -57,9 +57,10 @@ func (e ErrorInfo) String() string { return fmt.Sprintf("error %s: %v", e.Operat
 type Flow string
 
 const (
-	FlowSession  Flow = "session"
-	FlowDownload Flow = "download"
-	FlowUpload   Flow = "upload"
+	FlowSession      Flow = "session"
+	FlowDownload     Flow = "download"
+	FlowUpload       Flow = "upload"
+	FlowLocalSession Flow = "local-session"
 )
 
 // FlowStartedInfo is published by the lifecycle at the start of every run,

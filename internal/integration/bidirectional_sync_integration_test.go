@@ -18,6 +18,7 @@ import (
 	"ritual/internal/core/domain"
 	"ritual/internal/core/lock"
 	"ritual/internal/core/ritual"
+	"ritual/internal/core/stages/pulling"
 	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/subsystems/pipeline"
 )
@@ -29,6 +30,7 @@ func (r *testRitual) attachSyncFlows(t *testing.T) {
 
 	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
 	puller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
+	localHeadResolver := pulling.NewHeadResolver(r.local)
 	committer, pusher, commitTargets := r.buildCommittingVerbs(t, worldsPath, scanner)
 
 	host, _ := os.Hostname()
@@ -41,6 +43,7 @@ func (r *testRitual) attachSyncFlows(t *testing.T) {
 		Puller:            puller,
 		Applier:           applier,
 		HeadResolver:      headResolver,
+		LocalHeadResolver: localHeadResolver,
 		Committer:         committer,
 		CommitOpts:        ritual.NewCommitOptsResolver(commitTargets),
 		Pusher:            pusher,
@@ -57,6 +60,31 @@ func (r *testRitual) attachSyncFlows(t *testing.T) {
 	}
 	stop := lifecycle.Attach(r.ctx, r.bus, entries)
 	t.Cleanup(stop)
+}
+
+// attachLocalSession wires the skip-sync / local-only pipeline
+// (design-log/036, BuildLocalSession) behind a fake server and publishes
+// StartRequested{SkipSync:true}. Only Bus + CmdBuilder + Readiness matter to
+// the no-save chain (Checking → Running → Done); no pulling/committing verbs,
+// no locker — the absence of those nodes is the whole point. Returns the
+// fakeServer so the caller drives the run (waitReady → write → exit).
+func (r *testRitual) attachLocalSession(t *testing.T) *fakeServer {
+	t.Helper()
+	worldsPath := filepath.Join(r.localDir, config.WorldsDir)
+	require.NoError(t, os.MkdirAll(worldsPath, 0o755), "create worlds dir for local session")
+
+	server := r.fakerun()
+	deps := pipeline.Deps{
+		Bus:        r.bus,
+		CmdBuilder: &fakeServerCmdBuilder{server: server},
+		Readiness:  immediateReady{},
+	}
+	entries := lifecycle.Entries{LocalSession: pipeline.BuildLocalSession(deps)}
+	stop := lifecycle.Attach(r.ctx, r.bus, entries)
+	t.Cleanup(stop)
+
+	r.bus.Publish(ritual.StartRequested{SkipSync: true})
+	return server
 }
 
 func readRemoteRef(t *testing.T, r *testRitual, id domain.RefID) domain.Ref {
@@ -92,11 +120,11 @@ func TestIntegration_Upload_SeedingEmptyRemote_WritesRootRef(t *testing.T) {
 	r.assertRemoteLockAbsent(t, "Upload must release the remote lock after pushing the seed ref")
 }
 
-func TestIntegration_Upload_PopulatedRemote_ParentsOnRemoteHead(t *testing.T) {
+func TestIntegration_Upload_PopulatedRemote_ParentsOnLocalHead(t *testing.T) {
 	r := newRitual(t)
 	seedRemoteWorld(t, r, file("world/level.dat", []byte("remote-A")))
 	priorHead := maxRefID(r.ctx, r.remote)
-	require.NotEmpty(t, priorHead, "seed must establish a remote HEAD to parent on")
+	require.NotEmpty(t, priorHead, "seed must establish a remote HEAD so the new ref can be compared against it")
 
 	seedLocalWorld(t, r, file("world/level.dat", []byte("local-B")))
 	r.attachSyncFlows(t)
@@ -105,10 +133,10 @@ func TestIntegration_Upload_PopulatedRemote_ParentsOnRemoteHead(t *testing.T) {
 	r.waitDone(t)
 
 	newHead := maxRefID(r.ctx, r.remote)
-	assert.NotEqual(t, priorHead, newHead, "Upload must write a new ref that becomes the newest remote HEAD by timestamp")
+	assert.NotEqual(t, priorHead, newHead, "Publish must write a new ref that becomes the newest remote HEAD by timestamp")
 	ref := readRemoteRef(t, r, newHead)
-	assert.Equal(t, priorHead, ref.Parent, "the uploaded ref must parent on the prior remote HEAD — lineage (design-log/031 Q5)")
-	r.assertRemoteLockAbsent(t, "Upload must release the remote lock after pushing")
+	assert.Empty(t, ref.Parent, "Publish parents on the LOCAL HEAD, not the remote HEAD (design-log/035 §Q3 — lineage follows where the operator stands); seedLocalWorld writes worlds but no local ref, so the local HEAD is empty and Probing leaves ParentRefID empty")
+	r.assertRemoteLockAbsent(t, "Publish must release the remote lock after pushing")
 }
 
 func TestIntegration_Upload_LockHeldByOther_FailsAcquiringNoRefWritten(t *testing.T) {
@@ -150,4 +178,31 @@ func TestIntegration_Download_EmptyRemote_NoOpDone(t *testing.T) {
 
 	r.assertLocalFileMissing(t, "world/level.dat", "a Download against an empty remote must write nothing locally")
 	assert.Empty(t, maxRefID(r.ctx, r.remote), "an empty-remote Download must leave the remote empty")
+}
+
+func TestIntegration_SkipSync_RunsServerNoPullNoCommit(t *testing.T) {
+	r := newRitual(t)
+	seedRemoteWorld(t, r, file("world/level.dat", []byte("remote-canonical")))
+	priorHead := maxRefID(r.ctx, r.remote)
+	require.NotEmpty(t, priorHead, "seed must establish a remote HEAD so the test can assert skip-sync leaves it untouched")
+
+	drain := collectBusEvents(r.bus)
+
+	server := r.attachLocalSession(t)
+	server.waitReady(t)
+	server.write("worlds/world/level.dat", []byte("local-only-session-edit"))
+	server.exit(0)
+	server.stdin.Close()
+	r.waitDone(t)
+
+	assert.Equal(t, []string{ritual.StageChecking, ritual.StageRunning}, stageSequence(drain()),
+		"skip-sync runs the no-save chain (design-log/036 no-save reversal): Checking → Running → Done only. Any Pulling/Acquiring/Committing/Pushing/Retaining/Unlocking stage means a save node leaked back into BuildLocalSession")
+	assert.Empty(t, maxRefID(r.ctx, r.local),
+		"skip-sync saves nothing — the local-only session must write NO local ref; recovery is the deliberate design-log/035 dirty-Publish afterward, not an auto-commit here")
+	assert.Equal(t, priorHead, maxRefID(r.ctx, r.remote),
+		"skip-sync must not Pull, Acquire, Commit, or Push — the remote HEAD must be exactly what it was before launch, untouched by the local-only run")
+	r.assertRemoteLockAbsent(t, "skip-sync has no Acquiring stage — it must never take the remote lock")
+	r.assertLocalLockAbsent(t, "skip-sync has no Acquiring stage — it must never take the local lock")
+	r.assertLocalFileContent(t, "world/level.dat", []byte("local-only-session-edit"),
+		"the server in a skip-sync session runs on the on-disk worlds and its edits land in the workdir as-is (no Pulling overwrote them with remote-canonical) — that dirty workdir is exactly what design-log/035 Publish later recovers")
 }

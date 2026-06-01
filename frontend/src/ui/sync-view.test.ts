@@ -48,14 +48,30 @@ describe("sync-view", () => {
         expect(button(el, "Upload")).to.not.exist;
     });
 
-    it("ahead → offers Upload", async () => {
+    it("ahead → offers Publish", async () => {
         const el = await mount(async () => ({ behind: false, ahead: true }));
         press(button(el, "Check remote")!);
         await aTimeout(0);
         await el.updateComplete;
         expect(status(el)).to.contain("local changes to publish");
-        expect(button(el, "Upload")).to.exist;
+        expect(button(el, "Publish")).to.exist;
         expect(button(el, "Download")).to.not.exist;
+    });
+
+    it("behind && ahead → Publish primary + loud warning + Download latest", async () => {
+        const el = await mount(async () => ({ behind: true, ahead: true }));
+        press(button(el, "Check remote")!);
+        await aTimeout(0);
+        await el.updateComplete;
+        // Publish stays the headline + primary action (design-log/035 §Q4c).
+        expect(status(el)).to.contain("local changes to publish");
+        expect(button(el, "Publish")).to.exist;
+        // Loud warning intervention (not muted).
+        const warn = el.shadowRoot!.querySelector(".warn");
+        expect(warn, "loud remote-is-newer warning").to.exist;
+        expect(warn!.textContent!).to.contain("remote is newer");
+        // Secondary, non-blocking Download latest beside Publish.
+        expect(button(el, "Download latest")).to.exist;
     });
 
     it("in sync → up-to-date, no action offered", async () => {

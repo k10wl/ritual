@@ -13,7 +13,7 @@
  */
 
 import { LitElement, css, html } from "lit";
-import { customElement, property, queryAll } from "lit/decorators.js";
+import { customElement, property, queryAll, state } from "lit/decorators.js";
 import "./primitives/rune-field";
 import {
     composeValidators,
@@ -29,6 +29,10 @@ export interface PrepSettings {
 export interface PrepSettingsChangeDetail {
     valid: boolean;
     settings: PrepSettings | null;
+    // Transient per-session toggle (design-log/036 §Q6). Read at Start time,
+    // never persisted with port/memory; resets OFF each mount. Carried on the
+    // change detail so ritual-app can thread it into start(port, memory, skipSync).
+    skipSync: boolean;
 }
 
 const required: RuneFieldValidator = (v) =>
@@ -70,6 +74,10 @@ const memoryValidator = composeValidators(required, memoryShape, memoryRange);
 export class PrepSettingsEl extends LitElement {
     @property({ type: Object }) config: PrepSettings = { port: 25565, memoryMB: 4096 };
 
+    // Transient "Skip sync this session" toggle (design-log/036 §Q6). Defaults
+    // OFF on every mount — it is NOT part of the persisted port/memory payload.
+    @state() private skipSync = false;
+
     @queryAll("rune-field") private _fields!: NodeListOf<RuneField>;
 
     static styles = css`
@@ -83,6 +91,16 @@ export class PrepSettingsEl extends LitElement {
             gap: var(--space-3) var(--space-4);
         }
         form > rune-field { min-width: 0; }
+        .skip-sync {
+            grid-column: 1 / -1;
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: var(--fs-caption);
+        }
+        .skip-sync input { accent-color: var(--accent, currentColor); cursor: pointer; }
     `;
 
     render() {
@@ -104,8 +122,21 @@ export class PrepSettingsEl extends LitElement {
                     .validate=${memoryValidator}
                     hint="At least ${MIN_MEMORY_GB} GB."
                 ></rune-field>
+                <label class="skip-sync">
+                    <input
+                        type="checkbox"
+                        .checked=${this.skipSync}
+                        @change=${this.#onSkipSync}
+                    />
+                    Skip sync this session
+                </label>
             </form>
         `;
+    }
+
+    /** Current value of the transient skip-sync toggle (design-log/036). */
+    skipSyncEnabled(): boolean {
+        return this.skipSync;
     }
 
     /** Read current settings; returns null if any field is invalid. */
@@ -130,17 +161,27 @@ export class PrepSettingsEl extends LitElement {
         return true;
     }
 
-    #onInput = () => {
+    #emitChange = () => {
         const settings = this.read();
         const detail: PrepSettingsChangeDetail = {
             valid: settings !== null,
             settings,
+            skipSync: this.skipSync,
         };
         this.dispatchEvent(new CustomEvent("change", {
             bubbles: true,
             composed: true,
             detail,
         }));
+    };
+
+    #onInput = () => this.#emitChange();
+
+    // Toggling skip-sync is a transient @state flip; re-emit `change` so the
+    // host tracks the latest value alongside port/memory.
+    #onSkipSync = (e: Event) => {
+        this.skipSync = (e.target as HTMLInputElement).checked;
+        this.#emitChange();
     };
 
     #onSubmit = (e: Event) => {

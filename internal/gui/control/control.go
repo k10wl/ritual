@@ -39,13 +39,23 @@ type WindowControl interface {
 	Focus()
 }
 
-// SyncStatus is the launch staleness verdict surfaced to the IDLE screen
-// (design-log/031). Behind is true when the remote HEAD is newer than the
-// local HEAD — a passive cue, not a count (no sequence ids; see OQ2). Heads
-// are the canonical RefID timestamp strings, empty when that side has no
-// refs yet.
+// SyncStatus is the sync verdict surfaced to the IDLE screen + Sync pane
+// (design-log/031, extended by /035). Heads are the canonical RefID timestamp
+// strings, empty when that side has no refs yet.
+//
+//   - Behind   — remote HEAD newer than local HEAD (a teammate published); a
+//     non-blocking warning when publishing (design-log/035 §Q4c).
+//   - Unpushed — local HEAD newer than remote HEAD: committed work that never
+//     reached the remote (a /036 skip-sync session, or a crashed push). One
+//     tap publishes the existing ref — the castle-on-a-plane recovery (§Q7).
+//   - Dirty    — workdir differs from the local HEAD ref: uncommitted edits.
+//
+// The Sync pane offers "Publish" on Dirty || Unpushed; the IDLE cue
+// "Unpublished changes" shows on the same condition (design-log/035 §Q6).
 type SyncStatus struct {
 	Behind     bool   `json:"behind"`
+	Unpushed   bool   `json:"unpushed"`
+	Dirty      bool   `json:"dirty"`
 	LocalHead  string `json:"localHead"`
 	RemoteHead string `json:"remoteHead"`
 }
@@ -74,10 +84,91 @@ func NewHeadSyncProber(localHead, remoteHead pulling.HeadResolver) SyncProber {
 		}
 		return SyncStatus{
 			Behind:     remote > local,
+			Unpushed:   local > remote,
 			LocalHead:  string(local),
 			RemoteHead: string(remote),
 		}, nil
 	}
+}
+
+// RefReader loads a ref by id from a store (refs/{id}.json → domain.Ref).
+// Injected so control stays free of storage/json wiring (composition root
+// supplies the closure over localStorage).
+type RefReader func(ctx context.Context, id domain.RefID) (*domain.Ref, error)
+
+// WorkdirScan hashes the workdir under the given scope, re-hashing only files
+// modified after `since` and carrying `previous` forward (an mtime scanner).
+// Injected so control owns no filesystem.
+type WorkdirScan func(ctx context.Context, since time.Time, previous map[string]domain.FileEntry, targets []string) (map[string]domain.FileEntry, error)
+
+// LocalDirtyProber reports whether the workdir differs from the local HEAD
+// ref (design-log/035 §Q5). Injected at composition; nil ⇒ GetSyncStatus
+// leaves Dirty false. Errors degrade silently (never surface to the IDLE
+// screen — design-log/031 invariant).
+type LocalDirtyProber func(ctx context.Context) (dirty bool, err error)
+
+// NewLocalDirtyProber builds the dirty probe (design-log/035): resolve the
+// local HEAD ref, scan the workdir against its Objects (mtime-bounded), and
+// report any path added / removed / hash-changed. The RefID is the commit
+// timestamp, so it seeds the scanner's `since`. ErrNoHead (no local ref yet)
+// ⇒ any in-scope file on disk counts as dirty (the seed case). seedTargets is
+// the commit scope used only when there is no ref to read its own Targets.
+func NewLocalDirtyProber(localHead pulling.HeadResolver, readRef RefReader, scan WorkdirScan, seedTargets []string) LocalDirtyProber {
+	return func(ctx context.Context) (bool, error) {
+		head, err := localHead(ctx)
+		if errors.Is(err, pulling.ErrNoHead) {
+			files, serr := scan(ctx, time.Time{}, nil, seedTargets)
+			if serr != nil {
+				return false, serr
+			}
+			return len(files) > 0, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		ref, err := readRef(ctx, head)
+		if err != nil {
+			return false, err
+		}
+		since, perr := time.Parse(domain.RefIDFormat, string(head))
+		if perr != nil {
+			// Un-parseable id → re-hash everything (since = zero time). Safe:
+			// over-hashing only costs CPU, never a false "clean".
+			since = time.Time{}
+		}
+		prev := objectsToEntries(ref.Objects)
+		cur, err := scan(ctx, since, prev, ref.Targets)
+		if err != nil {
+			return false, err
+		}
+		return entriesDiffer(cur, prev), nil
+	}
+}
+
+// objectsToEntries adapts a ref's Objects (Hash+Size) to the FileEntry shape
+// the scanner returns + carries forward.
+func objectsToEntries(objs map[string]domain.Object) map[string]domain.FileEntry {
+	out := make(map[string]domain.FileEntry, len(objs))
+	for path, o := range objs {
+		out[path] = domain.FileEntry{Hash: o.Hash, Size: o.Size}
+	}
+	return out
+}
+
+// entriesDiffer reports whether two path→entry maps describe different content
+// by hash. Equal length plus every cur key present in prev with the same hash
+// ⟹ identical sets (a removed path changes the length).
+func entriesDiffer(cur, prev map[string]domain.FileEntry) bool {
+	if len(cur) != len(prev) {
+		return true
+	}
+	for path, c := range cur {
+		p, ok := prev[path]
+		if !ok || p.Hash != c.Hash {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveHeadOrEmpty maps the empty-storage sentinel (pulling.ErrNoHead) to
@@ -99,19 +190,25 @@ type ControlService struct {
 	snapshot SnapshotSource
 	logs     WindowControl
 	sync     SyncProber
+	dirty    LocalDirtyProber
 }
 
 // NewControlService wires the service to the shared bus, projection, sync
-// prober, and logs window control. Any of the arguments may be nil only in
-// tests; a nil sync prober makes GetSyncStatus a no-op zero status.
-func NewControlService(bus ports.EventBus, snapshot SnapshotSource, sync SyncProber, logs WindowControl) *ControlService {
-	return &ControlService{bus: bus, snapshot: snapshot, sync: sync, logs: logs}
+// prober, dirty prober, and logs window control. Any of the arguments may be
+// nil only in tests; a nil sync prober makes GetSyncStatus a zero status and a
+// nil dirty prober leaves Dirty false.
+func NewControlService(bus ports.EventBus, snapshot SnapshotSource, sync SyncProber, dirty LocalDirtyProber, logs WindowControl) *ControlService {
+	return &ControlService{bus: bus, snapshot: snapshot, sync: sync, dirty: dirty, logs: logs}
 }
 
 // Start persists the user-supplied port + memory and publishes a
 // StartRequested command on the bus. Validation mirrors domain.Settings
 // so bad inputs never reach the Ritual orchestrator.
-func (c *ControlService) Start(port int, memoryMB int) error {
+// skipSync selects the local-only session pipeline (design-log/036): the
+// server runs on the on-disk worlds with all remote sync skipped (offline /
+// R2-down / rollback / mod-testing). Transient — not persisted; the frontend
+// resets the toggle OFF each launch.
+func (c *ControlService) Start(port int, memoryMB int, skipSync bool) error {
 	if port <= 0 || port > 65535 {
 		return errors.New("port must be between 1 and 65535")
 	}
@@ -127,7 +224,7 @@ func (c *ControlService) Start(port int, memoryMB int) error {
 	if err := settings.Save(); err != nil {
 		return fmt.Errorf("save settings: %w", err)
 	}
-	c.bus.Publish(ritual.StartRequested{})
+	c.bus.Publish(ritual.StartRequested{SkipSync: skipSync})
 	return nil
 }
 
@@ -165,14 +262,22 @@ func (c *ControlService) Upload() {
 // caption. A nil prober or any error (offline, list failure) collapses to a
 // zero status so the IDLE screen simply shows nothing — never an error.
 func (c *ControlService) GetSyncStatus() SyncStatus {
-	if c.sync == nil {
-		return SyncStatus{}
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), syncProbeTimeout)
 	defer cancel()
-	status, err := c.sync(ctx)
-	if err != nil {
-		return SyncStatus{}
+	var status SyncStatus
+	// Head compare (Behind / Unpushed) and the workdir dirty scan degrade
+	// independently — an offline remote still lets the local dirty check run,
+	// and a ref-read failure still lets the head compare stand. Each error
+	// leaves its half of the verdict false (design-log/031 OQ3, /035 §L1).
+	if c.sync != nil {
+		if s, err := c.sync(ctx); err == nil {
+			status = s
+		}
+	}
+	if c.dirty != nil {
+		if d, err := c.dirty(ctx); err == nil {
+			status.Dirty = d
+		}
 	}
 	return status
 }

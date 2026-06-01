@@ -284,6 +284,18 @@ func (p *Projection) onStateChanged(to string) {
 			p.state.Phase = PhaseSaving
 		}
 		return
+	case ritual.FlowLocalSession:
+		// Local-only session (design-log/036): chain is Checking → Running →
+		// Done — no Committing/Retaining (skip-sync saves nothing). Checking is
+		// honest prep, not "downloading" (nothing is pulled). Running falls
+		// through to the session map below (→ preparing, then ServerReady flips
+		// to playing, ServerStopping to wrapping); the run terminates straight to
+		// Done with no saving beat — there is no ref write to narrate.
+		if to == ritual.StageChecking {
+			p.state.Stage = StageDownloading
+			p.state.Phase = PhasePreparing
+			return
+		}
 	}
 	switch to {
 	case ritual.StageChecking, ritual.StagePulling:

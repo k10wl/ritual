@@ -9,7 +9,8 @@ import { LogLine, Level } from "../bindings/ritual/internal/gui/logsink/models";
 
 export { ViewModel, Stage, Phase, JoinAddress, LogLine, Level, Prep, SyncStatus };
 
-export const start = (port: number, memoryMB: number) => Control.Start(port, memoryMB);
+export const start = (port: number, memoryMB: number, skipSync = false) =>
+    Control.Start(port, memoryMB, skipSync);
 export const stop = () => Control.Stop();
 export const dismiss = () => Control.Dismiss();
 // Server-free sync gestures (design-log/031). The backend rejects either

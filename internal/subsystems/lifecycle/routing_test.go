@@ -170,3 +170,41 @@ func TestRouting_UnwiredGesture_RejectedNotPanicked(t *testing.T) {
 
 	require.Error(t, rejection.Err, "an unwired Upload gesture must publish a rejection, not nil-panic the controller goroutine")
 }
+
+func TestRouting_StartRequestedSkipSync_DrivesLocalSessionEntryOnly(t *testing.T) {
+	bus := adapters.NewEventBus(64)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	session := newRecordStrategy("Session")
+	local := newRecordStrategy("LocalSession")
+	stop := lifecycle.Attach(context.Background(), bus, lifecycle.Entries{
+		Session: session, LocalSession: local,
+	})
+	defer stop()
+
+	bus.Publish(ritual.StartRequested{SkipSync: true})
+	waitForStatus(t, ch, lifecycle.Done)
+
+	assert.True(t, local.ran(), "StartRequested{SkipSync:true} must drive the LocalSession entry (design-log/036)")
+	assert.False(t, session.ran(), "the skip-sync gesture must not drive the full Session entry")
+}
+
+func TestRouting_StartRequested_DrivesSessionEntryOnly(t *testing.T) {
+	bus := adapters.NewEventBus(64)
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	session := newRecordStrategy("Session")
+	local := newRecordStrategy("LocalSession")
+	stop := lifecycle.Attach(context.Background(), bus, lifecycle.Entries{
+		Session: session, LocalSession: local,
+	})
+	defer stop()
+
+	bus.Publish(ritual.StartRequested{})
+	waitForStatus(t, ch, lifecycle.Done)
+
+	assert.True(t, session.ran(), "StartRequested{} (SkipSync false) must still drive the full Session entry")
+	assert.False(t, local.ran(), "the normal start gesture must not drive the LocalSession entry")
+}

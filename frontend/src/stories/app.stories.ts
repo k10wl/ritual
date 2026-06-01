@@ -2,7 +2,7 @@ import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import "../ritual-app";
 import { JoinAddress, Phase, Stage, ViewModel } from "../wails-api";
-import { pushView } from "../../.storybook/preview";
+import { pushView, setSyncStatus } from "../../.storybook/preview";
 
 export default {
     title: "Screens / Ritual",
@@ -154,7 +154,53 @@ const ramp = (
     return out;
 };
 
-export const Live = () => html`<ritual-app></ritual-app>`;
+// Interactive end-to-end story — every flow is reachable here with NO backend,
+// driven by the mock transport in .storybook/preview.ts. The behind/dirty/
+// unpushed controls feed setSyncStatus() so the sync verdict is live-tunable.
+//
+// What to click to reach each flow:
+//   • dial → normal session (download → spin-up → live); hold the dial (Stop)
+//     → spin-down → save → idle.
+//   • Advanced → Settings → tick "Skip sync this session" → back → dial →
+//     local-only launch (no download ramp, straight to spin-up → live).
+//   • Advanced → Sync → Download / Publish. With `behind` on, Publish shows the
+//     loud "remote is newer" warning.
+//   • Flip `dirty` or `unpushed` → IDLE "Unpublished changes" cue appears under
+//     Advanced, and Sync offers Publish.
+//   • Fail mid-sync (see FailedDuring* stories) → "Skip sync & run locally" hint.
+interface LiveArgs {
+    behind: boolean;
+    dirty: boolean;
+    unpushed: boolean;
+}
+
+const HEAD_OLD = "2026-05-30T08-00-00.000Z";
+const HEAD_NEW = "2026-05-30T09-00-00.000Z";
+
+export const Live = {
+    args: { behind: false, dirty: false, unpushed: false },
+    argTypes: {
+        behind: { control: "boolean" },
+        dirty: { control: "boolean" },
+        unpushed: { control: "boolean" },
+    },
+    render: ({ behind, dirty, unpushed }: LiveArgs) => {
+        // behind ⇒ remoteHead newer than localHead; unpushed ⇒ localHead newer
+        // than remoteHead. They can't both order the heads, so behind wins the
+        // ordering while unpushed is still reported as the arg (design-log/035).
+        let localHead = "";
+        let remoteHead = "";
+        if (behind) {
+            localHead = HEAD_OLD;
+            remoteHead = HEAD_NEW;
+        } else if (unpushed) {
+            localHead = HEAD_NEW;
+            remoteHead = HEAD_OLD;
+        }
+        setSyncStatus({ behind, dirty, unpushed, localHead, remoteHead });
+        return html`<ritual-app></ritual-app>`;
+    },
+};
 
 // Full eight-phase walk per design-log/017 §Examples ✅ After:
 // idle → downloading (bytes flow) → preparing (brain-cog plateau) →
@@ -236,6 +282,22 @@ export const FailedDuringSaving = () => {
         { vm: wrapping(), holdMs: 600 },
         ...ramp(saving, 0, 67, 10, 140),
         { vm: failedAt(Phase.PhaseSaving, prior), holdMs: 10_000 },
+    ];
+    return html`<app-driver .beats=${beats}></app-driver>`;
+};
+
+// Skip-sync local-only session (design-log/036): for testing — not pulling,
+// not pushing, and saving nothing. NO download ramp and NO save tail: the
+// launch goes idle → spin-up → live → spin-down → idle. Mirrors the mock
+// transport's skipSync=true Start path (BuildLocalSession: Checking → Running
+// → Done).
+export const SkipSyncLaunch = () => {
+    const beats: Beat[] = [
+        { vm: idle(), holdMs: 800 },
+        { vm: preparing(), holdMs: 1600 },
+        { vm: playing(), holdMs: 2400 },
+        { vm: wrapping(), holdMs: 1400 },
+        { vm: idle(), holdMs: 2000 },
     ];
     return html`<app-driver .beats=${beats}></app-driver>`;
 };

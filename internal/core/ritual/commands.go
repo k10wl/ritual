@@ -4,11 +4,19 @@ package ritual
 // drive the run lifecycle. The lifecycle subsystem subscribes and acts;
 // stages never see these directly.
 
-// StartRequested commands the lifecycle to begin a fresh run from the
-// pipeline's entry strategy.
-type StartRequested struct{}
+// StartRequested commands the lifecycle to begin a fresh run. SkipSync
+// selects the local-only session pipeline (design-log/036): Checking →
+// Running → Draining → Committing → Retaining(local) → Done — no remote
+// Pulling/Acquiring/Pushing/Unlock. Zero value (false) is the normal full
+// session, so existing StartRequested{} callers are unaffected.
+type StartRequested struct{ SkipSync bool }
 
-func (StartRequested) String() string { return "start requested" }
+func (s StartRequested) String() string {
+	if s.SkipSync {
+		return "start requested (skip sync)"
+	}
+	return "start requested"
+}
 
 // DownloadRequested commands the lifecycle to run the Download flow
 // (design-log/031): Checking → Pulling → Retaining(local). Server-free,

@@ -41,9 +41,10 @@ func (s StatusChanged) String() string {
 // not wired — startWith rejects it. The composition root builds all three
 // from pipeline.Build / BuildDownload / BuildUpload.
 type Entries struct {
-	Session  machine.Strategy[ritual.RunState]
-	Download machine.Strategy[ritual.RunState]
-	Upload   machine.Strategy[ritual.RunState]
+	Session      machine.Strategy[ritual.RunState]
+	LocalSession machine.Strategy[ritual.RunState]
+	Download     machine.Strategy[ritual.RunState]
+	Upload       machine.Strategy[ritual.RunState]
 }
 
 // Controller holds the per-run mutable state. The Attach goroutine is the
@@ -94,9 +95,17 @@ func Attach(parent context.Context, bus ports.EventBus, entries Entries, session
 				if !ok {
 					return
 				}
-				switch event.(type) {
+				switch e := event.(type) {
 				case ritual.StartRequested:
-					c.startWith(ctx, c.entries.Session, ritual.FlowSession, true)
+					// SkipSync selects the local-only pipeline (design-log/036).
+					// Both run sessionHooks (livesync dispatcher binding) — the
+					// ticker is structurally inert in the local flow (no Pulling
+					// → empty parentFn), so the binding is a harmless no-op there.
+					if e.SkipSync {
+						c.startWith(ctx, c.entries.LocalSession, ritual.FlowLocalSession, true)
+					} else {
+						c.startWith(ctx, c.entries.Session, ritual.FlowSession, true)
+					}
 				case ritual.DownloadRequested:
 					c.startWith(ctx, c.entries.Download, ritual.FlowDownload, false)
 				case ritual.UploadRequested:

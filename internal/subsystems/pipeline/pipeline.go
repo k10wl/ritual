@@ -34,6 +34,11 @@ type Deps struct {
 	Puller            ports.Puller
 	Applier           ports.Applier
 	HeadResolver      pulling.HeadResolver
+	// LocalHeadResolver resolves the local-store HEAD. Publish (BuildUpload,
+	// design-log/035) probes this instead of the remote so a new ref parents
+	// on where the operator stands (local HEAD), making a rolled-back state
+	// canonical truthfully — reverses design-log/031 §Q1.
+	LocalHeadResolver pulling.HeadResolver
 	Committer         ports.Committer
 	CommitOpts        committing.OptsResolver
 	Pusher            ports.Pusher
@@ -104,12 +109,15 @@ func BuildDownload(d Deps) machine.Strategy[ritual.RunState] {
 	return check
 }
 
-// BuildUpload wires the server-free Upload flow (design-log/031): the
-// session chain with Pulling swapped for Probing (head-only, no download/
-// apply — local files win) and Running + Draining removed. Probing writes
-// rs.ParentRefID = remote HEAD so the unchanged CommitOptsResolver records
-// Parent = HEAD (lineage). failed.* terminals mirror Build, plus
-// failed.New(StageProbing).
+// BuildUpload wires the server-free Publish flow (design-log/031 Upload,
+// re-pointed by design-log/035): Checking → Probing → Acquiring → Committing
+// → Pushing → Retaining → Unlocking. Probing is head-only (no download/apply
+// — local files win); it resolves the LOCAL HEAD and writes rs.ParentRefID so
+// the unchanged CommitOptsResolver records Parent = local HEAD (design-log/035
+// §Q3 — lineage follows where the operator stands; a rolled-back state becomes
+// canonical truthfully). failed.* terminals mirror Build, plus
+// failed.New(StageProbing). User-facing name is "Publish" (design-log/035);
+// the wire name stays Upload (rename deferred to reduce churn).
 func BuildUpload(d Deps) machine.Strategy[ritual.RunState] {
 	failCheck := failed.New(ritual.StageChecking)
 	failProbe := failed.New(ritual.StageProbing)
@@ -126,8 +134,28 @@ func BuildUpload(d Deps) machine.Strategy[ritual.RunState] {
 	pruneLocal := retaining.New(d.LocalRetentions, d.Bus, failRetLocal, push)
 	commit := committing.New(d.Committer, d.CommitOpts, pruneLocal, failCommit)
 	acquire := acquiring.New(d.AcquireFn, d.InspectFn, d.HeartbeatInterval, commit, failAcq)
-	probe := probing.New(d.HeadResolver, acquire, failProbe)
+	probe := probing.New(d.LocalHeadResolver, acquire, failProbe)
 	check := checking.New(d.Checks, probe, failCheck)
 
+	return check
+}
+
+// BuildLocalSession wires the skip-sync / local-only session (design-log/036,
+// no-save reversal): Checking → Running → Done. The entire save half is
+// dropped — no Pulling, no Acquiring (lock), no Committing, no Retaining, no
+// Pushing, no Unlocking, no livesync — so the server runs on the on-disk
+// worlds as-is (offline / R2-down / rollback / mod-testing) and **saves
+// nothing to a ref** ("skip sync means we won't save either" — §OQ2). The
+// session's work lands in the workdir and is recovered deliberately afterward
+// via [035] Publish, which reads the workdir as dirty. running.New(…, nil,
+// nil): a clean exit terminates to Done; a crash sets rs.Err and lifecycle
+// resolves it to Failed. Skipping is structural — the save nodes are simply
+// absent, so the livesync ticker is wholly inert and no rs.LocalOnly gate is
+// needed (§OQ5).
+func BuildLocalSession(d Deps) machine.Strategy[ritual.RunState] {
+	failCheck := failed.New(ritual.StageChecking)
+
+	run := running.New(d.CmdBuilder, d.Readiness, nil, nil)
+	check := checking.New(d.Checks, run, failCheck)
 	return check
 }

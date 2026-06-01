@@ -10,7 +10,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -56,7 +58,7 @@ func main() {
 		log.Fatalf("build runtime: %v", err)
 	}
 
-	controlSvc := control.NewControlService(runtime.bus, runtime.projection, runtime.syncProber, nil)
+	controlSvc := control.NewControlService(runtime.bus, runtime.projection, runtime.syncProber, runtime.dirtyProber, nil)
 
 	wailsApp := application.New(application.Options{
 		Name:        config.ProductName,
@@ -153,9 +155,10 @@ func main() {
 	// ignore d.Drainable (no Running, no livesync), so passing the session
 	// deps verbatim is harmless.
 	entries := lifecycle.Entries{
-		Session:  pipeline.Build(pipelineDeps),
-		Download: pipeline.BuildDownload(pipelineDeps),
-		Upload:   pipeline.BuildUpload(pipelineDeps),
+		Session:      pipeline.Build(pipelineDeps),
+		LocalSession: pipeline.BuildLocalSession(pipelineDeps),
+		Download:     pipeline.BuildDownload(pipelineDeps),
+		Upload:       pipeline.BuildUpload(pipelineDeps),
 	}
 
 	sessionHook := func(rs *ritual.RunState) {
@@ -192,6 +195,7 @@ type guiRuntime struct {
 	pusher        ports.Pusher
 	commitTargets []string
 	syncProber    control.SyncProber
+	dirtyProber   control.LocalDirtyProber
 }
 
 func buildRuntime() (*guiRuntime, error) {
@@ -302,6 +306,35 @@ func buildRuntime() (*guiRuntime, error) {
 	// Launch staleness prober (design-log/031): remote HEAD vs local HEAD.
 	syncProber := control.NewHeadSyncProber(localHeadResolver, headResolver)
 
+	// Workdir dirty prober (design-log/035): is the workdir different from the
+	// local HEAD ref? readRef loads refs/{id}.json from local storage; scan is
+	// an mtime-bounded workdir hash seeded from the ref's Objects so only files
+	// touched since the last commit are re-hashed.
+	readRef := func(ctx context.Context, id domain.RefID) (*domain.Ref, error) {
+		rc, err := localStorage.GetStream(ctx, "refs/"+string(id)+".json")
+		if err != nil {
+			return nil, fmt.Errorf("read ref %s: %w", id, err)
+		}
+		defer rc.Close()
+		raw, err := io.ReadAll(rc)
+		if err != nil {
+			return nil, fmt.Errorf("read ref %s body: %w", id, err)
+		}
+		ref := &domain.Ref{}
+		if err := json.Unmarshal(raw, ref); err != nil {
+			return nil, fmt.Errorf("parse ref %s: %w", id, err)
+		}
+		return ref, nil
+	}
+	workdirScan := func(ctx context.Context, since time.Time, previous map[string]domain.FileEntry, targets []string) (map[string]domain.FileEntry, error) {
+		sc, err := adapters.NewMtimeScanner(config.RootPath, since, previous)
+		if err != nil {
+			return nil, err
+		}
+		return sc.Scan(ctx, targets)
+	}
+	dirtyProber := control.NewLocalDirtyProber(localHeadResolver, readRef, workdirScan, commitTargets)
+
 	// Wire pull/push plan callbacks into the bus so the projection can
 	// populate ViewModel.BytesTotal before the first progress.Tick lands —
 	// audit open item #1: without this the bar reads 0%% the whole transfer
@@ -346,6 +379,7 @@ func buildRuntime() (*guiRuntime, error) {
 		Puller:            puller,
 		Applier:           applier,
 		HeadResolver:      headResolver,
+		LocalHeadResolver: localHeadResolver,
 		Committer:         committer,
 		CommitOpts:        ritual.NewCommitOptsResolver(commitTargets),
 		Pusher:            pusher,
@@ -400,6 +434,7 @@ func buildRuntime() (*guiRuntime, error) {
 		pusher:        pusher,
 		commitTargets: commitTargets,
 		syncProber:    syncProber,
+		dirtyProber:   dirtyProber,
 	}, nil
 }
 

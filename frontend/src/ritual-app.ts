@@ -16,6 +16,7 @@ import {
     ViewModel,
     JoinAddress,
 } from "./wails-api";
+import "./ui/primitives/decoder";
 import type { DialGlyph, DialState } from "./ui/ritual-dial";
 import { formatEta } from "./ui/telemetry-format";
 import "./ui/ritual-shell";
@@ -176,6 +177,15 @@ export class RitualApp extends LitElement {
     @state() private lastNonFailPhase: Phase = Phase.PhaseIdle;
     @state() private uptimeSub = "";
     @state() private prep: PrepSettings = FALLBACK_PREP;
+    // Passive IDLE cue (design-log/035 §Q6 + OQ1): true when local work isn't
+    // safely canonical (dirty || unpushed). Folded from getSyncStatus on mount;
+    // drives a muted <rune-decoder> "Unpublished changes" below the Advanced
+    // link. Empty string is never handed to the decoder (design-log/020/028).
+    @state() private unpublished = false;
+    // Transient skip-sync toggle mirrored from <prep-settings> (design-log/036
+    // §Q6). Read at Start time; not persisted. Tracked here because the live
+    // form lives in a pushed pane and isn't query-able on the dial tap.
+    @state() private skipSync = false;
     // Snapshot of effective transfer rate, derived once in applyVm() so the
     // under-slot speed and the ETA always see the same number. Keeping the
     // derivation off the render path keeps render() a pure function of
@@ -210,6 +220,7 @@ export class RitualApp extends LitElement {
         } catch {
             // keep FALLBACK_PREP if the binding is unavailable
         }
+        void this.refreshUnpublished();
         this.unsubscribe = onView((vm) => this.applyVm(vm));
     }
 
@@ -351,8 +362,9 @@ export class RitualApp extends LitElement {
         if (phase !== Phase.PhaseIdle && phase !== Phase.$zero) return;
         // Settings live in a pushed pane now (design-log/034), so the live
         // <prep-settings> element isn't query-able from here — Start reads the
-        // last valid values tracked into `this.prep` via onPrepChange.
-        void start(this.prep.port, this.prep.memoryMB);
+        // last valid values tracked into `this.prep` via onPrepChange, plus the
+        // transient skip-sync toggle (design-log/036).
+        void start(this.prep.port, this.prep.memoryMB, this.skipSync);
     };
 
     // ── Advanced navigation tenant (design-log/034) ─────────────────────────
@@ -377,19 +389,36 @@ export class RitualApp extends LitElement {
     // isn't query-able on Start — track the last valid values into this.prep.
     private onPrepChange = (e: CustomEvent<PrepSettingsChangeDetail>) => {
         if (e.detail.valid && e.detail.settings) this.prep = e.detail.settings;
+        // Mirror the transient skip-sync toggle regardless of field validity
+        // (design-log/036 §Q6) — it's independent of port/memory.
+        this.skipSync = e.detail.skipSync;
     };
 
-    // HEAD probe injected into <sync-view>. getSyncStatus already returns both
-    // heads; the trichotomy is derived here (RefID is a timestamp, so the
-    // lexical compare is chronological). Errors propagate so sync-view shows
-    // "Couldn't reach the remote" rather than a false verdict.
+    // HEAD probe injected into <sync-view>. getSyncStatus merges the head
+    // compare with the workdir-dirty scan (design-log/035). `ahead` now means
+    // "any uncanonical local state to publish" — dirty edits OR a committed-but-
+    // unpushed ref (§Q7) — not just a newer local HEAD. `behind` no longer
+    // gates the offer; it only adds a loud warning in sync-view. Errors
+    // propagate so sync-view shows "Couldn't reach the remote".
     private checkSync = async (): Promise<SyncVerdict> => {
         const s = await getSyncStatus();
         return {
             behind: s.behind,
-            ahead: s.localHead !== s.remoteHead && s.localHead > s.remoteHead,
+            ahead: s.dirty || s.unpushed,
         };
     };
+
+    // Fold the launch staleness check into the IDLE "Unpublished changes" cue
+    // (design-log/035 §Q6). Degrades silently to no cue on any error — the
+    // backend already collapses failures to a zero status (design-log/031 OQ3).
+    private async refreshUnpublished() {
+        try {
+            const s = await getSyncStatus();
+            this.unpublished = s.dirty || s.unpushed;
+        } catch {
+            this.unpublished = false;
+        }
+    }
 
     // Confirmed Download/Upload (design-log/031). The flow animates the root
     // dial via the same onView stream as a session, so unwind the stack to the
@@ -402,6 +431,39 @@ export class RitualApp extends LitElement {
 
     private onHoldCommit = () => {
         if (this.vm.phase === Phase.PhasePlaying) void stop();
+    };
+
+    // Whether the current failure happened in a sync stage (design-log/036 §Q7).
+    // Only these warrant the "Skip sync & run locally" escape hatch — retrying
+    // the identical sync would just fail again, but a local-only run can still
+    // launch. Non-sync failures (the server itself: Running/port/OOM) get only
+    // dismiss-to-idle.
+    //
+    // LIMITATION: the projection ViewModel does NOT expose the fine-grained
+    // ritual stage (Checking/Pulling/Acquiring/Pushing). Its `Stage`/`Phase`
+    // enums are the coarse 017 UI buckets, and on failure `vm.phase` collapses
+    // to PhaseFailed. So we gate on `lastNonFailPhase` — the bucket the run was
+    // in just before it failed. The sync-bearing buckets are `downloading`
+    // (Checking/Pulling/Acquiring run here) and `saving` (Pushing). A failure
+    // during `playing` is the server crashing/port-in-use → no hint; `preparing`
+    // (spin-up after the world is in place) is also non-sync → no hint.
+    private failedInSyncStage(): boolean {
+        if (this.vm.phase !== Phase.PhaseFailed) return false;
+        // A lock-held conflict is a legitimate "someone is playing" gate, not a
+        // sync-transport failure — never offer skip-sync there.
+        if (this.vm.lockHolder) return false;
+        return (
+            this.lastNonFailPhase === Phase.PhaseDownloading ||
+            this.lastNonFailPhase === Phase.PhaseSaving
+        );
+    }
+
+    // FAILED-view "Skip sync & run locally" (design-log/036 §Q7): re-fire Start
+    // with skipSync=true, reusing the last-entered params. Additive beside the
+    // dial's dismiss-to-idle tap.
+    private onSkipSyncRetry = (e: Event) => {
+        e.stopPropagation();
+        void start(this.prep.port, this.prep.memoryMB, true);
     };
 
     private onAmbientAction = (e: CustomEvent<"logs" | "folder">) => {
@@ -445,7 +507,18 @@ export class RitualApp extends LitElement {
                     </div>
                     ${d.dial.state === "idle"
                         ? html`<button class="advanced-entry" @click=${this.openAdvanced}>
-                              <span class="chev">›</span> Advanced
+                                  <span class="chev">›</span> Advanced
+                              </button>
+                              ${this.unpublished
+                                  ? html`<rune-decoder
+                                        class="unpublished-cue"
+                                        .text=${"Unpublished changes"}
+                                    ></rune-decoder>`
+                                  : null}`
+                        : null}
+                    ${this.failedInSyncStage()
+                        ? html`<button class="skip-sync-hint" @click=${this.onSkipSyncRetry}>
+                              Skip sync &amp; run locally
                           </button>`
                         : null}
                 </ritual-shell>
@@ -483,6 +556,38 @@ export class RitualApp extends LitElement {
             border-radius: var(--radius-sm);
         }
         .advanced-entry .chev { font-size: var(--fs-body); line-height: 1; }
+
+        /* Passive "Unpublished changes" cue (design-log/035 §Q6) — muted, below
+           the Advanced link, no button. Points the operator into Advanced → Sync. */
+        .unpublished-cue {
+            align-self: center;
+            color: var(--text-faint);
+            font-family: var(--font-mono);
+            font-size: var(--fs-caption);
+            letter-spacing: 0.08em;
+        }
+
+        /* Additive FAILED-view escape hatch (design-log/036 §Q7), shown only for
+           sync-stage failures. Same quiet register as the Advanced link; the
+           dismiss-to-idle tap on the dial stays the default action. */
+        .skip-sync-hint {
+            align-self: center;
+            background: none;
+            border: 1px solid var(--text-faint);
+            border-radius: var(--radius-sm);
+            padding: var(--space-2) var(--space-3);
+            cursor: pointer;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            font-size: var(--fs-caption);
+            letter-spacing: 0.08em;
+            transition: color var(--motion-fast, 120ms ease), border-color var(--motion-fast, 120ms ease);
+        }
+        .skip-sync-hint:hover { color: var(--text-strong); border-color: var(--text-muted); }
+        .skip-sync-hint:focus-visible {
+            outline: 1px solid var(--text-muted);
+            outline-offset: 2px;
+        }
         .under-slot {
             opacity: 0;
             transform: translateY(-4px);
