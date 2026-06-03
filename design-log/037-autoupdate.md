@@ -1,7 +1,7 @@
 # 037 — Autoupdate as a Preflight dial stage
 
 **Date:** 2026-05-30
-**Status:** Draft
+**Status:** Implemented (2026-06-03; macOS + live R2 smoke pending)
 
 ## Background
 
