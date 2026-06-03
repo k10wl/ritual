@@ -35,6 +35,30 @@ type StorageRepository interface {
 	Copy(ctx context.Context, sourceKey string, destKey string) error
 }
 
+// Update describes one publishable build discovered on the remote. Identity
+// is intrinsic to the artifact key (design-log/037 §Q7): Version is the
+// `<version>` path segment, SHA256 is the key's leaf name (so integrity needs
+// no sidecar or feed file), and Key is the full object key to GetStream.
+type Update struct {
+	Version string
+	Key     string
+	SHA256  string
+}
+
+// UpdaterService checks the remote for a newer build and applies it in place.
+// Implemented by selfupdate.Updater, decorated by observed.NewUpdater. See
+// design-log/037.
+type UpdaterService interface {
+	// Check returns the latest available build and whether the running binary
+	// is older than it. (Update{}, false, nil) when the remote has nothing
+	// newer (or nothing at all).
+	Check(ctx context.Context) (Update, bool, error)
+	// Apply downloads u, atomically replaces the running binary (checksum +
+	// rollback via minio/selfupdate), then relaunches and quits. Does not
+	// return on success — the process is replaced.
+	Apply(ctx context.Context, u Update) error
+}
+
 // Puller fetches a ref and every blob it references from one storage side
 // into another. Implemented by refs.Puller. See §Pull — ACID in
 // docs/superpowers/specs/2026-04-19-fast-sync-v2.1-design.md.
@@ -118,4 +142,3 @@ type BlobItem struct {
 type BlobRunner interface {
 	Run(ctx context.Context, items []BlobItem, fn func(ctx context.Context, key string) error) error
 }
-

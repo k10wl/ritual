@@ -69,7 +69,6 @@ var DefaultCommitTargets = []string{
 // File names and keys
 const (
 	ManifestFilename  = "manifest.json"
-	RemoteBinaryKey   = "ritual.exe"
 	ServerJarFilename = "paper.jar"
 	ServerLogFilename = "server.log"
 )
@@ -96,22 +95,10 @@ const (
 	DefaultLeaseTTL          = 21 * time.Minute
 )
 
-// Update process flags
-const (
-	ReplaceFlag = "--replace-old"
-	CleanupFlag = "--cleanup-update"
-)
-
-// Update process timing
-const (
-	UpdateProcessDelayMs = 500
-)
-
-// Update file patterns
-const (
-	UpdateFilePattern = "update_%d.exe"
-	UpdateFileGlob    = "update_*.exe"
-)
+// Self-update lives in internal/subsystems/selfupdate now (design-log/037):
+// the old CLI-era --replace-old/--cleanup-update process dance + update_*.exe
+// temp files are gone, replaced by minio/selfupdate's in-process atomic
+// rename and the bin/<os-arch>/<version>/<sha> layout.
 
 // Sync staging patterns
 const (

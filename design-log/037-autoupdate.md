@@ -337,9 +337,16 @@ replaced by the `bin/<os-arch>/<version>/<sha>` layout (§Q7). Keep `AppVersion`
      anti-loop invariant — see §Trade-offs). Taskfile `publish:` **always
      rebuilds before pushing** so a stale artifact can't sneak a mismatched
      version in.
-  2. sha256 the built artifact; `DeleteBatch` any prior objects under
-     `bin/<os-arch>/<version>/` (re-publish = replace, one object per dir);
-     `PutStream` → `bin/<os-arch>/<version>/<sha256>[.exe]`.
+  2. sha256 the built artifact; `PutStream` → `bin/<os-arch>/<version>/<sha256>[.exe]`
+     **first**, then sweep any *other* object under that same `<version>/` dir
+     (a prior re-publish of the same version with different bytes). This is the
+     repo's established **write-new-then-sweep-old** order, mirroring
+     `refs.Committer.finalizeAmend` (commit.go:131): the new artifact is durable
+     before the old is deleted, so a crashed publish never empties the version
+     dir — `latest()` still resolves. **Delete-first is wrong** (opens a window
+     with no artifact under the version). Older *versions* are NOT swept — they
+     are retained for rollback (§Q7). One sha per version dir keeps `latest()`
+     unambiguous.
   3. Taskfile `publish:` target chains `gui:build` → `cmd/publish`.
 
   **Task integration (automatable — the requirement this session).** The root
@@ -350,20 +357,25 @@ replaced by the `bin/<os-arch>/<version>/<sha>` layout (§Q7). Keep `AppVersion`
 
   ```yaml
   publish:
-    desc: Build the host-OS GUI binary and publish it to R2 under bin/<os>-<arch>/<version>/<sha>.
+    desc: Test + lint, build the host-OS GUI binary, then publish it to R2 under bin/<os>-<arch>/<version>/<sha>.
     cmds:
-      - task: gui:build                     # sequential: build runs to completion first…
+      - task: test                          # RED TESTS ABORT THE DEPLOY — gate, not convention
+      - task: lint
+      - task: gui:build                     # sequential: build runs to completion before publish…
       - go run ./cmd/publish -artifact {{.BIN_DIR}}/{{.APP_NAME}}{{.EXE}} -os {{OS}} -arch {{ARCH}}
     vars:
       EXE: '{{if eq OS "windows"}}.exe{{end}}'
   ```
 
-  Sequential `cmds` (not `deps`) so the build→publish order is explicit. The Go
-  build step is **not fingerprint-cached** (`build:native` has no
-  `sources:`/`generates:`; the `go build` runs every invocation and
-  `generate:versioninfo` re-stamps from the consts), so `task publish` can never
-  push a stale binary under a freshly-bumped version — the invariant holds at the
-  build layer, not just by convention.
+  **Tests gate the deploy (this session).** `task test` (+ `task lint`) run first
+  as sequential `cmds`; Task aborts on the first non-zero exit, so a failing test
+  means `cmd/publish` never runs and nothing reaches R2 — for a local
+  `task publish` and a CI job alike, not just by convention. Sequential `cmds`
+  (not `deps`) so the gate→build→publish order is explicit. The Go build step is
+  **not fingerprint-cached** (`build:native` has no `sources:`/`generates:`; the
+  `go build` runs every invocation and `generate:versioninfo` re-stamps from the
+  consts), so `task publish` can never push a stale binary under a freshly-bumped
+  version — the invariant holds at the build layer, not just by convention.
 
   - **Target passed in, not inferred.** `cmd/publish` takes `-os/-arch/-artifact`
     rather than reading its own `runtime.GOOS` — so a cross-compiled build
@@ -373,7 +385,8 @@ replaced by the `bin/<os-arch>/<version>/<sha>` layout (§Q7). Keep `AppVersion`
   - **CI shape:** a release job runs `task publish RITUAL_ENV=prod` after the
     version consts are bumped. Bumping the consts is the one human/automatable
     pre-step (a later `task version:bump` or a tag→ldflags injection can own it;
-    out of scope here). `task test` + `task lint` gate it as today.
+    out of scope here). The test+lint gate is inside `publish` itself, so the CI
+    job is a single call — no separate "remember to run tests" step to skip.
   - **Idempotent + safe to re-run:** re-running the same version replaces the
     single object under that version dir (step 2); a newer version just adds a
     dir. No pointer to update, so a half-finished CI run leaves the prior latest

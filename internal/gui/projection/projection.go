@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"ritual/internal/adapters/observed"
 	"ritual/internal/adapters/progress"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
@@ -163,6 +164,52 @@ func (p *Projection) fold(evt ports.Event) bool {
 		}
 	case lifecycle.StatusChanged:
 		p.onStatusChanged(e)
+	default:
+		// Autoupdate (design-log/037) and anything else the projection ignores.
+		return p.foldUpdate(evt)
+	}
+	return true
+}
+
+// foldUpdate folds the observed.Update* stream into the gray Preflight dial
+// (design-log/037). Split out of fold so each stays under the complexity
+// budget. Returns whether the event changed the ViewModel; unknown events
+// return false (no redundant emit), matching fold's default.
+func (p *Projection) foldUpdate(evt ports.Event) bool {
+	switch e := evt.(type) {
+	case observed.UpdateCheckStarted:
+		// Autoupdate probe begins (launch or manual re-check). The dial boots
+		// gray + inert — "Checking for updates···". Design-log/037 §Q2/Q3.
+		p.state = ViewModel{Stage: StagePreflight, Phase: PhasePreflight}
+	case observed.UpdateCheckInfo:
+		// Errors route through UpdateFailed (a distinct event); here we only
+		// act on the success verdict. Up-to-date → wake straight to IDLE (the
+		// common path). Outdated → remember the target; the Updating beat
+		// begins on UpdateApplyStarted. Design-log/037 §Q3/Q4.
+		switch {
+		case e.Err != nil:
+			return false
+		case e.Outdated:
+			p.state.TargetVersion = e.To
+		default:
+			p.state = ViewModel{Stage: StageIdle, Phase: PhaseIdle}
+		}
+	case observed.UpdateApplyStarted:
+		// The new binary is downloading. Gray dial, "Updating → vN". No byte
+		// denominator is carried (design-log/037 §Q7), so the ring is the
+		// frontend's indeterminate fill, not a percentage.
+		p.state.Stage = StagePreflight
+		p.state.Phase = PhaseUpdating
+		p.state.TargetVersion = e.Version
+	case observed.UpdateFailed:
+		// Best-effort mandatory: a failed check/apply drops into 017's single
+		// failure pathway — glyph x, "Tap to dismiss" → usable IDLE. The
+		// frontend reads the update flavour from the error text. Design-log/037 §Q5.
+		p.state.Stage = StageFailed
+		p.state.Phase = PhaseFailed
+		if e.Err != nil {
+			p.state.ErrorText = e.Err.Error()
+		}
 	default:
 		return false
 	}

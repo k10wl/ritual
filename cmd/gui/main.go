@@ -15,6 +15,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	ritualassets "ritual"
 	"ritual/internal/adapters"
@@ -37,7 +38,9 @@ import (
 	"ritual/internal/subsystems/pipeline"
 	"ritual/internal/subsystems/remote"
 	"ritual/internal/subsystems/retention"
+	"ritual/internal/subsystems/selfupdate"
 	"ritual/internal/subsystems/transferwatch"
+	goruntime "runtime"
 	"sync/atomic"
 	"time"
 
@@ -175,8 +178,71 @@ func main() {
 	// to avoid missing the first StateChanged. Design-log/022 #2.
 	go transferwatch.New(runtime.bus, runtime.ticker).Run(ctx)
 
+	// Autoupdate (design-log/037). relaunch publishes UpdateRestartInfo, then
+	// re-execs the (already-swapped) binary and tears the window down via Quit
+	// — Wails v3 has no restart API. The updater reads the bin/<os-arch>/
+	// listing through the observed remoteStorage, so its List/GetStream land in
+	// the single log; the observed.Updater publishes the Update* dial stream.
+	relaunch := func() error {
+		runtime.bus.Publish(observed.UpdateRestartInfo{})
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("relaunch: resolve executable: %w", err)
+		}
+		cmd := exec.Command(exe) // #nosec G204 -- exe is os.Executable(), not user input
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("relaunch: start: %w", err)
+		}
+		wailsApp.Quit()
+		return nil
+	}
+	updater := observed.NewUpdater(
+		selfupdate.New(runtime.remoteStorage, config.AppVersion, goruntime.GOOS, goruntime.GOARCH, relaunch),
+		config.AppVersion, runtime.bus,
+	)
+	// Pre-IDLE Preflight on launch + the same flow on every manual re-check
+	// (selfupdate.CheckRequested from control). Runs off the Wails thread so it
+	// never blocks Run(); failures publish UpdateFailed → PhaseFailed → usable IDLE.
+	go runUpdateFlow(ctx, updater)
+	go watchUpdateRequests(ctx, runtime.bus, updater)
+
 	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// runUpdateFlow runs one Preflight pass: Check, and if the running binary is
+// outdated, Apply (which on success replaces the process and never returns).
+// Every transition is published by the observed.Updater, so this orchestrator
+// holds no UI logic — the projection folds the events into the gray dial and a
+// failure drops to a usable IDLE (design-log/037 §Q4/Q5).
+func runUpdateFlow(ctx context.Context, updater ports.UpdaterService) {
+	up, outdated, err := updater.Check(ctx)
+	if err != nil || !outdated {
+		return // events already published: failed → PhaseFailed, or up-to-date → IDLE
+	}
+	_ = updater.Apply(ctx, up) // success replaces the process; failure → UpdateFailed
+}
+
+// watchUpdateRequests re-runs the Preflight flow whenever the user taps
+// Advanced ▸ Check for update (control publishes selfupdate.CheckRequested) —
+// one code path with launch, one gray-dial takeover (design-log/037 §Q6).
+func watchUpdateRequests(ctx context.Context, bus ports.EventBus, updater ports.UpdaterService) {
+	ch, unsub := bus.Subscribe()
+	defer unsub()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case evt, ok := <-ch:
+			if !ok {
+				return
+			}
+			if _, ok := evt.(selfupdate.CheckRequested); ok {
+				go runUpdateFlow(ctx, updater)
+			}
+		}
 	}
 }
 
@@ -196,6 +262,7 @@ type guiRuntime struct {
 	commitTargets []string
 	syncProber    control.SyncProber
 	dirtyProber   control.LocalDirtyProber
+	remoteStorage ports.StorageRepository // for the autoupdate feed (design-log/037)
 }
 
 func buildRuntime() (*guiRuntime, error) {
@@ -435,6 +502,7 @@ func buildRuntime() (*guiRuntime, error) {
 		commitTargets: commitTargets,
 		syncProber:    syncProber,
 		dirtyProber:   dirtyProber,
+		remoteStorage: remoteStorage,
 	}, nil
 }
 

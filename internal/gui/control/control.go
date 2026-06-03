@@ -8,13 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"ritual/internal/core/ritual"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/gui/projection"
+	"ritual/internal/subsystems/selfupdate"
 	"runtime"
 	"time"
 )
@@ -254,6 +255,15 @@ func (c *ControlService) Download() {
 // (design-log/031). The lifecycle rejects it while another flow is Running.
 func (c *ControlService) Upload() {
 	c.bus.Publish(ritual.UploadRequested{})
+}
+
+// CheckForUpdate publishes a selfupdate.CheckRequested command — the manual
+// "Check for update" action in Advanced (design-log/037 §Q6). The composition
+// root runs the same Check→Apply flow as launch, so the gray Preflight dial
+// takes over identically. The frontend disables this while a server is playing
+// (Apply restarts the process — §Q4 lean).
+func (c *ControlService) CheckForUpdate() {
+	c.bus.Publish(selfupdate.CheckRequested{})
 }
 
 // GetSyncStatus runs the launch staleness check: resolve local + remote

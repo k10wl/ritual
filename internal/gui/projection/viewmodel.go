@@ -23,6 +23,10 @@ const (
 	StageRunning     Stage = "running"
 	StageUploading   Stage = "uploading"
 	StageFailed      Stage = "failed"
+	// StagePreflight is the gray, inert autoupdate bucket shown before IDLE on
+	// every launch (and on manual re-check) — the dial means "system working,
+	// hands off". Carries PhasePreflight then PhaseUpdating. Design-log/037.
+	StagePreflight Stage = "preflight"
 )
 
 // Phase is the finer-grained sub-state the frontend uses to pick glyph,
@@ -56,6 +60,12 @@ const (
 	PhaseWrapping    Phase = "wrapping"
 	PhaseSaving      Phase = "saving"
 	PhaseFailed      Phase = "failed"
+	// PhasePreflight: gray inert dial, "Checking for updates···" (autoupdate
+	// probe in flight). PhaseUpdating: gray dial, "Updating → vN" while the new
+	// binary downloads + the brief "Restarting···" tail before relaunch. Both
+	// live in StagePreflight. Design-log/037 §State-machine additions.
+	PhasePreflight Phase = "preflight"
+	PhaseUpdating  Phase = "updating"
 )
 
 // JoinAddress pairs a human label with a dial address shown on the Running
@@ -108,6 +118,11 @@ type ViewModel struct {
 	ErrorText  string        `json:"errorText"`
 	LockHolder string        `json:"lockHolder"`
 	Addresses  []JoinAddress `json:"addresses"`
+
+	// TargetVersion is the semver the autoupdate is moving to during
+	// PhasePreflight/PhaseUpdating — the dial renders "Updating → v{TargetVersion}".
+	// Empty outside the update flow. Design-log/037.
+	TargetVersion string `json:"targetVersion"`
 
 	// Stalled marks a byte-flowing beat (downloading / saving) whose link has
 	// gone quiet mid-transfer — the latest tick carried a zero "now" rate while
