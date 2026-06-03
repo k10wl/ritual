@@ -96,6 +96,19 @@ tasks:
     cmds:
       - npm run storybook
 
+  publish:
+    desc: Test + lint + build the host-OS GUI binary, then publish it to R2 (design-log/037 Phase F).
+    cmds:
+      # Gate the deploy on green tests + lint — a failing step aborts before
+      # cmd/publish runs, so nothing red ever reaches R2. Build runs last so the
+      # uploaded binary re-bakes the current config.AppVersion (anti-loop invariant).
+      - task: test
+      - task: lint
+      - task: gui:build
+      - go run ./cmd/publish -artifact {{.BIN_DIR}}/{{.APP_NAME}}{{.EXE}} -os {{OS}} -arch {{ARCH}}
+    vars:
+      EXE: '{{if eq OS "windows"}}.exe{{end}}'
+
   gui:assets:
     desc: Regenerate GUI assets from assets/baiki-dev.ico (favicon, .icns).
     sources:
