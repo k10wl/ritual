@@ -123,7 +123,7 @@ export default {
     argTypes: {
         state: {
             control: { type: "select" },
-            options: ["idle", "prep", "run", "final", "fail"],
+            options: ["idle", "prep", "run", "final", "fail", "preflight"],
         },
         arc: { control: { type: "range", min: 0, max: 1, step: 0.01 } },
         label: { control: { type: "text" } },
@@ -195,6 +195,22 @@ export const PhaseFailed = () => html`
 export const PhaseFailedLocked = () => html`
     <ritual-dial state="fail" .arc=${0} glyph="x"
         label="alice is playing" sub="Tap to dismiss"></ritual-dial>
+`;
+
+// Autoupdate Preflight beats (design-log/037): gray, inert, no glyph.
+export const PreflightChecking = () => html`
+    <ritual-dial state="preflight" .arc=${1} .glyph=${null}
+        label="" sub="Checking for updates"></ritual-dial>
+`;
+
+export const PreflightUpdating = () => html`
+    <ritual-dial state="preflight" .arc=${1} .glyph=${null}
+        label="" sub="Updating → v2.1.0"></ritual-dial>
+`;
+
+export const FailedUpdate = () => html`
+    <ritual-dial state="fail" .arc=${0} glyph="x"
+        label="" sub="Couldn't update — restart, or try Advanced ▸ Check for update"></ritual-dial>
 `;
 
 export const Cycle = () => html`<dial-cycle-demo></dial-cycle-demo>`;

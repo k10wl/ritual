@@ -471,6 +471,48 @@ UpdateCheckInfo{From:2.0.0 To:2.1.0 Outdated:true}
 - ~~**Q7 confirm:** feed shape / key layout.~~ **Resolved 2026-06-03** — no feed
   file; listing-derived latest; `bin/<os-arch>/<version>/<sha>`; hash in the key
   name (see §Q7 Resolved + §Examples + Phase F).
-- **Q4 nuance:** on a *running* server (not just launch), should the manual
-  "Check for update" be disabled, given Apply restarts the process? (Lean:
-  disable Check while `PhasePlaying`.)
+- ~~**Q4 nuance:** disable manual "Check for update" while running?~~ **Resolved
+  in build** — the Advanced "Check for update" button is enabled **only when the
+  dial is IDLE** (`vm.phase === PhaseIdle`), which is stricter than the
+  "disable while PhasePlaying" lean and covers every active beat.
+
+## Implementation Results (2026-06-03)
+
+Shipped Phases A–F. `go test ./...` green; 71/71 frontend tests; `tsc` + vite
+build clean; net-new `golangci-lint` clean (only pre-existing baseline
+gofumpt/revive remain, matching existing files).
+
+**Backend (A–D, commit `fe3dfca`)**
+- `selfupdate`: `IsVersionOlder`/`parseVersion` (resurrected), `latest()` feed
+  parser, `Updater{Check,Apply}` over `minio/selfupdate v0.6.0`; relaunch =
+  `exec` + `wailsApp.Quit()`. `ports.UpdaterService` + `Update`.
+- `observed.NewUpdater` + `Update*` events; `projection.foldUpdate` →
+  `StagePreflight`/`PhasePreflight`/`PhaseUpdating` + `vm.TargetVersion`;
+  `control.CheckForUpdate` → `selfupdate.CheckRequested`; `cmd/gui` wires launch
+  Preflight + a `CheckRequested` subscriber. Dead v1 consts deleted.
+
+**Publish (F, commit `9ea19aa`)** `cmd/publish` + `task publish` (test → lint →
+build → publish; write-new-then-sweep-old per `finalizeAmend`).
+
+**Frontend (E)** gray `--state-preflight` token; `DialState "preflight"`;
+`PHASE_VIEW` preflight/updating beats; Advanced "Updates" section with an
+idle-gated "Check for update" button; dial + advanced-view stories + tests.
+
+**Deviations from the design above**
+1. **Ring is indeterminate, not byte-filled (§Obs 2/4).** The artifact key is
+   non-`objects/` so only the wire counter ticks (`Stream.Data` reads 0) and no
+   remote `size` is carried (§Q7) — so `PhaseUpdating` shows a full gray ring
+   (`arc => 1`, "system working"), not a percentage. No `transferwatch` arming
+   was wired for the update window (it would pulse ticks the projection ignores).
+2. **No `logging.write` cases added (§Obs 4).** The `Update*` events implement
+   `Stringer`, so logging's default `[ts] %v` already renders them with detail;
+   explicit cases would force `logging` to import `observed` for zero gain.
+3. **"Restarting···" folded into `PhaseUpdating`.** `relaunch` quits the process
+   near-instantly, so a dedicated dial state would flash for milliseconds.
+   `UpdateRestartInfo` is log-only (projection ignores it).
+4. **Two entry events added beyond the design's four:** `UpdateCheckStarted` +
+   `UpdateApplyStarted` are the Preflight/Updating dial entry signals (the
+   design's events were outcome-only); they fire on launch and manual recheck
+   alike, so neither path hand-rolls state.
+5. **Failed-update dial copy is a fixed retry hint** (`updateFailedHint`), not
+   the raw error — the raw error stays in the log via `UpdateFailed`.

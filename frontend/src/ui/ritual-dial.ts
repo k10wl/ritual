@@ -9,7 +9,7 @@ import "./primitives/stable-num";
 
 gsap.registerPlugin(MorphSVGPlugin);
 
-export type DialState = "idle" | "prep" | "run" | "final" | "fail";
+export type DialState = "idle" | "prep" | "run" | "final" | "fail" | "preflight";
 export type DialGlyph = "play" | "stop" | "x" | "download" | "upload" | "brain-cog" | "unplug" | null;
 
 const RADIUS = 100;
@@ -399,11 +399,12 @@ export class RitualDial extends LitElement {
             --radiance-lo: color-mix(in srgb, var(--c) 22%, transparent);
             transition: --c var(--motion-base, 220ms ease);
         }
-        :host([state="idle"])  { --c: var(--state-idle); }
-        :host([state="prep"])  { --c: var(--state-prep); }
-        :host([state="run"])   { --c: var(--state-run); }
-        :host([state="final"]) { --c: var(--state-final); }
-        :host([state="fail"])  { --c: var(--state-fail); }
+        :host([state="idle"])      { --c: var(--state-idle); }
+        :host([state="prep"])      { --c: var(--state-prep); }
+        :host([state="run"])       { --c: var(--state-run); }
+        :host([state="final"])     { --c: var(--state-final); }
+        :host([state="fail"])      { --c: var(--state-fail); }
+        :host([state="preflight"]) { --c: var(--state-preflight); }
 
         .dial {
             position: relative;

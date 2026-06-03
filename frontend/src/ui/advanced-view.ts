@@ -13,6 +13,7 @@ import { LitElement, css, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import "./prep-settings";
 import "./sync-view";
+import "./primitives/rune-button";
 import type { PrepSettings } from "./prep-settings";
 import type { SyncVerdict } from "./sync-view";
 
@@ -23,6 +24,9 @@ export class AdvancedView extends LitElement {
         behind: false,
         ahead: false,
     });
+    // Gates the manual "Check for update" — the flow restarts the process, so
+    // it is offered only when the dial is idle (design-log/037 §Q4 lean).
+    @property({ type: Boolean }) canUpdate = false;
 
     static styles = css`
         :host {
@@ -55,8 +59,23 @@ export class AdvancedView extends LitElement {
                 <p class="label">Sync</p>
                 <sync-view auto .check=${this.check}></sync-view>
             </section>
+            <section>
+                <p class="label">Updates</p>
+                <rune-button
+                    variant="tinted"
+                    ?disabled=${!this.canUpdate}
+                    @press=${this.emitCheckUpdate}
+                >Check for update</rune-button>
+            </section>
         `;
     }
+
+    // Re-emit the button press as a domain event the host wires to the
+    // autoupdate flow (design-log/037 §Q6). Presentational rule: behavior
+    // exits via a custom event, not a wails-api call here.
+    private emitCheckUpdate = () => {
+        this.dispatchEvent(new CustomEvent("checkupdate", { bubbles: true, composed: true }));
+    };
 }
 
 declare global {

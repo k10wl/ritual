@@ -35,6 +35,17 @@ export const Default = () =>
     pane(html`<advanced-view
         .config=${{ port: 25565, memoryMB: 4096 }}
         .check=${delayed({ behind: true, ahead: false })}
+        .canUpdate=${true}
         @change=${log}
         @sync=${log}
+        @checkupdate=${log}
+    ></advanced-view>`);
+
+// Updates section gated: when the dial isn't idle the "Check for update" row is
+// disabled (design-log/037 §Q4 — the flow restarts the process).
+export const UpdateGated = () =>
+    pane(html`<advanced-view
+        .config=${{ port: 25565, memoryMB: 4096 }}
+        .check=${delayed({ behind: false, ahead: false })}
+        .canUpdate=${false}
     ></advanced-view>`);

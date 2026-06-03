@@ -58,6 +58,7 @@
         --state-run:    #10b981;
         --state-final:  #8b5cf6;
         --state-fail:   #ef4444;
+        --state-preflight: #8a93a6; /* muted slate — autoupdate "system working, hands off" (#037) */
         --dial-track:   rgba(255, 255, 255, 0.08);
         --dial-glow:    rgba(16, 185, 129, 0.35);
 

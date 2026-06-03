@@ -17,6 +17,9 @@ export const dismiss = () => Control.Dismiss();
 // while another flow is Running; the IDLE-only render keeps them gated.
 export const download = () => Control.Download();
 export const upload = () => Control.Upload();
+// Manual "Check for update" (design-log/037 §Q6). Runs the same Preflight flow
+// as launch — the gray dial takes over. Frontend gates it to IDLE.
+export const checkForUpdate = () => Control.CheckForUpdate();
 // Launch staleness check — boolean "behind". Errors degrade to a zero
 // status backend-side, so this never rejects in practice.
 export const getSyncStatus = () => Control.GetSyncStatus();

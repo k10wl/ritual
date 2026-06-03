@@ -2,6 +2,7 @@ import { css, html, LitElement } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import {
     dismiss,
+    checkForUpdate,
     download,
     getPrep,
     getSnapshot,
@@ -160,6 +161,20 @@ const PHASE_VIEW: Record<Phase, DialView> = {
         underSlot: null,
         arc: (_vm, ctx) => ctx.lastProgressArc,
         sub: () => "Tap to dismiss",
+    },
+    // Autoupdate (design-log/037): gray, inert, no glyph — "system working,
+    // hands off". Full gray ring signals busy (indeterminate; no byte
+    // denominator, §Q7). Preflight = the launch/recheck probe; Updating = the
+    // new binary downloading, captioned with the target version.
+    [Phase.PhasePreflight]: {
+        state: "preflight", glyph: null, label: "", underSlot: null,
+        arc: () => 1,
+        sub: () => "Checking for updates",
+    },
+    [Phase.PhaseUpdating]: {
+        state: "preflight", glyph: null, label: "", underSlot: null,
+        arc: () => 1,
+        sub: (vm) => `Updating → v${vm.targetVersion}`,
     },
 };
 
@@ -378,12 +393,21 @@ export class RitualApp extends LitElement {
         render: () => html`<advanced-view
             .config=${this.prep}
             .check=${this.checkSync}
+            .canUpdate=${this.vm.phase === Phase.PhaseIdle}
             @change=${this.onPrepChange}
             @sync=${this.onSyncConfirmed}
+            @checkupdate=${this.onCheckUpdate}
         ></advanced-view>`,
     };
 
     private openAdvanced = () => this._stack?.push(this.advancedView);
+
+    // Manual update check: pop back to the root so the gray Preflight takeover
+    // is visible on the dial, then trigger the same flow as launch (037 §Q6).
+    private onCheckUpdate = () => {
+        this._stack?.popToRoot();
+        checkForUpdate();
+    };
 
     // Settings (port/memory) live in the staged pane now, so the live form
     // isn't query-able on Start — track the last valid values into this.prep.

@@ -4,12 +4,12 @@ import "./advanced-view";
 import type { AdvancedView } from "./advanced-view";
 
 describe("advanced-view", () => {
-    it("renders two flat sections — Server and Sync — with no menu nesting", async () => {
+    it("renders three flat sections — Server, Sync, Updates — with no menu nesting", async () => {
         const el = await fixture<AdvancedView>(html`<advanced-view></advanced-view>`);
         const labels = [...el.shadowRoot!.querySelectorAll(".label")].map((l) =>
             l.textContent!.trim(),
         );
-        expect(labels).to.deep.equal(["Server", "Sync"]);
+        expect(labels).to.deep.equal(["Server", "Sync", "Updates"]);
         expect(el.shadowRoot!.querySelector("prep-settings")).to.exist;
         expect(el.shadowRoot!.querySelector("sync-view")).to.exist;
     });
@@ -43,5 +43,25 @@ describe("advanced-view", () => {
             .querySelector("sync-view")!
             .dispatchEvent(new CustomEvent("sync", { detail: { direction: "download" }, bubbles: true, composed: true }));
         expect(bubbled).to.equal(true);
+    });
+
+    it("disables Check for update unless canUpdate (dial idle) — design-log/037 §Q4", async () => {
+        const el = await fixture<AdvancedView>(html`<advanced-view></advanced-view>`);
+        const btn = el.shadowRoot!.querySelector("rune-button") as HTMLElement & { disabled: boolean };
+        expect(btn.disabled).to.equal(true, "default (not idle) keeps the update check gated");
+
+        el.canUpdate = true;
+        await el.updateComplete;
+        expect(btn.disabled).to.equal(false, "idle enables the manual check");
+    });
+
+    it("emits a checkupdate event when the update button is pressed", async () => {
+        const el = await fixture<AdvancedView>(html`<advanced-view .canUpdate=${true}></advanced-view>`);
+        let fired = false;
+        el.addEventListener("checkupdate", () => (fired = true));
+        el.shadowRoot!.querySelector("rune-button")!.dispatchEvent(
+            new CustomEvent("press", { bubbles: true, composed: true }),
+        );
+        expect(fired).to.equal(true);
     });
 });

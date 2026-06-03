@@ -171,6 +171,10 @@ func (p *Projection) fold(evt ports.Event) bool {
 	return true
 }
 
+// updateFailedHint is the dial copy on a failed update (design-log/037 §Q5) —
+// the user-facing retry path, not the raw error (which the log carries).
+const updateFailedHint = "Couldn't update — restart, or try Advanced ▸ Check for update"
+
 // foldUpdate folds the observed.Update* stream into the gray Preflight dial
 // (design-log/037). Split out of fold so each stays under the complexity
 // budget. Returns whether the event changed the ViewModel; unknown events
@@ -203,13 +207,12 @@ func (p *Projection) foldUpdate(evt ports.Event) bool {
 		p.state.TargetVersion = e.Version
 	case observed.UpdateFailed:
 		// Best-effort mandatory: a failed check/apply drops into 017's single
-		// failure pathway — glyph x, "Tap to dismiss" → usable IDLE. The
-		// frontend reads the update flavour from the error text. Design-log/037 §Q5.
+		// failure pathway — glyph x, "Tap to dismiss" → usable IDLE. The dial
+		// shows the retry hint (restart / Advanced ▸ Check for update), not the
+		// raw error — the detail lives in the log via UpdateFailed. §Q5.
 		p.state.Stage = StageFailed
 		p.state.Phase = PhaseFailed
-		if e.Err != nil {
-			p.state.ErrorText = e.Err.Error()
-		}
+		p.state.ErrorText = updateFailedHint
 	default:
 		return false
 	}

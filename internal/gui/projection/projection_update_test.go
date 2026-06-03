@@ -58,5 +58,6 @@ func TestProjection_UpdateFailed_RoutesToFailed(t *testing.T) {
 	got := last(vms)
 	assert.Equal(t, projection.StageFailed, got.Stage, "best-effort mandatory: failure uses 017's single failed pathway")
 	assert.Equal(t, projection.PhaseFailed, got.Phase)
-	assert.Equal(t, "checksum mismatch", got.ErrorText)
+	assert.Contains(t, got.ErrorText, "Check for update", "dial shows the retry hint, not the raw error (which the log carries)")
+	assert.NotContains(t, got.ErrorText, "checksum mismatch", "raw error stays out of the dial copy")
 }
