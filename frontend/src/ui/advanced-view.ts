@@ -20,7 +20,7 @@ import type { PrepSettings } from "./prep-settings";
 import type { SyncVerdict } from "./sync-view";
 import type { VersionRow } from "./versions-view";
 import type { RetentionChangeDetail } from "./retention-rules";
-import type { Backup, RetentionRules } from "./retention-model";
+import type { RetentionRules } from "./retention-model";
 
 const DEFAULT_RULES: RetentionRules = { keepLast: 2, keepDaily: 0, keepWeekly: 0, keepMonthly: 0 };
 type RetentionPair = { local: RetentionRules; remote: RetentionRules };
@@ -37,30 +37,25 @@ export class AdvancedView extends LitElement {
     @property({ attribute: false }) versions: () => Promise<VersionRow[]> = async () => [];
     @property({ type: Boolean }) dirty = false;
     // Retention rules section (design-log/039), injected by the host: loadRules
-    // wraps getRetentionRules (snake→camel mapped host-side); loadBackups wraps
-    // listVersions(scope)→Backup[] so each side's timeline shows its real
-    // history (§Q5/OQ1). Edits re-emit as `retentionchange` for the host to
-    // persist (a distinct name so they don't collide with prep-settings `change`).
+    // wraps getRetentionRules (snake→camel mapped host-side). The preview is
+    // illustrative (it explains the policy, not the user's real backups — /033
+    // §Redesign), so no backup history is fed in. Edits re-emit as
+    // `retentionchange` (a distinct name so they don't collide with
+    // prep-settings `change`).
     @property({ attribute: false }) loadRules: () => Promise<RetentionPair> = async () => ({
         local: { ...DEFAULT_RULES },
         remote: { ...DEFAULT_RULES },
     });
-    @property({ attribute: false }) loadBackups: (scope: "local" | "remote") => Promise<Backup[]> = async () => [];
     // Gates the manual "Check for update" — the flow restarts the process, so
     // it is offered only when the dial is idle (design-log/037 §Q4 lean).
     @property({ type: Boolean }) canUpdate = false;
 
     @state() private _rules: RetentionPair = { local: { ...DEFAULT_RULES }, remote: { ...DEFAULT_RULES } };
-    @state() private _localBackups: Backup[] | null = null;
-    @state() private _remoteBackups: Backup[] | null = null;
 
     firstUpdated() {
         // Lazy remount per Advanced navigation (design-log/034) → load the
-        // current rules + per-scope history on each open, so the picker is never
-        // stale and the timeline reflects real backups.
+        // current rules on each open so the picker is never stale.
         void this.loadRules().then((r) => (this._rules = r));
-        void this.loadBackups("local").then((b) => (this._localBackups = b));
-        void this.loadBackups("remote").then((b) => (this._remoteBackups = b));
     }
 
     static styles = css`
@@ -103,8 +98,6 @@ export class AdvancedView extends LitElement {
                 <retention-rules
                     .local=${this._rules.local}
                     .remote=${this._rules.remote}
-                    .localBackups=${this._localBackups}
-                    .remoteBackups=${this._remoteBackups}
                     @change=${this.#onRetentionChange}
                 ></retention-rules>
             </section>

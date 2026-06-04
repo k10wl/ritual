@@ -35,7 +35,7 @@ import type { RuneStack } from "./ui/primitives/rune-stack";
 import type { NavView } from "./ui/contexts/nav-context";
 import type { SyncConfirmDetail, SyncVerdict } from "./ui/sync-view";
 import type { RestoreConfirmDetail } from "./ui/versions-view";
-import type { Backup, RetentionRules as RetentionModelRules } from "./ui/retention-model";
+import type { RetentionRules as RetentionModelRules } from "./ui/retention-model";
 
 // Wails RetentionRules is snake_case (keep_last…); the model/component speak
 // camelCase. Map at the host boundary (design-log/039).
@@ -419,7 +419,6 @@ export class RitualApp extends LitElement {
             .versions=${this.listVersions}
             ?dirty=${this.unpublished}
             .loadRules=${this.loadRetention}
-            .loadBackups=${this.loadBackups}
             .canUpdate=${this.vm.phase === Phase.PhaseIdle}
             @change=${this.onPrepChange}
             @sync=${this.onSyncConfirmed}
@@ -435,18 +434,13 @@ export class RitualApp extends LitElement {
     // (design-log/038 §Q2). Bound so `this` is stable across renders.
     private listVersions = () => listVersions("remote");
 
-    // Retention loaders + persistence (design-log/039). The Wails RetentionRules
+    // Retention rules load + persist (design-log/039). The Wails RetentionRules
     // model is snake_case (keep_last…); the retention-model/component speak
-    // camelCase — so map at this boundary. Per-scope backups feed each side's
-    // timeline (§Q5/OQ1).
+    // camelCase — so map at this boundary. The preview is illustrative (033
+    // §Redesign), so no backup history is fed in.
     private loadRetention = async (): Promise<{ local: RetentionModelRules; remote: RetentionModelRules }> => {
         const c = await getRetentionRules();
         return { local: toModelRules(c.local), remote: toModelRules(c.remote) };
-    };
-
-    private loadBackups = async (scope: "local" | "remote"): Promise<Backup[]> => {
-        const vs = await listVersions(scope);
-        return vs.map((v) => ({ id: v.id, date: new Date(v.unixMs) }));
     };
 
     private onRetentionChange = (e: CustomEvent<{ local: RetentionModelRules; remote: RetentionModelRules }>) => {

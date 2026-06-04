@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft |
+| **Status** | Implemented (2026-06-04; built + wired via [[039-retention-control-plane]]; visualization redesigned to a per-tier cascade — see §Redesign) |
 | **Date** | 2026-05-30 |
 | **Depends on** | [[031-bidirectional-sync]] (Retain stages), backend spec `docs/superpowers/specs/2026-04-14-backup-retention-design.md` |
 | **Scope** | Storybook UI only. No app wiring, no Wails bindings, no backend change. |
@@ -248,3 +248,43 @@ after the next session."* (spec edge case).
   unlabeled week gridlines, kept subtle.)
 - Anything else on the visualization you pictured ("calendar or other") that the
   timeline doesn't cover?
+
+## Redesign — explanatory calendar cascade, no dry-run (2026-06-04)
+
+This section records several rounds of user feedback that **supersede §Q1, §Q2,
+§Q5, and §Q8's preview semantics**. The original single-axis timeline read as
+**cramped**, and — more fundamentally — framing the preview as a *dry-run over the
+user's real backups* (with a "Deleted" lane) was wrong: it implied the setting
+would **destroy the user's local backups**. Iterations:
+
+1. **Not a dry-run; explain the policy.** The preview must *teach what the policy
+   keeps*, not show "we will delete these N of your backups." So: **no Deleted
+   lane**, **no real-backup feed** (drop the §Q5/OQ1 `ListVersions` history — the
+   policy is universal), and **no "X of Y deleted" count**. The visualization is an
+   **illustration** over a representative, synthetic-but-honest history.
+2. **The calendar cascade IS the control (collapse the duplicate).** The first
+   collapsed attempt put dots *inline on stepper rows* and dropped the positioned
+   time axis — the user wanted the opposite: **keep the calendar-like cascade**
+   (lanes with dots positioned by date on a shared recent→older axis with **month
+   labels**) and **remove the separate stepper block**, moving the count control
+   **onto each lane**. Final layout per lane: `label · stepper · time-track`.
+3. **`rune-segmented` (0–5) → `rune-stepper` (− N +), uncapped.** New primitive
+   `rune-stepper`; the tier count has **no max** (Infinity); the segmented control
+   is kept only for the Local·R2 **scope switch** (a true either/or). Reverses §Q1
+   for the tier knobs.
+4. **Calendar dates.** Each lane's dots sit at representative calendar dates
+   stepping back from `now` by the tier's cadence (daily/weekly/monthly; last
+   shares the daily cadence); the **axis carries month labels** as the calendar
+   reference. Per-dot ISO date in `title`.
+5. **Less prose.** The plain-English sentence is dropped from the visual and kept
+   only as the cascade's **a11y label** (`describePolicy`, exported + tested) so
+   screen readers still get the full meaning. keep_last:0 caution stays.
+
+**Implementation:** `retention-rules` renders a scope `rune-segmented` + a
+`.cascade` of an `.axis` (month labels) and four `.lane`s (`96px | 84px | 1fr`
+grid: label, `rune-stepper`, positioned-dot track); `pos = (now − date)/span`,
+recent on the left. Dots cap at 8 with a `+N` overflow (count uncapped). The
+`retention-model` `mark()/sample()` port is no longer rendered (the preview is
+illustrative, not a real union) but is retained as the tested canonical mirror of
+the Go engine. New primitive `rune-stepper` (.ts/.stories/.test). Supersedes the
+single-axis timeline, the legend, the Deleted lane, and the real-backup feed.

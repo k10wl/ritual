@@ -1,6 +1,6 @@
 import { html } from "lit";
 import "./retention-rules";
-import { sample, type RetentionRules } from "./retention-model";
+import type { RetentionRules } from "./retention-model";
 
 export default {
     title: "Components / Retention Rules",
@@ -9,10 +9,10 @@ export default {
         docs: {
             description: {
                 component:
-                    "Editable Borg-style tier picker (design-log/033) wired end-to-end by /039. " +
-                    "A Local·R2 scope switch over four 0–5 `rune-segmented` tiers, with a live " +
-                    "kept-vs-pruned summary, legend, and timeline computed by the real `mark()` union. " +
-                    "Emits `change` {local, remote}.",
+                    "Editable Borg-style tier picker (design-log/033, wired by /039, redesigned). Each " +
+                    "tier is one collapsed row: label + illustrative dated dot-preview + uncapped " +
+                    "`rune-stepper`. A Local·R2 scope switch edits both sides. Explains the policy — " +
+                    "never a dry-run over real backups. Emits `change` {local, remote}.",
             },
         },
     },
@@ -39,11 +39,9 @@ const r = (o: Partial<RetentionRules>): RetentionRules => ({
     ...o,
 });
 
-// Default policy (keep_last:2).
 export const Default = () =>
     pane(html`<retention-rules .now=${NOW} .local=${r({ keepLast: 2 })} @change=${log}></retention-rules>`);
 
-// Paranoid — every tier high.
 export const Paranoid = () =>
     pane(
         html`<retention-rules
@@ -53,21 +51,13 @@ export const Paranoid = () =>
         ></retention-rules>`,
     );
 
-// Minimalist — keep just the latest.
 export const Minimalist = () =>
     pane(html`<retention-rules .now=${NOW} .local=${r({ keepLast: 1 })} @change=${log}></retention-rules>`);
 
+// Uncapped count → 8 dated dots + a "+N" overflow.
+export const Uncapped = () =>
+    pane(html`<retention-rules .now=${NOW} .local=${r({ keepDaily: 14 })} @change=${log}></retention-rules>`);
+
 // keep_last:0 → caution copy.
 export const KeepLastZero = () =>
-    pane(html`<retention-rules .now=${NOW} .local=${r({ keepDaily: 3 })} @change=${log}></retention-rules>`);
-
-// Real (well, synthetic-but-explicit) backups passed in.
-export const CustomHistory = () =>
-    pane(
-        html`<retention-rules
-            .now=${NOW}
-            .local=${r({ keepLast: 2, keepWeekly: 2, keepMonthly: 2 })}
-            .localBackups=${sample(NOW)}
-            @change=${log}
-        ></retention-rules>`,
-    );
+    pane(html`<retention-rules .now=${NOW} .local=${r({ keepWeekly: 3 })} @change=${log}></retention-rules>`);
