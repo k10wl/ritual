@@ -59,3 +59,11 @@ func (SaveCompleted) String() string { return "save completed" }
 type ConsoleInput struct{ Text string }
 
 func (c ConsoleInput) String() string { return "console input: " + c.Text }
+
+// ConsoleEchoInfo echoes a console command back to the GUI console, published
+// only after the coordinator confirms the stdin write (design-log/042 §Q8).
+// Recognition = confirmed write, not an optimistic guess — the console renders
+// the `›` input row 100% wire-driven, so no local echo path is needed.
+type ConsoleEchoInfo struct{ Text string }
+
+func (c ConsoleEchoInfo) String() string { return "› " + c.Text }

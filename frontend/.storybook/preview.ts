@@ -1,7 +1,7 @@
 import type { Preview } from "@storybook/web-components-vite";
 import { html } from "lit";
 import { setTransport } from "@wailsio/runtime";
-import { JoinAddress, Phase, Stage, SyncStatus, ViewModel } from "../src/wails-api";
+import { JoinAddress, Phase, Stage, SyncStatus, ViewModel, Level, type ServerLog } from "../src/wails-api";
 
 declare global {
     interface Window {
@@ -113,6 +113,12 @@ const startSkipSync = (args: unknown): boolean => {
     return Array.isArray(a) ? Boolean(a[2]) : false;
 };
 
+// SendConsole(line) packs its single string param at args.args[0].
+const consoleArg = (args: unknown): string => {
+    const a = (args as { args?: unknown[] } | undefined)?.args;
+    return Array.isArray(a) && typeof a[0] === "string" ? a[0] : "";
+};
+
 const set = (vm: ViewModel) => {
     current = vm;
     window._wails?.dispatchWailsEvent({ name: "ritual:view", data: vm });
@@ -185,6 +191,24 @@ setTransport({
                     ramp(fixtures.saving, () => set(fixtures.idle()));
                 }, 1200);
                 return undefined;
+            case M.SendConsole: {
+                // Mirror running.ConsoleEchoInfo (design-log/042 §Q8): echo the
+                // command back as a kind:"in" row on the "confirmed write", then
+                // a synthetic server response after a beat. Wire-driven, exactly
+                // like the backend — the console renders nothing optimistically.
+                const text = consoleArg(args);
+                if (text.trim() !== "") {
+                    emitServerLine({ ts: Date.now(), kind: "in", level: Level.$zero, text });
+                    const ack = mockServerAck(text);
+                    if (ack) {
+                        setTimeout(
+                            () => emitServerLine({ ts: Date.now(), kind: "out", level: Level.$zero, text: ack }),
+                            140,
+                        );
+                    }
+                }
+                return undefined;
+            }
             case M.Dismiss:
                 set(fixtures.idle());
                 return undefined;
@@ -214,8 +238,98 @@ setTransport({
 export const pushView = (vm: unknown) =>
     window._wails?.dispatchWailsEvent({ name: "ritual:view", data: vm });
 
-export const pushLog = (line: unknown) =>
-    window._wails?.dispatchWailsEvent({ name: "log:line", data: line });
+export const pushServerLogs = (batch: unknown) =>
+    window._wails?.dispatchWailsEvent({ name: "server:logs", data: batch });
+
+// --- Storybook console engine ----------------------------------------------
+// Mirrors the Go batchingLogEmitter ring (cmd/gui/main.go, design-log/006/042):
+// a lazy-timer ring that coalesces emitted lines into `server:logs` batches,
+// idle-quiescent (no timer at rest), drop-oldest on overflow with a count.
+// Stories feed it one line at a time; it spits out the batches just like the
+// backend, so the console exercises the real wire shape — not pre-baked batches.
+const CONSOLE_CAP = 1024;
+const CONSOLE_BATCH_MAX = 128;
+const CONSOLE_INTERVAL = 16;
+
+let consoleRing: ServerLog[] = [];
+let consoleDropped = 0;
+let consoleTimer: ReturnType<typeof setTimeout> | null = null;
+
+const flushConsole = () => {
+    consoleTimer = null;
+    if (consoleRing.length === 0 && consoleDropped === 0) return;
+    const n = Math.min(consoleRing.length, CONSOLE_BATCH_MAX);
+    const lines = consoleRing.slice(0, n);
+    consoleRing = consoleRing.slice(n);
+    const dropped = consoleDropped;
+    consoleDropped = 0;
+    pushServerLogs({ lines, dropped });
+    // BATCH_MAX capped this flush — re-arm so leftover doesn't wait idle.
+    if (consoleRing.length > 0 && consoleTimer === null) {
+        consoleTimer = setTimeout(flushConsole, CONSOLE_INTERVAL);
+    }
+};
+
+export const emitServerLine = (line: ServerLog) => {
+    if (consoleRing.length === CONSOLE_CAP) {
+        consoleRing.shift();
+        consoleDropped++;
+    }
+    consoleRing.push(line);
+    // Lazy timer: arm on the first line into an empty window; a size-cap
+    // crossing preempts. No emit ⇒ no timer (the Go loop's idle quiescence).
+    if (consoleTimer === null) {
+        consoleTimer = setTimeout(flushConsole, CONSOLE_INTERVAL);
+    } else if (consoleRing.length >= CONSOLE_BATCH_MAX) {
+        clearTimeout(consoleTimer);
+        flushConsole();
+    }
+};
+
+export const emitServerLines = (lines: ServerLog[]) => lines.forEach(emitServerLine);
+
+// resetConsole clears the ring between stories so transcripts don't bleed.
+export const resetConsole = () => {
+    if (consoleTimer !== null) {
+        clearTimeout(consoleTimer);
+        consoleTimer = null;
+    }
+    consoleRing = [];
+    consoleDropped = 0;
+};
+
+const clock = (): string => {
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
+
+// mockServerAck fakes the MC server's response to a typed command so the
+// echo round-trip reads naturally in Storybook (no real subprocess).
+const mockServerAck = (cmd: string): string => {
+    const info = (msg: string) => `[${clock()}] [Server thread/INFO]: ${msg}`;
+    const [head, ...rest] = cmd.trim().split(/\s+/);
+    switch (head) {
+        case "time":
+            if (rest[0] === "set") {
+                const v = rest[1] === "day" ? 1000 : rest[1] === "night" ? 13000 : Number(rest[1]) || 0;
+                return info(`Set the time to ${v}`);
+            }
+            return info("The time is 1000");
+        case "say":
+            return info(`[Server] ${rest.join(" ")}`);
+        case "weather":
+            return info(`Set the weather to ${rest[0] ?? "clear"}`);
+        case "gamemode":
+            return info(`Set own game mode to ${rest[0] ?? "survival"} Mode`);
+        case "list":
+            return info("There are 1 of a max of 20 players online: k10wl");
+        case "help":
+            return info("/help [<page>]");
+        default:
+            return info(`Unknown or incomplete command, see below for error\n${cmd}<--[HERE]`);
+    }
+};
 
 // Frame sizes mirror cmd/gui/main.go window options.
 const FRAMES = {

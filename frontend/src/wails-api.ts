@@ -6,9 +6,9 @@ import * as Control from "../bindings/ritual/internal/gui/control/controlservice
 import { Prep, SyncStatus, Version, RetentionConfig } from "../bindings/ritual/internal/gui/control/models";
 import { RetentionRules } from "../bindings/ritual/internal/core/domain/models";
 import { ViewModel, Stage, Phase, JoinAddress } from "../bindings/ritual/internal/gui/projection/models";
-import { LogLine, Level } from "../bindings/ritual/internal/gui/logsink/models";
+import { ServerLog, ServerLogBatch, Level } from "../bindings/ritual/internal/gui/logsink/models";
 
-export { ViewModel, Stage, Phase, JoinAddress, LogLine, Level, Prep, SyncStatus, Version, RetentionConfig, RetentionRules };
+export { ViewModel, Stage, Phase, JoinAddress, ServerLog, ServerLogBatch, Level, Prep, SyncStatus, Version, RetentionConfig, RetentionRules };
 
 /** Version-history scope for ListVersions (design-log/038). */
 export type VersionScope = "local" | "remote";
@@ -49,6 +49,8 @@ export function onView(handler: (vm: ViewModel) => void): () => void {
     return Events.On("ritual:view", (e) => handler(e.data));
 }
 
-export function onLog(handler: (line: LogLine) => void): () => void {
-    return Events.On("log:line", (e) => handler(e.data));
+// Server console batches (design-log/042). Go coalesces the MC console stream
+// into one IPC per ~16ms; the handler appends each batch directly (no rAF).
+export function onServerLogs(handler: (batch: ServerLogBatch) => void): () => void {
+    return Events.On("server:logs", (e) => handler(e.data));
 }

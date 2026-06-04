@@ -41,6 +41,7 @@ import (
 	"ritual/internal/subsystems/selfupdate"
 	"ritual/internal/subsystems/transferwatch"
 	goruntime "runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -50,7 +51,7 @@ import (
 
 func init() {
 	application.RegisterEvent[projection.ViewModel]("ritual:view")
-	application.RegisterEvent[logsink.LogLine]("log:line")
+	application.RegisterEvent[logsink.ServerLogBatch]("server:logs")
 }
 
 func main() {
@@ -173,6 +174,7 @@ func main() {
 	defer runtime.stopLogFile()
 	go runtime.projection.Run(ctx)
 	go runtime.logsink.Run(ctx)
+	go runtime.logEmitter.loop(ctx) // idle-quiescent console batching (006/042)
 	go runtime.ticker.Run(ctx)
 	// Arm the ticker's stall-heartbeat for the wire-transfer windows only, so a
 	// quiet R2 PutStream still pulses liveness. Subscribes on New (before Run)
@@ -255,7 +257,7 @@ type guiRuntime struct {
 	projection    *projection.Projection
 	logsink       *logsink.Sink
 	viewEmitter   *wailsViewEmitter
-	logEmitter    *wailsLogEmitter
+	logEmitter    *batchingLogEmitter
 	ticker        *progress.Ticker
 	stopLogFile   func()
 	committer     ports.Committer
@@ -263,7 +265,7 @@ type guiRuntime struct {
 	commitTargets []string
 	syncProber    control.SyncProber
 	dirtyProber   control.LocalDirtyProber
-	versionLister control.VersionLister // historical-ref listing for restore (design-log/038)
+	versionLister control.VersionLister   // historical-ref listing for restore (design-log/038)
 	remoteStorage ports.StorageRepository // for the autoupdate feed (design-log/037)
 }
 
@@ -486,7 +488,7 @@ func buildRuntime() (*guiRuntime, error) {
 	)
 
 	viewEmitter := newWailsViewEmitter()
-	logEmitter := &wailsLogEmitter{}
+	logEmitter := newBatchingLogEmitter()
 
 	addresses := netinfo.NewAddressProvider(settings.Port, netinfo.NewSysInterfaceLister())
 	proj := projection.New(bus, viewEmitter, addresses)
@@ -583,21 +585,112 @@ func (e *wailsViewEmitter) loop() {
 	}
 }
 
-// wailsLogEmitter window-scopes every LogLine to the logs console window.
-// logsWindow.EmitEvent does not broadcast — main window never receives
-// log traffic.
-type wailsLogEmitter struct {
-	win atomic.Pointer[application.WebviewWindow]
+// batchingLogEmitter window-scopes the MC console stream to the logs window and
+// coalesces it into one IPC per ~16ms (design-log/006 mechanism applied to the
+// narrow 042 stream). It is idle-quiescent: the loop parks on `wake` with no
+// ticker, so an idle server costs zero wakeups ("no DoS when there are no
+// requests"). On overflow it drops oldest and reports the count in the next
+// batch. logsWindow.EmitEvent does not broadcast — the main window never
+// receives console traffic.
+type batchingLogEmitter struct {
+	out     atomic.Pointer[func(logsink.ServerLogBatch)] // window emit, swapped in on bind; tests inject a recorder
+	mu      sync.Mutex
+	ring    []logsink.ServerLog // FIFO, cap = cfg.Capacity
+	dropped int
+	wake    chan struct{} // buffered cap 1; coalesces nudges
+	cfg     batchCfg
 }
 
-func (e *wailsLogEmitter) bind(w *application.WebviewWindow) { e.win.Store(w) }
+type batchCfg struct {
+	Capacity int           // ring size — drop oldest beyond this
+	BatchMax int           // size trigger — flush immediately at this many lines
+	Interval time.Duration // coalescing window after the first line in an empty ring
+}
 
-func (e *wailsLogEmitter) Emit(line logsink.LogLine) {
-	w := e.win.Load()
-	if w == nil {
+func newBatchingLogEmitter() *batchingLogEmitter {
+	return &batchingLogEmitter{
+		wake: make(chan struct{}, 1),
+		cfg:  batchCfg{Capacity: 1024, BatchMax: 128, Interval: 16 * time.Millisecond},
+	}
+}
+
+func (e *batchingLogEmitter) bind(w *application.WebviewWindow) {
+	fn := func(b logsink.ServerLogBatch) { w.EmitEvent("server:logs", b) }
+	e.out.Store(&fn)
+}
+
+// Emit appends a line and nudges the loop only when the ring transitions
+// empty→non-empty (arm the deadline) or crosses BatchMax (preempt the timer).
+// Within an active coalescing window, a normal append nudges nothing — the
+// running deadline drains it. No Emit ⇒ no wake ⇒ the loop stays parked.
+func (e *batchingLogEmitter) Emit(line logsink.ServerLog) {
+	e.mu.Lock()
+	wasEmpty := len(e.ring) == 0
+	if len(e.ring) == e.cfg.Capacity {
+		e.ring = e.ring[1:]
+		e.dropped++
+	}
+	e.ring = append(e.ring, line)
+	sizeTrigger := len(e.ring) >= e.cfg.BatchMax
+	e.mu.Unlock()
+	if wasEmpty || sizeTrigger {
+		select {
+		case e.wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// loop coalesces lines into one EmitEvent per Interval (or per BatchMax),
+// parking on `wake` at idle. Lazy timer — no ticker fires when nothing is
+// pending (design-log/006 §Design, 042 §Q5).
+func (e *batchingLogEmitter) loop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-e.wake:
+		}
+		timer := time.NewTimer(e.cfg.Interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-e.wake: // size trigger — flush now
+			timer.Stop()
+		case <-timer.C:
+		}
+		e.flush()
+	}
+}
+
+func (e *batchingLogEmitter) flush() {
+	e.mu.Lock()
+	if len(e.ring) == 0 && e.dropped == 0 {
+		e.mu.Unlock()
 		return
 	}
-	w.EmitEvent("log:line", line)
+	n := len(e.ring)
+	if n > e.cfg.BatchMax {
+		n = e.cfg.BatchMax
+	}
+	lines := append([]logsink.ServerLog(nil), e.ring[:n]...)
+	e.ring = e.ring[n:]
+	dropped := e.dropped
+	e.dropped = 0
+	leftover := len(e.ring) > 0
+	e.mu.Unlock()
+
+	if out := e.out.Load(); out != nil {
+		(*out)(logsink.ServerLogBatch{Lines: lines, Dropped: dropped})
+	}
+	// BatchMax capped this flush — re-arm so the leftover doesn't wait idle.
+	if leftover {
+		select {
+		case e.wake <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // wailsWindowControl adapts a Wails WebviewWindow to services.WindowControl.

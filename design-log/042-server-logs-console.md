@@ -233,3 +233,39 @@ storage.list refs/ (47)
 5. **Crash visible.** Kill the server process out-of-band → one error-tinted line appears.
 6. **Storybook.** All five `ritual-logs` stories render; ScrolledUp shows the pill and does not auto-scroll.
 7. **Perf.** Stream 2000 lines as fast as the bus allows; UI stays responsive, ring holds at 500, IPC bounded to ≤~60 batches/s (vs one-per-line today).
+
+## Implementation Results
+
+Implemented 2026-06-04. All planned phases landed; the wire rename, allowlist, batching ring, and tail-follow UI are in. Tests: Go `internal/gui/logsink` + `cmd/gui` + `internal/core/stages/running` pass; full Go suite + `go vet` clean. Frontend `@web/test-runner` 16 files / 128 tests pass (7 new in `ritual-logs.test.ts`); `tsc --noEmit` + production vite build clean.
+
+### Backend
+- `running.ConsoleEchoInfo{Text}` added (`events.go`); `coordinate()` publishes it only on a **confirmed** `ConsoleInput` stdin write (`strategy.go`) — wire-driven echo, no optimistic UI.
+- `logsink`: `LogLine`→`ServerLog{Ts,Kind,Level,Text}` + `ServerLogBatch{Lines,Dropped}`; `deriveLevel` dropped; blanket emit replaced by `serverLine` allowlist (`ServerOutputInfo`/`ServerCrashedInfo`/`ConsoleEchoInfo`). `Level` collapsed to a single `LevelError` (normal = `""`). Imports `core/stages/running` — no cycle.
+- `cmd/gui`: `wailsLogEmitter`→`batchingLogEmitter` (006 lazy ring, idle-quiescent, drop-oldest); `RegisterEvent[ServerLogBatch]("server:logs")`; `go runtime.logEmitter.loop(ctx)`. `logging.Build` untouched (on-disk firehose unchanged).
+  - **Deviation (testability):** the emitter targets an injectable `out atomic.Pointer[func(ServerLogBatch)]` swapped in by `bind(w)`, instead of holding the window directly — lets `logemitter_test.go` observe flushes without a live Wails window. `EmitEvent` semantics unchanged.
+
+### Frontend
+- `wails-api`: `onLog`→`onServerLogs(batch)`; exports `ServerLog`/`ServerLogBatch`.
+- `ritual-logs.ts`: batch-append into a static `<ol>`; CSS `column-reverse` tail-follow (newest inserted above a sentinel, **zero** `scrollTop` writes); `IntersectionObserver`→`atBottom`→"Jump to latest" pill; frontend `/WARN]|/ERROR]` substring tint; wire `kind:"in"` `›` rows; ring trims oldest at 500; empty-state copy updated.
+- Storybook: `pushLog`→`pushServerLogs`; new `ritual-logs.stories.ts` (5 stories) + `logs-driver`.
+
+### Deviations from design (user directives, same session)
+1. **No in-app header.** The window's OS titlebar is the header ("simple window, header builtin from windows"), so the `<header>` (title + line count) was dropped. Count is still tracked internally to drive the empty-state toggle.
+2. **Layout = grid `1fr auto`.** Messages region grows; composer takes only the height it needs.
+3. **`contenteditable` composer** (was `<input>`): grows with content (long/multi-line commands; Shift+Enter newline), capped at `8lh` then scrolls. History nav guarded to single-line drafts. Extra bottom padding on the composer.
+4. **Selectable log text.** App-wide `body { user-select: none }` (`public/style.css`) inherits across the shadow boundary; output rows + composer override with `user-select: text`. `onHostKey` no longer steals the caret while a selection is active.
+5. **Storybook ring-buffer engine + real echo.** `preview.ts` gained a `consoleRing` that mirrors the Go `batchingLogEmitter` (lazy timer, drop-oldest) and emits `server:logs` batches; stories feed it line-by-line via `emitServerLine`/`emitServerLines` (not pre-baked batches). The mock transport now handles `M.SendConsole` — echoes the typed command back as `kind:"in"` then a synthetic server ack (`mockServerAck`), so the echo round-trip works end-to-end in Storybook without a backend. The `Streaming`/`ScrolledUp` stories run an **infinite** generated feed so the ring is exercised continuously.
+
+### Post-implementation refinement — jitter, batching, cap (§Q5 / §Q6)
+
+Several iterations converged on the final model. Final scroll design **reverses §Q6** (`column-reverse`): it jittered.
+
+1. **Cap 1024** (was 500 — user directive: "no reason to go over 1024").
+2. **Flush is microtask-batched, not rAF.** rAF is throttled/paused when the logs window is backgrounded — the console would stall exactly when it should keep recording (this also surfaced concretely as 5 failing tests under web-test-runner's backgrounded iframes). A microtask coalesces a burst into one reflow without that throttle.
+3. **Normal top→bottom flow, scroll written only while following the tail.** `column-reverse` (§Q6) is pixel-stable at the tail but **jitters the rows under the cursor when scrolled up** — prepending at the flex-start forces a sub-pixel-imprecise recompute of the bottom-anchored scroll offset on every append. Normal flow does not have this: appends land *below* the viewport, `scrollTop` is anchored to the top, so nothing above the reader changes (zero scroll writes while scrolled up). The follow-vs-stay decision is **measured synchronously** in `flush()` (`scrollHeight − scrollTop − clientHeight ≤ 24`), *not* read from the IntersectionObserver — an earlier attempt that trusted the IO jittered the **bottom**, because `threshold:1` on the 1px sentinel mis-read "at bottom" and fired the wrong scroll branch. At the tail: trim to 1024 (invisible — re-pin to `scrollHeight` right after). Scrolled up: no trim until a `HARD_CEILING` (4096) safety stop, then trim with scroll compensation.
+4. **IntersectionObserver is now only for the pill** (`atBottom`), at `threshold:0` + `rootMargin 0 0 24px 0` so it doesn't flicker the bordered "Jump to latest" pill on every appended row.
+
+Net: appends never move the viewport when scrolled up (no scroll writes); the only `scrollTop` write is the tail-pin while following / `jumpToLatest`.
+
+### Verification status
+Go: `logsink` + `cmd/gui` + `running` + full suite + `go vet` pass. Frontend: `tsc` + vite prod build + `storybook build` clean; `@web/test-runner` 128/128 (logs: top→bottom order, 1024 cap-on-tail, deferred-trim-while-scrolled-up via real `scrollTop`, echo, tint, gap, pill). **Not yet exercised on a real running world** — the no-jitter behavior is validated in Storybook (`Streaming`/`ScrolledUp`, infinite feed) and unit tests, not against live MC stdout.

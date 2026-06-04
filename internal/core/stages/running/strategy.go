@@ -221,7 +221,11 @@ func coordinate(
 			if ci, ok := e.(ConsoleInput); ok {
 				line := strings.TrimRight(ci.Text, "\r\n")
 				if strings.TrimSpace(line) != "" {
-					_ = writeStdin(line + "\n")
+					// Echo only on a confirmed write (design-log/042 §Q8): the
+					// GUI console is wire-driven, never optimistic.
+					if writeStdin(line+"\n") == nil {
+						publish(bus, ConsoleEchoInfo{Text: line})
+					}
 				}
 			}
 		}
