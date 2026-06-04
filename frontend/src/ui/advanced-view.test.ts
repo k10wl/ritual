@@ -4,14 +4,15 @@ import "./advanced-view";
 import type { AdvancedView } from "./advanced-view";
 
 describe("advanced-view", () => {
-    it("renders three flat sections — Server, Sync, Updates — with no menu nesting", async () => {
+    it("renders four flat sections — Server, Sync, Versions, Updates — with no menu nesting", async () => {
         const el = await fixture<AdvancedView>(html`<advanced-view></advanced-view>`);
         const labels = [...el.shadowRoot!.querySelectorAll(".label")].map((l) =>
             l.textContent!.trim(),
         );
-        expect(labels).to.deep.equal(["Server", "Sync", "Updates"]);
+        expect(labels).to.deep.equal(["Server", "Sync", "Versions", "Updates"]);
         expect(el.shadowRoot!.querySelector("prep-settings")).to.exist;
         expect(el.shadowRoot!.querySelector("sync-view")).to.exist;
+        expect(el.shadowRoot!.querySelector("versions-view")).to.exist;
     });
 
     it("passes config down to prep-settings", async () => {
@@ -42,6 +43,29 @@ describe("advanced-view", () => {
         el.shadowRoot!
             .querySelector("sync-view")!
             .dispatchEvent(new CustomEvent("sync", { detail: { direction: "download" }, bubbles: true, composed: true }));
+        expect(bubbled).to.equal(true);
+    });
+
+    it("passes the version listing + dirty flag down to versions-view (design-log/038)", async () => {
+        const list = async () => [];
+        const el = await fixture<AdvancedView>(
+            html`<advanced-view .versions=${list} ?dirty=${true}></advanced-view>`,
+        );
+        const v = el.shadowRoot!.querySelector("versions-view") as HTMLElement & {
+            list: unknown;
+            dirty: boolean;
+        };
+        expect(v.list).to.equal(list);
+        expect(v.dirty).to.equal(true);
+    });
+
+    it("lets child restore events bubble through to the host", async () => {
+        const el = await fixture<AdvancedView>(html`<advanced-view></advanced-view>`);
+        let bubbled = false;
+        el.addEventListener("restore", () => (bubbled = true));
+        el.shadowRoot!
+            .querySelector("versions-view")!
+            .dispatchEvent(new CustomEvent("restore", { detail: { refID: "x" }, bubbles: true, composed: true }));
         expect(bubbled).to.equal(true);
     });
 

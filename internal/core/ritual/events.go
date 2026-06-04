@@ -61,6 +61,10 @@ const (
 	FlowDownload     Flow = "download"
 	FlowUpload       Flow = "upload"
 	FlowLocalSession Flow = "local-session"
+	// FlowRestore is the world-save rollback flow (design-log/038). It reuses
+	// the download dial beat (bytes flow in) — the projection only needs the
+	// flow value to name the gesture in logs; no bespoke dial colour.
+	FlowRestore Flow = "restore"
 )
 
 // FlowStartedInfo is published by the lifecycle at the start of every run,

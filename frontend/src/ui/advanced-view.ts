@@ -13,9 +13,11 @@ import { LitElement, css, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import "./prep-settings";
 import "./sync-view";
+import "./versions-view";
 import "./primitives/rune-button";
 import type { PrepSettings } from "./prep-settings";
 import type { SyncVerdict } from "./sync-view";
+import type { VersionRow } from "./versions-view";
 
 @customElement("advanced-view")
 export class AdvancedView extends LitElement {
@@ -24,6 +26,10 @@ export class AdvancedView extends LitElement {
         behind: false,
         ahead: false,
     });
+    // Version listing for the rollback section (design-log/038), injected by the
+    // host (wraps listVersions). `dirty` surfaces the "Publish first" nudge.
+    @property({ attribute: false }) versions: () => Promise<VersionRow[]> = async () => [];
+    @property({ type: Boolean }) dirty = false;
     // Gates the manual "Check for update" — the flow restarts the process, so
     // it is offered only when the dial is idle (design-log/037 §Q4 lean).
     @property({ type: Boolean }) canUpdate = false;
@@ -58,6 +64,10 @@ export class AdvancedView extends LitElement {
             <section>
                 <p class="label">Sync</p>
                 <sync-view auto .check=${this.check}></sync-view>
+            </section>
+            <section>
+                <p class="label">Versions</p>
+                <versions-view .list=${this.versions} ?dirty=${this.dirty}></versions-view>
             </section>
             <section>
                 <p class="label">Updates</p>

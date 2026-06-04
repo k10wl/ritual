@@ -35,16 +35,17 @@ func (s StatusChanged) String() string {
 	return fmt.Sprintf("status: %s", s.Status)
 }
 
-// Entries holds the three pipeline entry strategies the controller can
-// drive (design-log/031). Session is the play-a-world chain; Download and
-// Upload are the server-free sync flows. A nil entry means that gesture is
-// not wired — startWith rejects it. The composition root builds all three
-// from pipeline.Build / BuildDownload / BuildUpload.
+// Entries holds the pipeline entry strategies the controller can drive
+// (design-log/031, /038). Session is the play-a-world chain; Download, Upload,
+// and Restore are the server-free flows. A nil entry means that gesture is not
+// wired — startWith rejects it. The composition root builds them from
+// pipeline.Build / BuildDownload / BuildUpload / BuildRestore.
 type Entries struct {
 	Session      machine.Strategy[ritual.RunState]
 	LocalSession machine.Strategy[ritual.RunState]
 	Download     machine.Strategy[ritual.RunState]
 	Upload       machine.Strategy[ritual.RunState]
+	Restore      machine.Strategy[ritual.RunState]
 }
 
 // Controller holds the per-run mutable state. The Attach goroutine is the
@@ -110,6 +111,14 @@ func Attach(parent context.Context, bus ports.EventBus, entries Entries, session
 					c.startWith(ctx, c.entries.Download, ritual.FlowDownload, false)
 				case ritual.UploadRequested:
 					c.startWith(ctx, c.entries.Upload, ritual.FlowUpload, false)
+				case ritual.RestoreRequested:
+					// Restore pins the chosen historical ref on the fresh RunState
+					// before the runner spins; the Pulling stage reads it via
+					// pulling.FromTarget() (design-log/038). No livesync hooks.
+					refID := e.RefID
+					c.startWith(ctx, c.entries.Restore, ritual.FlowRestore, false, func(rs *ritual.RunState) {
+						rs.TargetRefID = refID
+					})
 				case ritual.StopRequested:
 					c.stop()
 				case ritual.DismissRequested:
@@ -131,7 +140,7 @@ func Attach(parent context.Context, bus ports.EventBus, entries Entries, session
 // gesture is not wired — reject rather than nil-panic. The single status
 // guard gives free mutual exclusion: any gesture is refused while another
 // run is in flight.
-func (c *controller) startWith(ctx context.Context, entry machine.Strategy[ritual.RunState], flow ritual.Flow, runHooks bool) {
+func (c *controller) startWith(ctx context.Context, entry machine.Strategy[ritual.RunState], flow ritual.Flow, runHooks bool, mutators ...func(*ritual.RunState)) {
 	if entry == nil {
 		c.bus.Publish(StatusChanged{Status: c.status, Err: fmt.Errorf("cannot start: gesture not configured")})
 		return
@@ -151,6 +160,11 @@ func (c *controller) startWith(ctx context.Context, entry machine.Strategy[ritua
 	hostname, _ := os.Hostname()
 	runID := fmt.Sprintf("%s%s%d", hostname, config.LockIDSeparator, time.Now().UnixNano())
 	runState := &ritual.RunState{RunID: runID, Bus: c.bus}
+	// Per-gesture run-state setup (e.g. restore pins rs.TargetRefID) runs before
+	// the session hooks and the runner — design-log/038.
+	for _, m := range mutators {
+		m(runState)
+	}
 	if runHooks {
 		for _, h := range c.sessionHooks {
 			h(runState)

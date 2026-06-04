@@ -7,8 +7,10 @@ import {
     getPrep,
     getSnapshot,
     getSyncStatus,
+    listVersions,
     onView,
     openRootFolder,
+    restore,
     showLogs,
     start,
     stop,
@@ -29,6 +31,7 @@ import "./ui/advanced-view";
 import type { RuneStack } from "./ui/primitives/rune-stack";
 import type { NavView } from "./ui/contexts/nav-context";
 import type { SyncConfirmDetail, SyncVerdict } from "./ui/sync-view";
+import type { RestoreConfirmDetail } from "./ui/versions-view";
 import type { PrepSettings, PrepSettingsChangeDetail } from "./ui/prep-settings";
 
 const MBPS_TO_BPS = 1_000_000 / 8;
@@ -393,12 +396,21 @@ export class RitualApp extends LitElement {
         render: () => html`<advanced-view
             .config=${this.prep}
             .check=${this.checkSync}
+            .versions=${this.listVersions}
+            ?dirty=${this.unpublished}
             .canUpdate=${this.vm.phase === Phase.PhaseIdle}
             @change=${this.onPrepChange}
             @sync=${this.onSyncConfirmed}
             @checkupdate=${this.onCheckUpdate}
+            @restore=${this.onRestoreConfirmed}
+            @publishfirst=${this.onPublishFirst}
         ></advanced-view>`,
     };
+
+    // Version listing injected into <versions-view> — remote is the canonical
+    // history; the backend degrades to cached local refs when offline
+    // (design-log/038 §Q2). Bound so `this` is stable across renders.
+    private listVersions = () => listVersions("remote");
 
     private openAdvanced = () => this._stack?.push(this.advancedView);
 
@@ -450,6 +462,23 @@ export class RitualApp extends LitElement {
     private onSyncConfirmed = (e: CustomEvent<SyncConfirmDetail>) => {
         if (e.detail.direction === "download") void download();
         else void upload();
+        this._stack?.popToRoot();
+    };
+
+    // Confirmed restore (design-log/038). Like a Download it animates the root
+    // dial via the onView stream (reuses the download beat — FlowRestore), so
+    // unwind the stack to watch it run. HEAD never moves; the reverted workdir
+    // then reads as dirty and is recoverable via Publish.
+    private onRestoreConfirmed = (e: CustomEvent<RestoreConfirmDetail>) => {
+        void restore(e.detail.refID);
+        this._stack?.popToRoot();
+    };
+
+    // "Publish first" nudge from the restore confirm when the workdir is dirty
+    // (design-log/038 §Q6): publish the current state, then return to the dial.
+    // The user re-enters Versions to roll back once their work is safe.
+    private onPublishFirst = () => {
+        void upload();
         this._stack?.popToRoot();
     };
 

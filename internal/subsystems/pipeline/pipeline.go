@@ -140,6 +140,28 @@ func BuildUpload(d Deps) machine.Strategy[ritual.RunState] {
 	return check
 }
 
+// BuildRestore wires the world-save rollback flow (design-log/038):
+// Checking → Pulling(target) → Done. Identical in family to BuildDownload but
+// the pull is **target-pinned** (pulling.FromTarget reads rs.TargetRefID set by
+// the lifecycle from RestoreRequested) instead of HEAD-resolved, and there is
+// **no** trailing retention: a restore pulls an existing ref (adds none), so
+// nothing new is to prune and pruning the just-restored old ref would not
+// affect the already-applied workdir. Read-only on the remote — no Acquiring
+// (lock), no Pushing, no Unlocking — so a restore never blocks a teammate. HEAD
+// is unchanged (the old id < newest), so the restored workdir surfaces as dirty
+// and recovers canonically via [035] Publish. The trailing nil onOK terminates
+// the chain (Done); pulling.FromTarget's ErrNoTarget routes to failPull (a
+// restore with no id is a wiring bug, not a no-op like ErrNoHead).
+func BuildRestore(d Deps) machine.Strategy[ritual.RunState] {
+	failCheck := failed.New(ritual.StageChecking)
+	failPull := failed.New(ritual.StagePulling)
+
+	pull := pulling.NewWithResolver(d.Puller, d.Applier, pulling.FromTarget(), nil, failPull)
+	check := checking.New(d.Checks, pull, failCheck)
+
+	return check
+}
+
 // BuildLocalSession wires the skip-sync / local-only session (design-log/036,
 // no-save reversal): Checking → Running → Done. The entire save half is
 // dropped — no Pulling, no Acquiring (lock), no Committing, no Retaining, no

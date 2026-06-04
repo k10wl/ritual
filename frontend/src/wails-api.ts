@@ -3,11 +3,14 @@
 
 import { Events } from "@wailsio/runtime";
 import * as Control from "../bindings/ritual/internal/gui/control/controlservice";
-import { Prep, SyncStatus } from "../bindings/ritual/internal/gui/control/models";
+import { Prep, SyncStatus, Version } from "../bindings/ritual/internal/gui/control/models";
 import { ViewModel, Stage, Phase, JoinAddress } from "../bindings/ritual/internal/gui/projection/models";
 import { LogLine, Level } from "../bindings/ritual/internal/gui/logsink/models";
 
-export { ViewModel, Stage, Phase, JoinAddress, LogLine, Level, Prep, SyncStatus };
+export { ViewModel, Stage, Phase, JoinAddress, LogLine, Level, Prep, SyncStatus, Version };
+
+/** Version-history scope for ListVersions (design-log/038). */
+export type VersionScope = "local" | "remote";
 
 export const start = (port: number, memoryMB: number, skipSync = false) =>
     Control.Start(port, memoryMB, skipSync);
@@ -17,6 +20,18 @@ export const dismiss = () => Control.Dismiss();
 // while another flow is Running; the IDLE-only render keeps them gated.
 export const download = () => Control.Download();
 export const upload = () => Control.Upload();
+// World-save rollback (design-log/038). listVersions enumerates historical refs
+// per scope (remote = canonical history, degrades to cached local); restore
+// rolls the workdir back to the chosen ref. The backend rejects restore while
+// another flow is Running.
+export const listVersions = (scope: VersionScope) => Control.ListVersions(scope);
+export const restore = (refID: string) => Control.Restore(refID);
+// Retention rules (design-log/039). get returns the effective local+remote
+// policy (zero sides normalised to defaults); set persists both — the next
+// prune reads the file fresh, so edits apply without a restart.
+export const getRetentionRules = () => Control.GetRetentionRules();
+export const setRetentionRules = (local: RetentionRules, remote: RetentionRules) =>
+    Control.SetRetentionRules(local, remote);
 // Manual "Check for update" (design-log/037 §Q6). Runs the same Preflight flow
 // as launch — the gray dial takes over. Frontend gates it to IDLE.
 export const checkForUpdate = () => Control.CheckForUpdate();

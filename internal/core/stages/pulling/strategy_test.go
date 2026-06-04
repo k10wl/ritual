@@ -315,6 +315,65 @@ func TestPulling_StopRequestedMidPull_AbortsFastAndRoutesOnFail(t *testing.T) {
 	}
 }
 
+// --- Restore flow: target-pinned resolver (design-log/038) ---
+
+func TestPulling_FromTarget_PullsRunStateTargetRefAndRoutesOnOK(t *testing.T) {
+	onOK := &sentinelStrategy{name: "ok"}
+	onFail := &sentinelStrategy{name: "fail"}
+	puller := &recordingPuller{}
+	applier := &recordingApplier{}
+
+	stage := pulling.NewWithResolver(puller, applier, pulling.FromTarget(), onOK, onFail)
+
+	rs := newRunState()
+	rs.TargetRefID = "2026-03-01T08-00-00.000Z" // an older ref the user chose to restore
+	next, err := stage.Run(t.Context(), rs)
+
+	require.NoError(t, err)
+	assert.Equal(t, []domain.RefID{"2026-03-01T08-00-00.000Z"}, puller.calls,
+		"restore must pull the run state's TargetRefID, not the HEAD — that is the whole point of rolling back to a chosen version")
+	assert.Equal(t, []domain.RefID{"2026-03-01T08-00-00.000Z"}, applier.calls,
+		"restore must apply the target ref into the workdir so the rollback is materialised")
+	assert.Same(t, machine.Strategy[ritual.RunState](onOK), next)
+}
+
+func TestPulling_FromTarget_EmptyTargetRoutesOnFailWithoutCallingVerbs(t *testing.T) {
+	onOK := &sentinelStrategy{name: "ok"}
+	onFail := &sentinelStrategy{name: "fail"}
+	puller := &recordingPuller{}
+	applier := &recordingApplier{}
+
+	stage := pulling.NewWithResolver(puller, applier, pulling.FromTarget(), onOK, onFail)
+
+	rs := newRunState() // TargetRefID unset
+	next, err := stage.Run(t.Context(), rs)
+
+	require.NoError(t, err, "Pulling stage never returns a Go error — failures travel via onFail")
+	assert.Empty(t, puller.calls, "an empty target is a wiring bug, not a no-op bootstrap: must not pull")
+	assert.Empty(t, applier.calls)
+	assert.ErrorIs(t, rs.Err, pulling.ErrNoTarget,
+		"a restore with no TargetRefID must surface ErrNoTarget (unlike ErrNoHead it is a hard failure, not a no-op success)")
+	assert.Same(t, machine.Strategy[ritual.RunState](onFail), next)
+}
+
+func TestPulling_FromHeadAdapter_IgnoresRunStateTarget(t *testing.T) {
+	// The HEAD-pinned adapter must resolve storage HEAD regardless of any
+	// TargetRefID left on the run state — proving FromHead preserves the exact
+	// pre-038 behaviour for Session/Download.
+	puller := &recordingPuller{}
+	applier := &recordingApplier{}
+	stage := pulling.New(puller, applier, staticResolver("2026-05-09T12-00-00.000Z"),
+		&sentinelStrategy{name: "ok"}, &sentinelStrategy{name: "fail"})
+
+	rs := newRunState()
+	rs.TargetRefID = "2026-01-01T00-00-00.000Z" // must be ignored by the HEAD adapter
+	_, err := stage.Run(t.Context(), rs)
+
+	require.NoError(t, err)
+	assert.Equal(t, []domain.RefID{"2026-05-09T12-00-00.000Z"}, puller.calls,
+		"FromHead must ignore rs.TargetRefID and pull the storage HEAD — Session/Download are unchanged by the 038 resolver generalisation")
+}
+
 var _ ports.Puller = (*recordingPuller)(nil)
 var _ ports.Applier = (*recordingApplier)(nil)
 var _ ports.Puller = (*blockingPuller)(nil)

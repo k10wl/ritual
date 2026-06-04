@@ -192,14 +192,16 @@ type ControlService struct {
 	logs     WindowControl
 	sync     SyncProber
 	dirty    LocalDirtyProber
+	versions VersionLister
 }
 
 // NewControlService wires the service to the shared bus, projection, sync
-// prober, dirty prober, and logs window control. Any of the arguments may be
-// nil only in tests; a nil sync prober makes GetSyncStatus a zero status and a
-// nil dirty prober leaves Dirty false.
-func NewControlService(bus ports.EventBus, snapshot SnapshotSource, sync SyncProber, dirty LocalDirtyProber, logs WindowControl) *ControlService {
-	return &ControlService{bus: bus, snapshot: snapshot, sync: sync, dirty: dirty, logs: logs}
+// prober, dirty prober, version lister, and logs window control. Any of the
+// arguments may be nil only in tests; a nil sync prober makes GetSyncStatus a
+// zero status, a nil dirty prober leaves Dirty false, and a nil version lister
+// makes ListVersions return nil.
+func NewControlService(bus ports.EventBus, snapshot SnapshotSource, sync SyncProber, dirty LocalDirtyProber, versions VersionLister, logs WindowControl) *ControlService {
+	return &ControlService{bus: bus, snapshot: snapshot, sync: sync, dirty: dirty, versions: versions, logs: logs}
 }
 
 // Start persists the user-supplied port + memory and publishes a
@@ -290,6 +292,42 @@ func (c *ControlService) GetSyncStatus() SyncStatus {
 		}
 	}
 	return status
+}
+
+// ListVersions enumerates historical world versions (refs) for the given scope
+// ("remote" — the canonical history; or "local" — the cached refs) so the
+// Versions section in Advanced can offer a restore target (design-log/038). A
+// nil lister, a timeout, or any listing error collapses to nil — the screen
+// shows its empty/error state, never a Go error. A remote listing failure
+// degrades to local inside the lister so an offline user can still roll back.
+func (c *ControlService) ListVersions(scope string) []Version {
+	if c.versions == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), versionsTimeout)
+	defer cancel()
+	vs, err := c.versions(ctx, scope)
+	if err != nil {
+		return nil
+	}
+	return vs
+}
+
+// Restore publishes a RestoreRequested command — the server-free, lockless
+// world-save rollback to the chosen historical ref (design-log/038). The id is
+// validated as a RefID timestamp before publishing so a malformed id never
+// reaches the FSM. The lifecycle rejects the gesture while another flow is
+// Running. Restore never moves HEAD or deletes a ref; the restored workdir
+// surfaces as dirty and recovers canonically via Publish ([035]).
+func (c *ControlService) Restore(refID string) error {
+	if refID == "" {
+		return errors.New("restore: empty ref id")
+	}
+	if _, err := time.Parse(domain.RefIDFormat, refID); err != nil {
+		return fmt.Errorf("restore: invalid ref id %q: %w", refID, err)
+	}
+	c.bus.Publish(ritual.RestoreRequested{RefID: domain.RefID(refID)})
+	return nil
 }
 
 // GetSnapshot returns the current GUI view model. The frontend calls this

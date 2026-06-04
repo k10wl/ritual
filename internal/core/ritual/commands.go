@@ -1,5 +1,7 @@
 package ritual
 
+import "ritual/internal/core/domain"
+
 // Bus commands published from outside the FSM (GUI, CLI, scheduler) to
 // drive the run lifecycle. The lifecycle subsystem subscribes and acts;
 // stages never see these directly.
@@ -34,6 +36,16 @@ func (DownloadRequested) String() string { return "download requested" }
 type UploadRequested struct{}
 
 func (UploadRequested) String() string { return "upload requested" }
+
+// RestoreRequested commands the lifecycle to run the Restore flow
+// (design-log/038): Checking → Pulling(target) → Done. Server-free, lockless,
+// read-only on the remote — it pulls the chosen historical ref RefID and
+// applies it to the workdir. HEAD never moves and no ref is deleted; the
+// restored workdir surfaces as dirty and recovers canonically via Publish
+// ([035]). Rejected while any other flow is Running (shared status).
+type RestoreRequested struct{ RefID domain.RefID }
+
+func (r RestoreRequested) String() string { return "restore requested " + string(r.RefID) }
 
 // StopRequested commands the lifecycle to cancel the running pipeline.
 // Userstop is graceful: a cancellation propagating through stages resolves

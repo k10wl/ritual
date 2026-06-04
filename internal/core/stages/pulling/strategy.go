@@ -27,6 +27,36 @@ type HeadResolver func(ctx context.Context) (domain.RefID, error)
 // a different error so they route to onFail unchanged.
 var ErrNoHead = errors.New("pulling: no head ref on storage")
 
+// RefResolver picks the ref id to pull for a given run. HEAD-pinned flows
+// (Session/Download) ignore the run state; the restore flow reads the chosen
+// id from it (design-log/038). Generalises the original HeadResolver-only
+// resolve so one Pulling stage serves both without branching in Run.
+type RefResolver func(ctx context.Context, rs *ritual.RunState) (domain.RefID, error)
+
+// FromHead adapts a HeadResolver (the storage max-timestamp resolver) to a
+// RefResolver, ignoring run state. Every HEAD-pinned caller (Session,
+// Download) wires through this, so their behaviour — including the ErrNoHead
+// no-op-success path — is unchanged.
+func FromHead(h HeadResolver) RefResolver {
+	return func(ctx context.Context, _ *ritual.RunState) (domain.RefID, error) { return h(ctx) }
+}
+
+// ErrNoTarget is returned by FromTarget when the run carries no TargetRefID.
+// Unlike ErrNoHead it is a hard error (a restore with no id is a wiring bug),
+// so Run routes it to onFail rather than treating it as a no-op success.
+var ErrNoTarget = errors.New("pulling: no target ref on run state")
+
+// FromTarget resolves the ref id from rs.TargetRefID — the restore flow
+// (design-log/038) pins an arbitrary historical ref instead of resolving HEAD.
+func FromTarget() RefResolver {
+	return func(_ context.Context, rs *ritual.RunState) (domain.RefID, error) {
+		if rs.TargetRefID == "" {
+			return "", ErrNoTarget
+		}
+		return rs.TargetRefID, nil
+	}
+}
+
 // ApplyStartedInfo fires after the network pull completes and before the
 // workdir apply begins. GUI projection consumes it to flip the dial phase
 // from `downloading` (bytes flowing) to `preparing` (invisible work) — see
@@ -51,13 +81,21 @@ func (h HeadResolvedInfo) String() string { return "head resolved " + string(h.R
 type Strategy struct {
 	puller  ports.Puller
 	applier ports.Applier
-	resolve HeadResolver
+	resolve RefResolver
 	onOK    machine.Strategy[ritual.RunState]
 	onFail  machine.Strategy[ritual.RunState]
 }
 
-// New builds a Pulling Strategy.
+// New builds a HEAD-pinned Pulling Strategy (Session/Download). resolve is the
+// storage HEAD resolver; New wraps it via FromHead so every existing call site
+// is unchanged.
 func New(puller ports.Puller, applier ports.Applier, resolve HeadResolver, onOK, onFail machine.Strategy[ritual.RunState]) *Strategy {
+	return &Strategy{puller: puller, applier: applier, resolve: FromHead(resolve), onOK: onOK, onFail: onFail}
+}
+
+// NewWithResolver builds a Pulling Strategy over an explicit RefResolver — the
+// restore flow (design-log/038) passes FromTarget() to pin a chosen ref.
+func NewWithResolver(puller ports.Puller, applier ports.Applier, resolve RefResolver, onOK, onFail machine.Strategy[ritual.RunState]) *Strategy {
 	return &Strategy{puller: puller, applier: applier, resolve: resolve, onOK: onOK, onFail: onFail}
 }
 
@@ -77,7 +115,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 	}
 	stopCtx, stopCancel := watchStop(ctx, rs.Bus)
 	defer stopCancel()
-	id, err := s.resolve(stopCtx)
+	id, err := s.resolve(stopCtx, rs)
 	if errors.Is(err, ErrNoHead) {
 		publish(rs.Bus, ritual.FinishInfo{Operation: "pull"})
 		return s.onOK, nil

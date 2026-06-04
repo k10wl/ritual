@@ -61,7 +61,7 @@ func main() {
 		log.Fatalf("build runtime: %v", err)
 	}
 
-	controlSvc := control.NewControlService(runtime.bus, runtime.projection, runtime.syncProber, runtime.dirtyProber, nil)
+	controlSvc := control.NewControlService(runtime.bus, runtime.projection, runtime.syncProber, runtime.dirtyProber, runtime.versionLister, nil)
 
 	wailsApp := application.New(application.Options{
 		Name:        config.ProductName,
@@ -162,6 +162,7 @@ func main() {
 		LocalSession: pipeline.BuildLocalSession(pipelineDeps),
 		Download:     pipeline.BuildDownload(pipelineDeps),
 		Upload:       pipeline.BuildUpload(pipelineDeps),
+		Restore:      pipeline.BuildRestore(pipelineDeps),
 	}
 
 	sessionHook := func(rs *ritual.RunState) {
@@ -262,6 +263,7 @@ type guiRuntime struct {
 	commitTargets []string
 	syncProber    control.SyncProber
 	dirtyProber   control.LocalDirtyProber
+	versionLister control.VersionLister // historical-ref listing for restore (design-log/038)
 	remoteStorage ports.StorageRepository // for the autoupdate feed (design-log/037)
 }
 
@@ -377,22 +379,28 @@ func buildRuntime() (*guiRuntime, error) {
 	// local HEAD ref? readRef loads refs/{id}.json from local storage; scan is
 	// an mtime-bounded workdir hash seeded from the ref's Objects so only files
 	// touched since the last commit are re-hashed.
-	readRef := func(ctx context.Context, id domain.RefID) (*domain.Ref, error) {
-		rc, err := localStorage.GetStream(ctx, "refs/"+string(id)+".json")
-		if err != nil {
-			return nil, fmt.Errorf("read ref %s: %w", id, err)
+	// makeRefReader loads refs/{id}.json → domain.Ref from a given store. Used
+	// by the dirty prober (local) and the version lister (local + remote,
+	// design-log/038).
+	makeRefReader := func(store ports.StorageRepository) control.RefReader {
+		return func(ctx context.Context, id domain.RefID) (*domain.Ref, error) {
+			rc, err := store.GetStream(ctx, "refs/"+string(id)+".json")
+			if err != nil {
+				return nil, fmt.Errorf("read ref %s: %w", id, err)
+			}
+			defer rc.Close()
+			raw, err := io.ReadAll(rc)
+			if err != nil {
+				return nil, fmt.Errorf("read ref %s body: %w", id, err)
+			}
+			ref := &domain.Ref{}
+			if err := json.Unmarshal(raw, ref); err != nil {
+				return nil, fmt.Errorf("parse ref %s: %w", id, err)
+			}
+			return ref, nil
 		}
-		defer rc.Close()
-		raw, err := io.ReadAll(rc)
-		if err != nil {
-			return nil, fmt.Errorf("read ref %s body: %w", id, err)
-		}
-		ref := &domain.Ref{}
-		if err := json.Unmarshal(raw, ref); err != nil {
-			return nil, fmt.Errorf("parse ref %s: %w", id, err)
-		}
-		return ref, nil
 	}
+	readRef := makeRefReader(localStorage)
 	workdirScan := func(ctx context.Context, since time.Time, previous map[string]domain.FileEntry, targets []string) (map[string]domain.FileEntry, error) {
 		sc, err := adapters.NewMtimeScanner(config.RootPath, since, previous)
 		if err != nil {
@@ -401,6 +409,14 @@ func buildRuntime() (*guiRuntime, error) {
 		return sc.Scan(ctx, targets)
 	}
 	dirtyProber := control.NewLocalDirtyProber(localHeadResolver, readRef, workdirScan, commitTargets)
+
+	// Version lister (design-log/038): enumerate historical refs per scope so
+	// the Versions section in Advanced can offer a restore target. Remote is the
+	// canonical history; a remote failure degrades to the cached local refs.
+	versionLister := control.NewVersionLister(
+		control.VersionScope{List: localStorage.List, ReadRef: readRef},
+		control.VersionScope{List: remoteStorage.List, ReadRef: makeRefReader(remoteStorage)},
+	)
 
 	// Wire pull/push plan callbacks into the bus so the projection can
 	// populate ViewModel.BytesTotal before the first progress.Tick lands —
@@ -502,6 +518,7 @@ func buildRuntime() (*guiRuntime, error) {
 		commitTargets: commitTargets,
 		syncProber:    syncProber,
 		dirtyProber:   dirtyProber,
+		versionLister: versionLister,
 		remoteStorage: remoteStorage,
 	}, nil
 }

@@ -13,6 +13,7 @@ import (
 //   - services whose scope is the run (Bus, RunID)
 //   - data produced by one stage and consumed by later stages
 //     (SessionID, RefID, ParentRefID)
+//   - the target ref a restore flow pulls (TargetRefID, design-log/038)
 //   - the last error, for Failed to report
 //
 // Lease state lives outside this struct; the heartbeat supervisor owns it
@@ -24,6 +25,10 @@ type RunState struct {
 	SessionID   string
 	RefID       domain.RefID
 	ParentRefID domain.RefID
+	// TargetRefID is the ref id the restore flow pulls (design-log/038). Set by
+	// the lifecycle from RestoreRequested before the runner spins; read by the
+	// Pulling stage via pulling.FromTarget(). Empty in every other flow.
+	TargetRefID domain.RefID
 	Err         error
 	FailedStage string
 }

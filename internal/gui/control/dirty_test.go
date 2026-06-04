@@ -155,20 +155,20 @@ func syncReturning(s control.SyncStatus, err error) control.SyncProber {
 }
 
 func TestGetSyncStatus_DirtySurfaces(t *testing.T) {
-	svc := control.NewControlService(nil, nil, nil, dirtyReturning(true, nil), nil)
+	svc := control.NewControlService(nil, nil, nil, dirtyReturning(true, nil), nil, nil)
 	assert.True(t, svc.GetSyncStatus().Dirty,
 		"a dirty workdir must surface as SyncStatus.Dirty even with no head-compare prober wired")
 }
 
 func TestGetSyncStatus_DirtyError_Degrades(t *testing.T) {
-	svc := control.NewControlService(nil, nil, nil, dirtyReturning(false, errors.New("scan boom")), nil)
+	svc := control.NewControlService(nil, nil, nil, dirtyReturning(false, errors.New("scan boom")), nil, nil)
 	assert.False(t, svc.GetSyncStatus().Dirty,
 		"a dirty-probe error must degrade Dirty to false, never surface — design-log/035 §L1")
 }
 
 func TestGetSyncStatus_HeadCompareAndDirty_Merge(t *testing.T) {
 	sync := syncReturning(control.SyncStatus{Behind: true, Unpushed: false, LocalHead: "x"}, nil)
-	svc := control.NewControlService(nil, nil, sync, dirtyReturning(true, nil), nil)
+	svc := control.NewControlService(nil, nil, sync, dirtyReturning(true, nil), nil, nil)
 
 	got := svc.GetSyncStatus()
 

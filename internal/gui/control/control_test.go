@@ -79,7 +79,7 @@ func TestHeadSyncProber_RemoteListError_Propagates(t *testing.T) {
 }
 
 func TestGetSyncStatus_NilProber_ReturnsZeroStatus(t *testing.T) {
-	svc := control.NewControlService(nil, nil, nil, nil, nil)
+	svc := control.NewControlService(nil, nil, nil, nil, nil, nil)
 	assert.Equal(t, control.SyncStatus{}, svc.GetSyncStatus(),
 		"with no prober wired the IDLE screen must get a clean zero status, not a panic")
 }
@@ -88,7 +88,7 @@ func TestGetSyncStatus_ProberError_DegradesToZeroStatus(t *testing.T) {
 	failing := control.SyncProber(func(_ context.Context) (control.SyncStatus, error) {
 		return control.SyncStatus{Behind: true}, errors.New("offline")
 	})
-	svc := control.NewControlService(nil, nil, failing, nil, nil)
+	svc := control.NewControlService(nil, nil, failing, nil, nil, nil)
 	assert.Equal(t, control.SyncStatus{}, svc.GetSyncStatus(),
 		"an offline prober must degrade to zero status (Behind:false) so launch never surfaces an error — design-log/031 OQ3")
 }

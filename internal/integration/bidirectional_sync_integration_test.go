@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,6 +58,7 @@ func (r *testRitual) attachSyncFlows(t *testing.T) {
 	entries := lifecycle.Entries{
 		Download: pipeline.BuildDownload(deps),
 		Upload:   pipeline.BuildUpload(deps),
+		Restore:  pipeline.BuildRestore(deps),
 	}
 	stop := lifecycle.Attach(r.ctx, r.bus, entries)
 	t.Cleanup(stop)
@@ -178,6 +180,38 @@ func TestIntegration_Download_EmptyRemote_NoOpDone(t *testing.T) {
 
 	r.assertLocalFileMissing(t, "world/level.dat", "a Download against an empty remote must write nothing locally")
 	assert.Empty(t, maxRefID(r.ctx, r.remote), "an empty-remote Download must leave the remote empty")
+}
+
+func TestIntegration_Restore_OlderRef_RevertsWorkdirHeadUnchangedNoLock(t *testing.T) {
+	r := newRitual(t)
+
+	seedRemoteWorld(t, r, file("world/level.dat", []byte("version-A-old")))
+	oldID := maxRefID(r.ctx, r.remote)
+	require.NotEmpty(t, oldID, "first seed must establish version A on the remote")
+
+	time.Sleep(2 * time.Millisecond) // distinct RefID timestamps (ms precision)
+	seedRemoteWorld(t, r, file("world/level.dat", []byte("version-B-new")))
+	headB := maxRefID(r.ctx, r.remote)
+	require.NotEqual(t, oldID, headB, "second seed must establish a newer version B as the remote HEAD")
+
+	r.attachSyncFlows(t)
+
+	r.bus.Publish(ritual.DownloadRequested{})
+	r.waitDone(t)
+	require.Equal(t, headB, maxRefID(r.ctx, r.local),
+		"Download establishes version B as the local HEAD before the rollback")
+
+	r.bus.Publish(ritual.RestoreRequested{RefID: oldID})
+	r.waitDone(t)
+
+	r.assertLocalFileContent(t, "world/level.dat", []byte("version-A-old"),
+		"Restore must materialise the chosen older ref (version A) into the workdir — that is the rollback")
+	assert.Equal(t, headB, maxRefID(r.ctx, r.local),
+		"Restore must NOT move local HEAD: the older ref's id < HEAD, so the newest ref stays canonical and the reverted workdir reads as dirty (recoverable via design-log/035 Publish)")
+	assert.Equal(t, headB, maxRefID(r.ctx, r.remote),
+		"Restore is read-only on the remote — the remote HEAD must be untouched")
+	r.assertRemoteLockAbsent(t, "Restore has no Acquiring stage — it must never take the remote lock")
+	r.assertLocalLockAbsent(t, "Restore has no Acquiring stage — it must never take the local lock")
 }
 
 func TestIntegration_SkipSync_RunsServerNoPullNoCommit(t *testing.T) {
