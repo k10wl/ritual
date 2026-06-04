@@ -1,24 +1,24 @@
 /**
- * Retention rules — editable Borg-style tier picker that EXPLAINS the policy
- * (design-log/033; wired by /039; redesigned 2026-06-04). It is **not** a dry-run
- * over the user's real backups and never implies their local backups will be
- * deleted.
+ * Retention rules — editable Borg-style tier picker, explained at an ELI5 level
+ * (design-log/033; wired by /039; re-revised 2026-06-04 to plain language).
  *
- * The calendar cascade IS the control: one lane per tier over a shared
- * recent→older time axis with month labels; each lane carries its own uncapped
- * `rune-stepper` and shows representative kept dates as dots positioned by date.
- * No separate stepper block, minimal prose. A Local·R2 scope switch edits both
- * sides; a keep_last:0 caution remains.
+ * One row per keep-type: a friendly `Keep …` label, an uncapped `rune-stepper`,
+ * and a single plain-English sentence that rewrites itself as the number changes
+ * (e.g. "Always keep your 9 newest backups."). No timeline, no dots — earlier
+ * dot/calendar previews turned a count into a clump of meaningless dots; the
+ * meaning lives better in words (frontend/CLAUDE.md: cut what doesn't earn its
+ * space). A Local·Remote scope `rune-segmented` edits both sides; a keep_last:0
+ * caution remains.
  *
  * Presentational + pure: holds both sides' `rules`, emits `change` {local,
- * remote} on any edit. `now` is a property (default fixed) so render() reads no
- * wall-clock (design-log/020); the dates are illustrative + universal.
+ * remote} on any edit. No wall-clock read.
  */
 
 import { LitElement, css, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./primitives/rune-segmented";
 import "./primitives/rune-stepper";
+import "./primitives/decoder";
 import type { RetentionRules, Tier } from "./retention-model";
 
 export type RetentionScope = "local" | "remote";
@@ -28,10 +28,14 @@ export interface RetentionChangeDetail {
     remote: RetentionRules;
 }
 
-const FIXED_NOW = new Date("2026-06-04T12:00:00Z");
-const VISIBLE = 8; // dots drawn per lane; the count itself is uncapped (+N overflow)
-const MONTH_FMT = new Intl.DateTimeFormat(undefined, { month: "short" });
-const DAY = 24 * 3600 * 1000;
+// One active tier in the nested cascade: tier, subtle label, selected count, and
+// how far back it reaches (days, the shared scale that drives the nesting widths).
+interface CascadeTier {
+    tier: Tier;
+    label: string;
+    n: number;
+    reach: number;
+}
 
 const TIERS: { key: keyof RetentionRules; label: string; tier: Tier; unit: string }[] = [
     { key: "keepLast", label: "Keep last", tier: "last", unit: "" },
@@ -40,25 +44,100 @@ const TIERS: { key: keyof RetentionRules; label: string; tier: Tier; unit: strin
     { key: "keepMonthly", label: "Keep monthly", tier: "monthly", unit: "month" },
 ];
 
-// Tier → hue, reusing the dial state palette (design-log/033 §Q5).
-const TIER_HUE: Record<Tier, string> = {
-    last: "var(--state-run, #3fb950)",
-    daily: "var(--state-prep, #d29922)",
-    weekly: "var(--state-idle, #58a6ff)",
-    monthly: "var(--state-final, #a371f7)",
-};
-
+// R2 is just one provider; users think in terms of where the backup lives, not the
+// vendor — so the label is the generic "Remote".
 const SCOPE_OPTS = [
     { value: "local", label: "Local" },
-    { value: "remote", label: "R2" },
+    { value: "remote", label: "Remote" },
 ];
+
+// Temperature ramp for the cascade band: recent = warm green, older = colder and
+// darker (teal → blue → indigo). Keyed by tier so "month" is always the coldest.
+const TIER_RAMP: Record<Tier, string> = {
+    last: "hsl(150 46% 44%)",
+    daily: "hsl(192 44% 40%)",
+    weekly: "hsl(218 46% 38%)",
+    monthly: "hsl(244 40% 34%)",
+};
 
 const DEFAULT_RULES: RetentionRules = { keepLast: 2, keepDaily: 0, keepWeekly: 0, keepMonthly: 0 };
 
 const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
 
-// describePolicy → one plain sentence; used as the a11y label so screen readers
-// get the full meaning while the visual stays terse (design-log/033 §Redesign).
+// Coerce a possibly-missing tier (the backend omits zero fields via omitempty, so
+// they arrive undefined) to a real number — no undefined/NaN reaches the view.
+const num = (v: unknown): number => Number(v) || 0;
+const normalizeRules = (r: Partial<RetentionRules> | undefined | null): RetentionRules => ({
+    keepLast: num(r?.keepLast),
+    keepDaily: num(r?.keepDaily),
+    keepWeekly: num(r?.keepWeekly),
+    keepMonthly: num(r?.keepMonthly),
+});
+
+// tierPhrase → a cascade step in the handoff narrative ("your 2 newest", "1 a day
+// for 8 days"). The window length ("for 8 days") is exactly where this rule hands
+// off to the next, coarser one.
+function tierPhrase(tier: Tier, n: number): string {
+    switch (tier) {
+        case "last":
+            return n === 1 ? "your newest backup" : `your ${n} newest`;
+        case "daily":
+            return `1 a day for ${plural(n, "day")}`;
+        case "weekly":
+            return `1 a week for ${plural(n, "week")}`;
+        case "monthly":
+            return `1 a month for ${plural(n, "month")}`;
+    }
+}
+
+// keptTotal → estimated distinct backups kept. Tiers OVERLAP: a coarser rule's
+// representative (newest-of-week/month) is usually a backup a finer rule already
+// kept, so it adds new backups only beyond the finer rule's coverage. Assumes ~1
+// backup/day (keep_last ≈ days). It's why the total is below the sum of the rules.
+export function keptTotal(rules: RetentionRules): number {
+    const covLast = rules.keepLast; // days covered by keep_last (~1/day)
+    const dailyNew = Math.max(0, rules.keepDaily - covLast);
+    const covDaily = Math.max(covLast, rules.keepDaily);
+    const weeklyNew = Math.max(0, rules.keepWeekly - Math.ceil(covDaily / 7));
+    const covWeekly = Math.max(covDaily, rules.keepWeekly * 7);
+    const monthlyNew = Math.max(0, rules.keepMonthly - Math.ceil(covWeekly / 30));
+    return rules.keepLast + dailyNew + weeklyNew + monthlyNew;
+}
+
+// reachPhrase → how far back the coarsest contributing tier extends. keep_last is a
+// count, not a duration, so it has no reach.
+function reachPhrase(tier: Tier, n: number): string {
+    switch (tier) {
+        case "last":
+            return "";
+        case "daily":
+            return plural(n, "day");
+        case "weekly":
+            return plural(n, "week");
+        case "monthly":
+            return plural(n, "month");
+    }
+}
+
+// explain → the one plain sentence shown under each rule. ELI5: no jargon, says
+// exactly what the number does, kept short enough to stay on one line. n === 0
+// reads as off.
+export function explain(tier: Tier, n: number): string {
+    if (n === 0) return "Off — none kept this way.";
+    switch (tier) {
+        case "last":
+            return n === 1 ? "Keep your newest backup." : `Keep your ${n} newest backups.`;
+        case "daily":
+            return n === 1 ? "Keep today's backup." : `Keep one a day for ${n} days.`;
+        case "weekly":
+            return n === 1 ? "Keep this week's backup." : `Keep one a week for ${n} weeks.`;
+        case "monthly":
+            return n === 1 ? "Keep this month's backup." : `Keep one a month for ${n} months.`;
+    }
+}
+
+// describePolicy → one sentence for the whole policy; used as the a11y label so
+// screen readers get the full meaning in one read (design-log/033 §Redesign).
 export function describePolicy(r: RetentionRules): string {
     const parts: string[] = [];
     if (r.keepLast === 1) parts.push("the most recent backup");
@@ -74,21 +153,10 @@ export function describePolicy(r: RetentionRules): string {
     return `Keeps ${joined}.`;
 }
 
-// stepBack — the date `i` cadence-steps before now for a tier. Illustrative +
-// universal (not the user's real backups). last + daily share a daily cadence.
-function stepBack(now: Date, tier: Tier, i: number): Date {
-    const d = new Date(now);
-    if (tier === "monthly") d.setUTCMonth(d.getUTCMonth() - i);
-    else if (tier === "weekly") d.setUTCDate(d.getUTCDate() - i * 7);
-    else d.setUTCDate(d.getUTCDate() - i);
-    return d;
-}
-
 @customElement("retention-rules")
 export class RetentionRulesEl extends LitElement {
     @property({ attribute: false }) local: RetentionRules = { ...DEFAULT_RULES };
     @property({ attribute: false }) remote: RetentionRules = { ...DEFAULT_RULES };
-    @property({ attribute: false }) now: Date = FIXED_NOW;
 
     @state() private _scope: RetentionScope = "local";
 
@@ -101,64 +169,91 @@ export class RetentionRulesEl extends LitElement {
         .switch {
             margin-bottom: var(--space-4);
         }
-        .cascade {
-            display: flex;
-            flex-direction: column;
-            gap: var(--space-2);
-        }
-        /* label | stepper | time track — columns align across the axis + lanes */
-        .lane,
-        .axis {
+        .rules {
             display: grid;
-            grid-template-columns: 96px 84px 1fr;
+            gap: var(--space-4);
+        }
+        .rule {
+            display: grid;
+            gap: var(--space-1);
+        }
+        /* label left, stepper pinned right — the steppers align in a column. */
+        .head {
+            display: grid;
+            grid-template-columns: 1fr auto;
             align-items: center;
             gap: var(--space-2);
         }
-        .lane-label {
-            color: var(--text-muted);
+        .rule-label {
+            color: var(--text-strong);
             white-space: nowrap;
         }
-        .lane[data-zero] .lane-label {
-            color: var(--text-faint);
-        }
-        .track {
-            position: relative;
-            height: 16px;
-        }
-        .dot {
-            position: absolute;
-            top: 50%;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            transform: translate(-50%, -50%);
-        }
-        .more {
-            position: absolute;
-            top: 50%;
-            right: 0;
-            transform: translateY(-50%);
+        .explain {
+            color: var(--text-muted);
             font-size: var(--fs-caption);
+            line-height: 1.4;
+            white-space: nowrap;
+        }
+        .rule[data-zero] .rule-label,
+        .rule[data-zero] .explain {
             color: var(--text-faint);
         }
-        /* Time axis: month labels (the "calendar"), recent on the left. */
-        .axis {
-            margin-bottom: var(--space-1);
-            font-size: var(--fs-caption);
-            color: var(--text-faint);
+
+        /* Cascade: the combined outcome. Every tier reaches back from the NEWEST
+           backup, so the bars are nested — all anchored at the left edge (= the
+           newest backup, where every tier overlaps), each as long as its reach. */
+        .cascade {
+            margin-top: var(--space-4);
+            display: grid;
+            gap: var(--space-1);
         }
-        .axis .track {
-            height: 1.2em;
-        }
-        .ends {
+        .cascade-ends {
             display: flex;
             justify-content: space-between;
+            font-size: var(--fs-caption);
+            color: var(--text-faint);
         }
-        .month {
-            position: absolute;
-            top: 0;
-            transform: translateX(-50%);
+        .nest {
+            display: grid;
+            gap: 4px;
+        }
+        .nest-row {
+            display: grid;
+            grid-template-columns: 3.25rem 1fr;
+            align-items: center;
+            gap: var(--space-2);
+        }
+        /* Subtle word labels (last / day / week / month) — quiet, not shouting. */
+        .nest-label {
+            font-size: var(--fs-caption);
+            color: var(--text-faint);
             white-space: nowrap;
+        }
+        .bar-track {
+            position: relative;
+            height: 20px;
+        }
+        .bar {
+            position: absolute;
+            inset-block: 0;
+            left: 0;
+            min-width: 1.9rem;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding: 0 6px;
+            border-radius: var(--radius-sm);
+        }
+        .bar-count {
+            font-size: var(--fs-caption);
+            color: #fff;
+            font-variant-numeric: tabular-nums;
+        }
+        .summary {
+            margin-top: var(--space-2);
+            color: var(--text-muted);
+            font-size: var(--fs-caption);
+            line-height: 1.4;
         }
         .caution {
             margin-top: var(--space-4);
@@ -173,22 +268,26 @@ export class RetentionRulesEl extends LitElement {
     `;
 
     private get rules(): RetentionRules {
-        return this._scope === "remote" ? this.remote : this.local;
+        return normalizeRules(this._scope === "remote" ? this.remote : this.local);
+    }
+
+    // Shared decoder tuning: this panel shows many texts at once, so idle jitter is
+    // rare (every ~14–36s, not 2–5s) and the decode-on-change is fast (snappy ticks,
+    // few rounds). Keeps the effect without a wall of constant shimmer.
+    #decoder(text: string, cls: string) {
+        return html`<rune-decoder
+            class=${cls}
+            .text=${text}
+            idle-min-ms="14000"
+            idle-max-ms="36000"
+            idle-tick-ms="55"
+            splash-tick-ms="40"
+            .splashRounds=${[3, 6] as const}
+        ></rune-decoder>`;
     }
 
     render() {
         const rules = this.rules;
-        const now = this.now.getTime();
-
-        // Shared time window = from now back to the oldest date any tier reaches.
-        let oldest = now;
-        for (const t of TIERS) {
-            const n = rules[t.key];
-            if (n > 0) oldest = Math.min(oldest, stepBack(this.now, t.tier, n - 1).getTime());
-        }
-        const span = Math.max(DAY, now - oldest);
-        const pos = (ms: number) => `${Math.max(0, Math.min(100, ((now - ms) / span) * 100))}%`;
-
         return html`
             <div class="switch">
                 <rune-segmented
@@ -198,60 +297,100 @@ export class RetentionRulesEl extends LitElement {
                     @change=${this.#onScope}
                 ></rune-segmented>
             </div>
-            <div class="cascade" role="group" aria-label=${describePolicy(rules)}>
-                <div class="axis">
-                    <span></span>
-                    <span class="ends"><span>recent</span></span>
-                    <div class="track">${this.#months(oldest, now, pos)}</div>
-                </div>
-                ${TIERS.map((t) => this.#renderLane(t, pos))}
+            <div class="rules" role="group" aria-label=${describePolicy(rules)}>
+                ${TIERS.map((t) => this.#renderRule(t))}
             </div>
-            ${rules.keepLast === 0 ? this.#renderCaution() : null}
+            ${this.#renderCascade(rules)}
+            ${rules.keepLast === 0 ? this.#renderCaution(rules) : null}
         `;
     }
 
-    #months(oldest: number, now: number, pos: (ms: number) => string) {
-        const labels: { label: string; time: number }[] = [];
-        const d = new Date(now);
-        d.setUTCDate(1);
-        d.setUTCHours(0, 0, 0, 0);
-        while (d.getTime() >= oldest && labels.length < 7) {
-            labels.push({ label: MONTH_FMT.format(d), time: d.getTime() });
-            d.setUTCMonth(d.getUTCMonth() - 1);
-        }
-        return labels.map((m) => html`<span class="month" style=${`left:${pos(m.time)}`}>${m.label}</span>`);
-    }
-
-    #renderLane(t: { key: keyof RetentionRules; label: string; tier: Tier }, pos: (ms: number) => string) {
+    #renderRule(t: { key: keyof RetentionRules; label: string; tier: Tier }) {
         const count = this.rules[t.key];
-        const shown = Math.min(count, VISIBLE);
-        const dots = Array.from({ length: shown }, (_, i) => {
-            const d = stepBack(this.now, t.tier, i);
-            return html`<i
-                class="dot"
-                style=${`left:${pos(d.getTime())};background:${TIER_HUE[t.tier]}`}
-                title=${d.toISOString().slice(0, 10)}
-            ></i>`;
-        });
-        return html`<div class="lane" data-tier=${t.label} ?data-zero=${count === 0}>
-            <span class="lane-label">${t.label}</span>
-            <rune-stepper
-                .value=${count}
-                min="0"
-                .max=${Infinity}
-                label=${t.label}
-                @change=${(e: CustomEvent<{ value: number }>) => this.#onTier(t.key, e.detail.value)}
-            ></rune-stepper>
-            <div class="track">
-                ${dots} ${count > VISIBLE ? html`<span class="more">+${count - VISIBLE}</span>` : null}
+        return html`<div class="rule" data-tier=${t.label} ?data-zero=${count === 0}>
+            <div class="head">
+                ${this.#decoder(t.label, "rule-label")}
+                <rune-stepper
+                    .value=${count}
+                    min="0"
+                    .max=${Infinity}
+                    label=${t.label}
+                    @change=${(e: CustomEvent<{ value: number }>) => this.#onTier(t.key, e.detail.value)}
+                ></rune-stepper>
             </div>
+            ${this.#decoder(explain(t.tier, count), "explain")}
         </div>`;
     }
 
-    #renderCaution() {
-        return html`<p class="caution">
-            Without "keep last", the most recent backup isn't guaranteed to be kept.
-        </p>`;
+    // Active tiers, finest→coarsest, with how far each reaches back (in days, the
+    // shared scale for nesting; last/daily ≈ daily cadence, weekly ×7, monthly ×30).
+    // Every tier is anchored at the newest backup, so coarser reaches CONTAIN finer
+    // ones — the nesting makes the overlap (they coincide at the newest) visible.
+    #activeTiers(rules: RetentionRules): CascadeTier[] {
+        return (
+            [
+                { tier: "last", label: "last", n: rules.keepLast, reach: rules.keepLast },
+                { tier: "daily", label: "day", n: rules.keepDaily, reach: rules.keepDaily },
+                { tier: "weekly", label: "week", n: rules.keepWeekly, reach: rules.keepWeekly * 7 },
+                { tier: "monthly", label: "month", n: rules.keepMonthly, reach: rules.keepMonthly * 30 },
+            ] as CascadeTier[]
+        ).filter((t) => t.n > 0);
+    }
+
+    #renderCascade(rules: RetentionRules) {
+        const tiers = this.#activeTiers(rules);
+        if (!tiers.length) return null;
+        const maxReach = Math.max(...tiers.map((t) => t.reach), 1);
+
+        // Narrative: total kept + the handoff (each rule reaches further back than
+        // the finer one), plus an overlap note when the total is below the naive sum.
+        const phrases = tiers.map((t) => tierPhrase(t.tier, t.n));
+        const coarsest = tiers[tiers.length - 1];
+        const reach = reachPhrase(coarsest.tier, coarsest.n);
+        const total = keptTotal(rules);
+        const shownSum = tiers.reduce((acc, t) => acc + t.n, 0);
+        const overlap = total < shownSum ? " Rules overlap, so it's fewer than adding them up." : "";
+        const head = `Keeps about ${total} backup${total === 1 ? "" : "s"}`;
+        const body =
+            tiers.length === 1
+                ? phrases[0]
+                : `${phrases.join(", then ")}${reach ? `, reaching ~${reach} back` : ""}`;
+        const summary = `${head}: ${body}.${overlap}`;
+
+        return html`
+            <div class="cascade" aria-hidden="true">
+                <div class="cascade-ends">${this.#decoder("Newer", "")}${this.#decoder("Older →", "")}</div>
+                <div class="nest">
+                    ${tiers.map(
+                        (t) => html`<div class="nest-row" data-tier=${t.tier}>
+                            ${this.#decoder(t.label, "nest-label")}
+                            <div class="bar-track">
+                                <div
+                                    class="bar"
+                                    style=${`width:${(t.reach / maxReach) * 100}%;background:${TIER_RAMP[t.tier]}`}
+                                >
+                                    ${this.#decoder(`${t.n}`, "bar-count")}
+                                </div>
+                            </div>
+                        </div>`,
+                    )}
+                </div>
+                ${this.#decoder(summary, "summary")}
+            </div>
+        `;
+    }
+
+    // Truthful keep_last:0 note. With keep_last off the single newest backup still
+    // survives via any daily/weekly/monthly rule (it's the newest of its day/week/
+    // month); it only disappears when EVERY rule is 0. What keep_last uniquely adds
+    // is keeping more than one recent backup (e.g. several taken the same day).
+    #renderCaution(rules: RetentionRules) {
+        const others = rules.keepDaily + rules.keepWeekly + rules.keepMonthly;
+        const text =
+            others === 0
+                ? "Every rule is set to 0 — no backups will be kept."
+                : "With “keep last” off, only one backup per day, week, or month is kept — extra backups taken in the same period won't all survive.";
+        return html`<p class="caution">${this.#decoder(text, "")}</p>`;
     }
 
     #onScope = (e: CustomEvent<{ value: string }>) => {

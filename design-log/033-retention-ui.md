@@ -288,3 +288,31 @@ recent on the left. Dots cap at 8 with a `+N` overflow (count uncapped). The
 illustrative, not a real union) but is retained as the tested canonical mirror of
 the Go engine. New primitive `rune-stepper` (.ts/.stories/.test). Supersedes the
 single-axis timeline, the legend, the Deleted lane, and the real-backup feed.
+
+## Re-revision — honest union timeline, no per-tier lanes (2026-06-04)
+
+The per-tier cascade (four lanes of cadence dots) was **misleading**: it drew each
+tier's reach independently, so a viewer naturally **sums** the rows. Real
+Borg/restic retention keeps a **union** — one backup can satisfy several tiers at
+once (today's backup is simultaneously `last`, newest `daily`, `weekly`, and
+`monthly`), so the distinct kept count is far below the sum, and weekly/monthly
+often add nothing over daily in the recent window. The cascade hid that.
+
+**Decision (supersedes the §Redesign cascade visual):** render the **true union**,
+honest-by-construction, using the already-present parity-tested port — no Wails
+round-trip (§Q3 stands). The view computes `mark(sample(now), rules)` and draws
+**one timeline** of the representative history; each survivor is colored by its
+**strongest** protecting tier (`last > daily > weekly > monthly`, `tiers[0]`),
+pruned backups render hollow/dim. Overlap is now visible by construction.
+
+Kept from the redesign: the Local·R2 scope `rune-segmented`, the uncapped
+`rune-stepper` per tier (now in a compact knob block, each row carrying a tier-hue
+**swatch** that doubles as the timeline legend), `describePolicy` as the a11y
+label, the `keep_last:0` caution, and `now`-as-property render purity ([[020]]).
+
+Reverted: the four positioned-dot lanes, the per-lane `+N` cap, the calendar
+gridlines move to span the single timeline. Still **not** a dry-run over the
+user's real backups (the §Redesign objection holds) — the history is explicitly
+*representative*; legend says so. Real-backup feed remains deferred (would need a
+`ListVersions(scope)` binding and reframing; rejected here).
+
