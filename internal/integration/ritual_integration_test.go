@@ -1104,13 +1104,16 @@ func TestIntegration_Prune_BothInstancesExecute(t *testing.T) {
 	// Side-agnostic wiring: point the remote prune slot at local storage.
 	// Each slot uses a real retention.Job so a regression in wiring (single
 	// instance, swapped slots, missing onOK) manifests as missing bus events.
-	keepAll := domain.RetentionRules{KeepLast: 999}
+	// Rules come from the settings file at prune time now (design-log/039); this
+	// test only counts retain StartInfo events, not pruning outcomes, so the
+	// scope-driven engine with whatever rules are on disk runs both jobs either
+	// way. One seeded ref survives any sane KeepLast.
 	r.localRetentions = []retaining.Job{
-		retaining.NewRetentionRefsJob("refs-local", retention.NewRefsRetention(r.local, keepAll), r.local),
+		retaining.NewRetentionRefsJob("refs-local", retention.NewRefsRetention(r.local, retention.ScopeLocal), r.local),
 		retaining.NewGCRefsJob("gc-refs-local", refs.NewCollector(r.local)),
 	}
 	r.remoteRetentions = []retaining.Job{
-		retaining.NewRetentionRefsJob("refs-remote", retention.NewRefsRetention(r.local, keepAll), r.local),
+		retaining.NewRetentionRefsJob("refs-remote", retention.NewRefsRetention(r.local, retention.ScopeRemote), r.local),
 		retaining.NewGCRefsJob("gc-refs-remote", refs.NewCollector(r.local)),
 	}
 
@@ -1150,11 +1153,9 @@ func TestIntegration_Retention_BuildWiresLocalAndRemoteJobs_BothSidesEmitSplitEv
 		LocalRetention:  keepAll,
 		RemoteRetention: keepAll,
 	}).Save(),
-		"settings.Save must succeed before retention.Build — Build reads rules via domain.LoadSettings")
+		"settings.Save must succeed before the run — the prune jobs read rules via domain.LoadSettings at prune time (design-log/039)")
 
-	localJobs, remoteJobs, err := subretention.Build(r.local, r.local, r.bus)
-	require.NoError(t, err,
-		"retention.Build must wire jobs from real storage + bus without error — composition root contract")
+	localJobs, remoteJobs := subretention.Build(r.local, r.local, r.bus)
 	require.Len(t, localJobs, 3,
 		"local side must wire three Jobs in order: refs retention, refs GC, logs retention. Length drift means a slot is missing or duplicated; Strategy iterates the slice verbatim, so a missing Job silently skips a sweep")
 	require.Len(t, remoteJobs, 2,

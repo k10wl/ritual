@@ -5,17 +5,20 @@ import {
     checkForUpdate,
     download,
     getPrep,
+    getRetentionRules,
     getSnapshot,
     getSyncStatus,
     listVersions,
     onView,
     openRootFolder,
     restore,
+    setRetentionRules,
     showLogs,
     start,
     stop,
     upload,
     Phase,
+    RetentionRules,
     ViewModel,
     JoinAddress,
 } from "./wails-api";
@@ -32,6 +35,23 @@ import type { RuneStack } from "./ui/primitives/rune-stack";
 import type { NavView } from "./ui/contexts/nav-context";
 import type { SyncConfirmDetail, SyncVerdict } from "./ui/sync-view";
 import type { RestoreConfirmDetail } from "./ui/versions-view";
+import type { Backup, RetentionRules as RetentionModelRules } from "./ui/retention-model";
+
+// Wails RetentionRules is snake_case (keep_last…); the model/component speak
+// camelCase. Map at the host boundary (design-log/039).
+const toModelRules = (r: RetentionRules): RetentionModelRules => ({
+    keepLast: r.keep_last,
+    keepDaily: r.keep_daily,
+    keepWeekly: r.keep_weekly,
+    keepMonthly: r.keep_monthly,
+});
+const toBindingRules = (m: RetentionModelRules): RetentionRules =>
+    new RetentionRules({
+        keep_last: m.keepLast,
+        keep_daily: m.keepDaily,
+        keep_weekly: m.keepWeekly,
+        keep_monthly: m.keepMonthly,
+    });
 import type { PrepSettings, PrepSettingsChangeDetail } from "./ui/prep-settings";
 
 const MBPS_TO_BPS = 1_000_000 / 8;
@@ -398,12 +418,15 @@ export class RitualApp extends LitElement {
             .check=${this.checkSync}
             .versions=${this.listVersions}
             ?dirty=${this.unpublished}
+            .loadRules=${this.loadRetention}
+            .loadBackups=${this.loadBackups}
             .canUpdate=${this.vm.phase === Phase.PhaseIdle}
             @change=${this.onPrepChange}
             @sync=${this.onSyncConfirmed}
             @checkupdate=${this.onCheckUpdate}
             @restore=${this.onRestoreConfirmed}
             @publishfirst=${this.onPublishFirst}
+            @retentionchange=${this.onRetentionChange}
         ></advanced-view>`,
     };
 
@@ -411,6 +434,24 @@ export class RitualApp extends LitElement {
     // history; the backend degrades to cached local refs when offline
     // (design-log/038 §Q2). Bound so `this` is stable across renders.
     private listVersions = () => listVersions("remote");
+
+    // Retention loaders + persistence (design-log/039). The Wails RetentionRules
+    // model is snake_case (keep_last…); the retention-model/component speak
+    // camelCase — so map at this boundary. Per-scope backups feed each side's
+    // timeline (§Q5/OQ1).
+    private loadRetention = async (): Promise<{ local: RetentionModelRules; remote: RetentionModelRules }> => {
+        const c = await getRetentionRules();
+        return { local: toModelRules(c.local), remote: toModelRules(c.remote) };
+    };
+
+    private loadBackups = async (scope: "local" | "remote"): Promise<Backup[]> => {
+        const vs = await listVersions(scope);
+        return vs.map((v) => ({ id: v.id, date: new Date(v.unixMs) }));
+    };
+
+    private onRetentionChange = (e: CustomEvent<{ local: RetentionModelRules; remote: RetentionModelRules }>) => {
+        void setRetentionRules(toBindingRules(e.detail.local), toBindingRules(e.detail.remote));
+    };
 
     private openAdvanced = () => this._stack?.push(this.advancedView);
 

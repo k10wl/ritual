@@ -3,11 +3,12 @@
 
 import { Events } from "@wailsio/runtime";
 import * as Control from "../bindings/ritual/internal/gui/control/controlservice";
-import { Prep, SyncStatus, Version } from "../bindings/ritual/internal/gui/control/models";
+import { Prep, SyncStatus, Version, RetentionConfig } from "../bindings/ritual/internal/gui/control/models";
+import { RetentionRules } from "../bindings/ritual/internal/core/domain/models";
 import { ViewModel, Stage, Phase, JoinAddress } from "../bindings/ritual/internal/gui/projection/models";
 import { LogLine, Level } from "../bindings/ritual/internal/gui/logsink/models";
 
-export { ViewModel, Stage, Phase, JoinAddress, LogLine, Level, Prep, SyncStatus, Version };
+export { ViewModel, Stage, Phase, JoinAddress, LogLine, Level, Prep, SyncStatus, Version, RetentionConfig, RetentionRules };
 
 /** Version-history scope for ListVersions (design-log/038). */
 export type VersionScope = "local" | "remote";

@@ -4,15 +4,16 @@ import "./advanced-view";
 import type { AdvancedView } from "./advanced-view";
 
 describe("advanced-view", () => {
-    it("renders four flat sections — Server, Sync, Versions, Updates — with no menu nesting", async () => {
+    it("renders five flat sections — Server, Sync, Versions, Retention, Updates — with no menu nesting", async () => {
         const el = await fixture<AdvancedView>(html`<advanced-view></advanced-view>`);
         const labels = [...el.shadowRoot!.querySelectorAll(".label")].map((l) =>
             l.textContent!.trim(),
         );
-        expect(labels).to.deep.equal(["Server", "Sync", "Versions", "Updates"]);
+        expect(labels).to.deep.equal(["Server", "Sync", "Versions", "Retention", "Updates"]);
         expect(el.shadowRoot!.querySelector("prep-settings")).to.exist;
         expect(el.shadowRoot!.querySelector("sync-view")).to.exist;
         expect(el.shadowRoot!.querySelector("versions-view")).to.exist;
+        expect(el.shadowRoot!.querySelector("retention-rules")).to.exist;
     });
 
     it("passes config down to prep-settings", async () => {
@@ -57,6 +58,25 @@ describe("advanced-view", () => {
         };
         expect(v.list).to.equal(list);
         expect(v.dirty).to.equal(true);
+    });
+
+    it("re-emits retention-rules `change` as a distinct `retentionchange` (no collision with prep `change`)", async () => {
+        const el = await fixture<AdvancedView>(html`<advanced-view></advanced-view>`);
+        let prepChange = false;
+        let retentionChange: unknown = null;
+        el.addEventListener("change", () => (prepChange = true));
+        el.addEventListener("retentionchange", (e) => (retentionChange = (e as CustomEvent).detail));
+
+        const detail = {
+            local: { keepLast: 1, keepDaily: 0, keepWeekly: 0, keepMonthly: 0 },
+            remote: { keepLast: 2, keepDaily: 0, keepWeekly: 0, keepMonthly: 0 },
+        };
+        el.shadowRoot!
+            .querySelector("retention-rules")!
+            .dispatchEvent(new CustomEvent("change", { detail, bubbles: true, composed: true }));
+
+        expect(retentionChange).to.deep.equal(detail, "retention edits surface as retentionchange");
+        expect(prepChange).to.equal(false, "a retention edit must not masquerade as a prep-settings change");
     });
 
     it("lets child restore events bubble through to the host", async () => {

@@ -443,10 +443,7 @@ func buildRuntime() (*guiRuntime, error) {
 
 	readiness := adapters.NewTCPReadinessCheck(fmt.Sprintf("127.0.0.1:%d", settings.Port), bus)
 
-	localRets, remoteRets, err := retention.Build(localStorage, remoteStorage, bus)
-	if err != nil {
-		return nil, fmt.Errorf("retention: %w", err)
-	}
+	localRets, remoteRets := retention.Build(localStorage, remoteStorage, bus)
 
 	// Local + remote lock stack: lock.Both calls the local lease first so
 	// a same-host PID that already grabbed <root>/lock cannot pin a remote

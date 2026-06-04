@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"ritual/internal/adapters"
+	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/subsystems/retention"
 	"testing"
@@ -38,12 +39,17 @@ func TestBuild_PrunesRefsAndSweepsOrphanBlobs(t *testing.T) {
 
 	rulesLocal := domain.RetentionRules{KeepLast: 1}
 	rulesRemote := domain.RetentionRules{KeepLast: 1}
-	t.Setenv("HOME", t.TempDir())
+	// Isolate the settings file to a temp dir. config.RootPath is cached at init
+	// from $HOME, so t.Setenv("HOME",…) alone does NOT redirect it — without this
+	// the prune jobs' Select would read (and writeSettings would clobber) the
+	// host's real settings.json (design-log/039: rules are read at prune time).
+	origRoot := config.RootPath
+	config.RootPath = t.TempDir()
+	t.Cleanup(func() { config.RootPath = origRoot })
 
 	writeSettings(t, rulesLocal, rulesRemote)
 
-	localJobs, remoteJobs, err := retention.Build(localStorage, remoteStorage, nil)
-	require.NoError(t, err, "Build must wire jobs without error when storages are valid")
+	localJobs, remoteJobs := retention.Build(localStorage, remoteStorage, nil)
 
 	for _, job := range localJobs {
 		require.NoError(t, job.Run(ctx), "each local retention job must complete cleanly")
