@@ -3,6 +3,7 @@ import { customElement, query, state } from "lit/decorators.js";
 import {
     applyRetentionNow,
     deleteLocalVersion,
+    deleteRemoteVersion,
     dismiss,
     checkForUpdate,
     download,
@@ -548,12 +549,19 @@ export class RitualApp extends LitElement {
         this._stack?.popToRoot();
     };
 
-    // Confirmed per-version delete (design-log/045 §A). Fast and local — no
-    // dial takeover; the versions-view re-loads its listing optimistically so
-    // the row vanishes immediately. Errors raise no UI; the row reappears on
-    // the next refresh, which is the honest "still here" signal.
+    // Confirmed per-version delete (design-log/045 §A + post-ship remote
+    // extension, user direction 2026-06-05). The versions-view captures which
+    // tab the user pressed × from and emits the scope alongside the refID;
+    // we route to the matching backend wrapper. Fast and quiet — no dial
+    // takeover; the versions-view re-loads its listing optimistically so the
+    // row vanishes immediately. Errors raise no UI; the row reappears on the
+    // next refresh, which is the honest "still here" signal.
     private onDeleteConfirmed = (e: CustomEvent<DeleteConfirmDetail>) => {
-        void deleteLocalVersion(e.detail.refID);
+        if (e.detail.scope === "remote") {
+            void deleteRemoteVersion(e.detail.refID);
+        } else {
+            void deleteLocalVersion(e.detail.refID);
+        }
     };
 
     // Apply retention (design-log/045 §D). The advanced-view re-emits the

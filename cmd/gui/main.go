@@ -35,6 +35,7 @@ import (
 	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/subsystems/livesync"
 	"ritual/internal/subsystems/loadedref"
+	"ritual/internal/subsystems/notify"
 	"ritual/internal/subsystems/logging"
 	"ritual/internal/subsystems/pipeline"
 	"ritual/internal/subsystems/remote"
@@ -48,6 +49,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 )
 
 func init() {
@@ -68,13 +70,21 @@ func main() {
 	// on-disk stats. Wired here rather than through the constructor to keep the
 	// positional signature stable; tests stub these via the setters as needed.
 	controlSvc.SetVersionDeleter(runtime.localVersionDeleter, runtime.loadedRefIDFn, runtime.clearLoadedRefID)
+	controlSvc.SetRemoteVersionDeleter(runtime.remoteVersionDeleter)
 	controlSvc.SetLocalStatsFn(runtime.localStatsFn)
+
+	// OS notifications (design-log/047). Registered as a Wails service so its
+	// ServiceStartup runs the Windows AppUserModelID/CLSID registration before
+	// the first toast; the notify subsystem (attached below) drives it off the
+	// bus. No runtime permission on Windows.
+	notifSvc := notifications.New()
 
 	wailsApp := application.New(application.Options{
 		Name:        config.ProductName,
 		Description: "Ritual — Minecraft server manager (POC)",
 		Services: []application.Service{
 			application.NewService(controlSvc),
+			application.NewService(notifSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(ritualassets.GUIAssets),
@@ -143,6 +153,11 @@ func main() {
 	})
 
 	ctx := wailsApp.Context()
+	// OS notifications (design-log/047): project the critical run transitions
+	// (server up / clean stop / failure) onto native toasts. Pure bus consumer
+	// behind the notify.Notifier port — wailsNotifier is the only platform seam.
+	stopNotify := notify.Attach(ctx, runtime.bus, &wailsNotifier{svc: notifSvc})
+	defer stopNotify()
 	// Live-sync subsystem (design-log/016). 5-min Commit+Push tick during
 	// the Running stage; ServerReadyInfo starts it, lifecycle events stop
 	// it. parentFn tracks pulling.HeadResolvedInfo so the ticker never
@@ -292,9 +307,12 @@ type guiRuntime struct {
 	remoteStorage ports.StorageRepository                 // for the autoupdate feed (design-log/037)
 	consoleReader func(context.Context) ([]string, error) // on-demand latest.log backfill (design-log/043)
 	// design-log/045 §A — per-version delete + loaded-id readers/writers.
-	localVersionDeleter control.LocalDeleter
-	loadedRefIDFn       control.LoadedIDFn
-	clearLoadedRefID    control.SettingsClearer
+	// remoteVersionDeleter parallels localVersionDeleter for the 045 post-ship
+	// remote-delete extension (user direction 2026-06-05).
+	localVersionDeleter  control.LocalDeleter
+	remoteVersionDeleter control.RemoteDeleter
+	loadedRefIDFn        control.LoadedIDFn
+	clearLoadedRefID     control.SettingsClearer
 	// design-log/045 §E — local on-disk stats walker.
 	localStatsFn control.StorageStatFn
 }
@@ -462,10 +480,11 @@ func buildRuntime() (*guiRuntime, error) {
 		control.VersionScope{List: remoteStorage.List, ReadRef: makeRefReader(remoteStorage)},
 		loadedRefIDFn,
 	)
-	// Per-version delete + GC (design-log/045 §A). Composition root closure:
-	// delete refs/<id>.json then sweep orphaned objects/. Uses the same
-	// refs.Collector the Retaining stage's GC job uses, so the cleanup
-	// semantics are identical to a normal sync's local-side prune.
+	// Per-version delete + GC (design-log/045 §A + post-ship remote extension).
+	// Composition root closures: delete refs/<id>.json then sweep orphaned
+	// objects/. Uses the same refs.Collector the Retaining stage's GC job uses,
+	// so the cleanup semantics are identical to a normal sync's prune — once
+	// per side, since each side has its own object store.
 	localCollector := refs.NewCollector(localStorage)
 	localDeleter := func(ctx context.Context, id domain.RefID) error {
 		key := "refs/" + string(id) + ".json"
@@ -473,6 +492,21 @@ func buildRuntime() (*guiRuntime, error) {
 			return fmt.Errorf("delete %s: %w", key, err)
 		}
 		if err := localCollector.Collect(ctx); err != nil {
+			return fmt.Errorf("collect orphans: %w", err)
+		}
+		return nil
+	}
+	// Remote-side parallel (user direction 2026-06-05: "allow me to delete
+	// anything"). Same shape, distinct store. The collector sweep on remote
+	// objects/ removes blobs no surviving remote ref pins; no remote lock is
+	// held (v1 trade-off — cross-client coordination is deferred).
+	remoteCollector := refs.NewCollector(remoteStorage)
+	remoteDeleter := func(ctx context.Context, id domain.RefID) error {
+		key := "refs/" + string(id) + ".json"
+		if err := remoteStorage.Delete(ctx, key); err != nil {
+			return fmt.Errorf("delete %s: %w", key, err)
+		}
+		if err := remoteCollector.Collect(ctx); err != nil {
 			return fmt.Errorf("collect orphans: %w", err)
 		}
 		return nil
@@ -595,10 +629,11 @@ func buildRuntime() (*guiRuntime, error) {
 		versionLister:       versionLister,
 		remoteStorage:       remoteStorage,
 		consoleReader:       consoleReader,
-		localVersionDeleter: localDeleter,
-		loadedRefIDFn:       loadedRefIDFn,
-		clearLoadedRefID:    clearLoadedRefID,
-		localStatsFn:        localStatsFn,
+		localVersionDeleter:  localDeleter,
+		remoteVersionDeleter: remoteDeleter,
+		loadedRefIDFn:        loadedRefIDFn,
+		clearLoadedRefID:     clearLoadedRefID,
+		localStatsFn:         localStatsFn,
 	}, nil
 }
 

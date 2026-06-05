@@ -12,15 +12,20 @@
  * confirm offers a "Publish first" escape (emits `publishfirst`) above
  * Restore — a non-blocking nudge, never a gate.
  *
- * Delete is *destructive on the local cache only* (design-log/045 §Q10). The
- * confirm copy says exactly that: the remote keeps its copy; Download brings
- * it back. The user can delete any row including the loaded one and HEAD
- * (design-log/045 §Q2) — the confirm spells out the sharp edge case-by-case.
+ * Delete is destructive on the chosen store — local cache (design-log/045
+ * §Q10) or remote canonical history (045 post-ship extension, user direction
+ * 2026-06-05: "allow me to delete anything"). The confirm copy spells the
+ * sharp edge case-by-case: local-only rows lean on the remote as the
+ * recoverable canonical copy ("Download will bring it back"); remote rows
+ * warn that the canonical history is going away. The user can delete any row
+ * including the loaded one and HEAD (design-log/045 §Q2).
  *
  * Local · Remote tabs (design-log/045 §B): `<rune-segmented>` at the top of
  * the panel, defaults to Local. Selecting a tab re-runs the injected
- * `list(scope)` and re-reads the stats (Local only). Delete + the on-disk
- * header live on the Local tab; the Remote tab is read-only.
+ * `list(scope)` and re-reads the stats (Local only). The × delete affordance
+ * is present on both tabs (after the 045 post-ship remote extension); the
+ * on-disk header stays Local-only (Remote bytes-on-disk would cost an R2
+ * List+Stat sweep and isn't actionable here — §E §Q9).
  *
  * Presentational: the listing is injected via `.list(scope)` (host wraps
  * `listVersions(scope)`); confirming Restore emits `restore { refID }`,
@@ -68,16 +73,25 @@ export interface RestoreConfirmDetail {
 
 export interface DeleteConfirmDetail {
     refID: string;
+    // Which store the row came from — `local` deletes refs/<id>.json + GCs
+    // orphans on the local cache; `remote` does the same on the canonical
+    // store (045 post-ship extension). Routed by the host into the matching
+    // wails-api wrapper.
+    scope: VersionScope;
 }
 
 type LoadPhase = "loading" | "loaded" | "error";
 
 // Two pending-confirm modes share the same row context. `kind` discriminates
 // so render picks the right copy + buttons; the row reference is just the
-// already-prepared DisplayRow.
+// already-prepared DisplayRow. `scope` is captured at intent time so the
+// confirm body can pick local-vs-remote copy without re-reading mutable
+// state (a tab switch wipes _pending via #load anyway, but capturing keeps
+// the rendered confirm honest).
 interface PendingConfirm {
     kind: "restore" | "delete";
     row: DisplayRow;
+    scope: VersionScope;
 }
 
 // One row prepared for render — strings formatted once at load so render() does
@@ -303,7 +317,7 @@ export class VersionsView extends LitElement {
             ${this._pending
                 ? this._pending.kind === "restore"
                     ? this.#renderRestoreConfirm(this._pending.row)
-                    : this.#renderDeleteConfirm(this._pending.row)
+                    : this.#renderDeleteConfirm(this._pending.row, this._pending.scope)
                 : this.#renderList()}
         </div>`;
     }
@@ -339,30 +353,34 @@ export class VersionsView extends LitElement {
     }
 
     #renderRow(r: DisplayRow) {
-        // The currently-loaded version is not a restore target (restoring what
-        // is already in the workdir is a no-op) — show the badge, no press
-        // affordance. Other rows are pressable and open the Restore confirm.
-        // After a Restore the loaded row is NOT HEAD; the badge follows the
-        // workdir (design-log/044), so "current" lands on the restored row.
+        // The currently-loaded version is not a restore target on the Local
+        // tab (restoring what is already in the workdir is a no-op) — show
+        // the badge, no press affordance. Other rows are pressable and open
+        // the Restore confirm. After a Restore the loaded row is NOT HEAD;
+        // the badge follows the workdir (design-log/044), so "current" lands
+        // on the restored row. On the Remote tab "current"/"loaded" carry no
+        // workdir meaning, so every Remote row is pressable for Restore.
         //
         // The × delete affordance is a SIBLING of the rune-row, not nested
         // inside its trailing slot — buttons cannot be nested (HTML disallows
         // button-in-button + rune-row is role=button when pressable). The
-        // .row-pair wrapper aligns them in one visual line.
+        // .row-pair wrapper aligns them in one visual line. Present on both
+        // tabs after the 045 post-ship remote extension (user direction
+        // 2026-06-05: "allow me to delete anything"); the confirm copy
+        // disambiguates local vs remote consequences.
         const isLocal = this._scope === "local";
-        const pressable = !r.isLoaded;
+        const pressable = isLocal ? !r.isLoaded : true;
         const row = html`<rune-row
             ?pressable=${pressable}
-            aria-label=${r.isLoaded ? `${r.dateLabel} (current)` : `Restore ${r.dateLabel}`}
+            aria-label=${r.isLoaded && isLocal ? `${r.dateLabel} (current)` : `Restore ${r.dateLabel}`}
             @press=${pressable ? () => this.#askRestore(r) : nothing}
         >
             <span slot="leading" class="date">${r.dateLabel}</span>
             <span class="meta">${r.metaLabel}</span>
-            ${r.isLoaded
+            ${r.isLoaded && isLocal
                 ? html`<span slot="trailing" class="badge">current</span>`
-                : html`<span slot="trailing" class="meta">${isLocal ? "" : "›"}</span>`}
+                : html`<span slot="trailing" class="meta">›</span>`}
         </rune-row>`;
-        if (!isLocal) return row;
         return html`<div class="row-pair">
             ${row}
             <button
@@ -395,16 +413,28 @@ export class VersionsView extends LitElement {
         `;
     }
 
-    // Delete confirms come in three flavours per the design log (§Q2):
-    //   - loaded row that is also HEAD: warns that the local store loses its
-    //     anchor; recovery via Publish/Download.
-    //   - loaded row that isn't HEAD (post-Restore): warns about losing the
-    //     restored anchor; workdir reads as dirty afterward.
-    //   - plain non-loaded row: emphasises the remote keeps the copy.
-    #renderDeleteConfirm(r: DisplayRow) {
+    // Delete confirms come in five flavours: three Local (§Q2) + two Remote
+    // (045 post-ship extension, user direction 2026-06-05):
+    //   Local — loaded+HEAD: local store loses its anchor; recover via
+    //           Publish/Download.
+    //   Local — loaded not HEAD (post-Restore): workdir reads as dirty after
+    //           the anchor is gone.
+    //   Local — plain non-loaded: remote keeps the copy; Download recovers.
+    //   Remote — HEAD: canonical HEAD is going away; nobody else will be able
+    //            to Download this version again.
+    //   Remote — older: drops one point in canonical history. The local
+    //            cache (if any) keeps its copy, but no one else can fetch it.
+    #renderDeleteConfirm(r: DisplayRow, scope: VersionScope) {
         let body: string;
         let warn: string | null = null;
-        if (r.isLoaded && r.isHead) {
+        if (scope === "remote") {
+            if (r.isHead) {
+                warn = "This is the latest canonical version.";
+                body = "Delete it from the remote? No one else will be able to Download this version, and the next Publish from anywhere becomes the new HEAD.";
+            } else {
+                body = "Delete this version from the remote? It's removed from the canonical history. Local caches that already have it are unaffected, but no one else can Download it again.";
+            }
+        } else if (r.isLoaded && r.isHead) {
             body = "Delete this saved version? Your workdir files stay, but the local store loses the ref it was anchored to — Publish or Download to get a clean reference again.";
             warn = "This is your current version.";
         } else if (r.isLoaded) {
@@ -472,14 +502,14 @@ export class VersionsView extends LitElement {
     };
 
     #askRestore = (r: DisplayRow) => {
-        this._pending = { kind: "restore", row: r };
+        this._pending = { kind: "restore", row: r, scope: this._scope };
     };
 
     #onDeleteClick = (e: Event, r: DisplayRow) => {
         // Stop the row's own press from also firing a Restore — the × is
         // visually inside the trailing slot but semantically a separate action.
         e.stopPropagation();
-        this._pending = { kind: "delete", row: r };
+        this._pending = { kind: "delete", row: r, scope: this._scope };
     };
 
     #cancel = () => {
@@ -505,7 +535,7 @@ export class VersionsView extends LitElement {
         if (!p || p.kind !== "delete") return;
         this.dispatchEvent(
             new CustomEvent<DeleteConfirmDetail>("delete", {
-                detail: { refID: p.row.id },
+                detail: { refID: p.row.id, scope: p.scope },
                 bubbles: true,
                 composed: true,
             }),

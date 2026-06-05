@@ -414,3 +414,41 @@ New regression test `rapid tab toggles do not let a stale list overwrite the fre
 - **Backend:** `go test ./internal/core/retention/... ./internal/core/domain ./internal/gui/control/...` — all green; the new `TestMarkKeys_ActuallySelectsForDeletion` would fail under the pre-fix parser.
 - **Frontend:** `npx web-test-runner` — 166/166 across 17 files; +2 new regression tests in `versions-view.test.ts`.
 - **TypeScript:** `npx tsc --noEmit` clean.
+
+## Post-ship extension: remote-version delete (2026-06-05)
+
+User direction (2026-06-05): *"allow me to remove versions from remote too! not only local ones. allow me to delete anything."*
+
+§Q4 originally gated the × delete affordance to the Local tab: *"Remote scope hides the per-row Delete affordance (the canonical history shouldn't be edited from the GUI — at least not in v1)."* The user lifted that gate — same principle as §Q2 (they own the store; the UI's job is to be honest about consequences, not to gate).
+
+### Backend
+
+- `internal/gui/control/versions_delete.go` — new `RemoteDeleter` named type (same shape as `LocalDeleter`, distinct for wiring clarity), new `DeleteRemoteVersion(refID string) error` method. Same id validation as `DeleteLocalVersion`; nil deleter returns an explicit "not wired" error. **Does NOT clear `settings.LoadedRefID`** (that field tracks the workdir, which is local — deleting the *remote* ref doesn't invalidate the workdir anchor). **Does NOT invalidate the local stats cache** (remote bytes don't live on local disk).
+- `internal/gui/control/control.go` — `remoteDeleter RemoteDeleter` field + `SetRemoteVersionDeleter(deleter RemoteDeleter)` setter (kept distinct from `SetVersionDeleter` so the composition root wires the two sides explicitly).
+- `cmd/gui/main.go` — `remoteCollector := refs.NewCollector(remoteStorage)` + a `remoteDeleter` closure that does `remoteStorage.Delete("refs/<id>.json")` then `remoteCollector.Collect(ctx)`. Same `refs.Collector` the retention/sync paths already use; cleanup semantics identical to a remote sync prune.
+- `internal/gui/control/versions_delete_test.go` — new file. Four tests pin the contract: rejects empty + malformed ids; nil deleter ⇒ explicit error; valid id invokes the deleter with the parsed `RefID`; underlying delete error surfaces wrapped.
+
+### Frontend
+
+- `frontend/src/wails-api.ts` — `deleteRemoteVersion(refID)` export added alongside `deleteLocalVersion`.
+- `frontend/src/ui/versions-view.ts`:
+  - `DeleteConfirmDetail` gains a `scope: VersionScope` field; `PendingConfirm` captures the scope at intent time so the confirm body picks copy without re-reading mutable state.
+  - `#renderRow` no longer gates the `.row-pair` wrapper on the Local tab — every row in both tabs renders the × button as a sibling of `<rune-row>` under `.row-pair`.
+  - Remote-tab rows are always pressable (Restore on the workdir is always meaningful from a remote target); the "current" badge stays Local-only since IsLoaded is workdir-relative.
+  - `#renderDeleteConfirm` now has **five flavours** (three Local kept from §Q2, two Remote new): HEAD-on-remote warns *"This is the latest canonical version."* and notes the next Publish becomes the new HEAD; non-HEAD remote notes *"Local caches that already have it are unaffected, but no one else can Download it again."*
+  - `#confirmDelete` emits `delete { refID, scope }`.
+- `frontend/src/ritual-app.ts` — `onDeleteConfirmed` routes on `e.detail.scope`: `deleteRemoteVersion` for `"remote"`, `deleteLocalVersion` otherwise.
+- `frontend/src/ui/versions-view.test.ts` — the old *"Remote tab hides the delete affordance"* test inverted to assert the × shows on every Remote row; new tests pin: Remote-tab confirm copy mentions *"canonical history"* + *"Local caches"*; Remote-HEAD confirm mentions *"latest canonical version"* + *"new HEAD"*; both scopes' confirms emit the correct `scope` in `delete` event detail.
+
+### Trade-offs and known limitations
+
+- **No remote lock during the GC sweep.** A concurrent push from another client could theoretically have its just-uploaded blobs reaped if its new ref isn't visible to the Collector's live-set scan yet. The lifecycle's reject-while-running gate covers concurrent flows on *this* client; cross-client coordination is deferred. The user confirms the destructive action via the UI before this lands. Mirrors §Q8's posture for the Apply path (also remote-lock-light in v1).
+- **Tabs are still asymmetric on the header line.** The on-disk header + dedup hint stay Local-only (§E §Q9 unchanged — remote bytes-on-disk costs an R2 List+Stat sweep, isn't actionable from this surface, and the user didn't ask for it).
+- **Five-flavour delete copy.** Could be collapsed to a single body that mentions both stores, but distinct copy is honest about which consequence applies; the case split is mechanical and read-once on press.
+
+### Verification (post-ship extension)
+
+- **Backend:** `go build ./...` clean; `go test ./internal/gui/control/...` all green (new `versions_delete_test.go` adds 4 tests).
+- **Frontend:** `npx tsc --noEmit` clean; `npx web-test-runner` — 169/169 across 17 files (+3 versions-view tests on top of the prior 166).
+- **Bindings:** `task gui:bindings` regenerated — `DeleteRemoteVersion` + `SetRemoteVersionDeleter` land in `controlservice.ts`.
+- **Live smoke:** deferred — needs a real R2 dev session with multiple remote refs to exercise the GC sweep against canonical history.

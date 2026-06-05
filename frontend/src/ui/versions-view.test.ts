@@ -200,7 +200,11 @@ describe("versions-view", () => {
         expect(dels.length).to.equal(SAMPLE.length);
     });
 
-    it("Remote tab hides the delete affordance (design-log/045 §B)", async () => {
+    it("Remote tab also shows the × delete affordance on every row (045 post-ship extension, user 2026-06-05)", async () => {
+        // The original 045 §Q4 hid the × on Remote (v1 read-only canonical
+        // history). The user lifted that gate — they own the store and want
+        // to be able to delete anything. The confirm copy on Remote spells
+        // out the sharp edge instead.
         const el = await mount(async () => SAMPLE);
         await settle(el);
         el.shadowRoot!.querySelector("rune-segmented")!.dispatchEvent(
@@ -211,7 +215,65 @@ describe("versions-view", () => {
             }),
         );
         await settle(el);
-        expect(el.shadowRoot!.querySelectorAll(".del").length).to.equal(0);
+        expect(el.shadowRoot!.querySelectorAll(".del").length).to.equal(SAMPLE.length);
+    });
+
+    it("Remote-tab delete confirm warns about canonical history loss + emits scope:'remote'", async () => {
+        const el = await mount(async () => SAMPLE);
+        await settle(el);
+        el.shadowRoot!.querySelector("rune-segmented")!.dispatchEvent(
+            new CustomEvent("change", {
+                detail: { value: "remote" },
+                bubbles: true,
+                composed: true,
+            }),
+        );
+        await settle(el);
+
+        const dels = el.shadowRoot!.querySelectorAll(".del") as NodeListOf<HTMLElement>;
+        // Press × on a non-HEAD row (older history entry).
+        dels[2].click();
+        await el.updateComplete;
+        expect(el.shadowRoot!.textContent).to.contain("canonical history");
+        expect(el.shadowRoot!.textContent).to.contain("Local caches");
+
+        setTimeout(() => press(button(el, "Delete")!));
+        const ev = await oneEvent(el, "delete");
+        const d = ev.detail as DeleteConfirmDetail;
+        expect(d.refID).to.equal("2026-05-12T12-00-00.000Z");
+        expect(d.scope).to.equal("remote", "scope payload routes the host to deleteRemoteVersion");
+    });
+
+    it("Remote-tab delete on HEAD warns it's the latest canonical version", async () => {
+        const el = await mount(async () => SAMPLE);
+        await settle(el);
+        el.shadowRoot!.querySelector("rune-segmented")!.dispatchEvent(
+            new CustomEvent("change", {
+                detail: { value: "remote" },
+                bubbles: true,
+                composed: true,
+            }),
+        );
+        await settle(el);
+
+        const dels = el.shadowRoot!.querySelectorAll(".del") as NodeListOf<HTMLElement>;
+        dels[0].click(); // HEAD on remote
+        await el.updateComplete;
+        expect(el.shadowRoot!.textContent).to.contain("latest canonical version");
+        expect(el.shadowRoot!.textContent).to.contain("new HEAD");
+    });
+
+    it("Local-tab delete carries scope:'local' in the event detail", async () => {
+        const el = await mount(async () => SAMPLE);
+        await settle(el);
+        const dels = el.shadowRoot!.querySelectorAll(".del") as NodeListOf<HTMLElement>;
+        dels[2].click();
+        await el.updateComplete;
+
+        setTimeout(() => press(button(el, "Delete")!));
+        const ev = await oneEvent(el, "delete");
+        const d = ev.detail as DeleteConfirmDetail;
+        expect(d.scope).to.equal("local", "Local tab × emits scope:'local'");
     });
 
     it("delete is a two-step inline confirm — no event until Delete pressed", async () => {

@@ -27,10 +27,13 @@ export const upload = () => Control.Upload();
 // another flow is Running.
 export const listVersions = (scope: VersionScope) => Control.ListVersions(scope);
 export const restore = (refID: string) => Control.Restore(refID);
-// Per-version delete (design-log/045 §A). Drops refs/<id>.json from local +
-// GCs orphan blobs; clears settings.LoadedRefID if the deleted id was loaded
-// so the "current" badge falls back to IsHead.
+// Per-version delete (design-log/045 §A + post-ship remote-delete extension,
+// user direction 2026-06-05). Local: drops refs/<id>.json + GCs orphan blobs;
+// clears settings.LoadedRefID if the deleted id was loaded so the "current"
+// badge falls back to IsHead. Remote: same shape on the canonical store,
+// does not touch local state or LoadedRefID.
 export const deleteLocalVersion = (refID: string) => Control.DeleteLocalVersion(refID);
+export const deleteRemoteVersion = (refID: string) => Control.DeleteRemoteVersion(refID);
 // Revert workdir to local HEAD (design-log/045 §C). Drops uncommitted edits;
 // observable no-op when unpushed-only. Rejected while another flow runs.
 export const revert = () => Control.Revert();

@@ -206,6 +206,7 @@ type ControlService struct {
 	// the one the workdir was anchored to (design-log/044 + /045 §Q2). Any
 	// of these may be nil in tests; the methods degrade explicitly.
 	localDeleter     LocalDeleter
+	remoteDeleter    RemoteDeleter
 	loadedRefID      LoadedIDFn
 	clearLoadedRefID SettingsClearer
 
@@ -455,6 +456,15 @@ func (c *ControlService) SetVersionDeleter(deleter LocalDeleter, loadedID Loaded
 	c.localDeleter = deleter
 	c.loadedRefID = loadedID
 	c.clearLoadedRefID = clearLoaded
+}
+
+// SetRemoteVersionDeleter wires DeleteRemoteVersion (045 post-ship extension
+// — user override of §Q4, 2026-06-05). Distinct setter so the local + remote
+// closures stay explicit at the composition root; passing nil leaves
+// DeleteRemoteVersion returning an explicit "not wired" error rather than
+// silently no-oping.
+func (c *ControlService) SetRemoteVersionDeleter(deleter RemoteDeleter) {
+	c.remoteDeleter = deleter
 }
 
 // SetLocalStatsFn wires GetLocalStorageStats (design-log/045 §E). The
