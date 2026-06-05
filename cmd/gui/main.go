@@ -95,6 +95,12 @@ func main() {
 	})
 
 	var shuttingDown atomic.Bool
+	// lifecycleRunning mirrors the latest lifecycle.StatusChanged so the
+	// main-window close hook can tell whether a graceful drain is needed.
+	// Without this, waitTerminal blocked the full 20s budget on every close
+	// because lifecycle.stop() is a no-op outside Running and no subsequent
+	// StatusChanged is ever published — the app looked like it ignored close.
+	var lifecycleRunning atomic.Bool
 
 	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:                "main",
@@ -144,6 +150,10 @@ func main() {
 			return
 		}
 		shuttingDown.Store(true)
+		if !lifecycleRunning.Load() {
+			go wailsApp.Quit()
+			return
+		}
 		e.Cancel()
 		go func() {
 			runtime.bus.Publish(ritual.StopRequested{})
@@ -153,6 +163,26 @@ func main() {
 	})
 
 	ctx := wailsApp.Context()
+	// Track lifecycle.Running so the close hook can skip the 20s drain when
+	// nothing is in flight. Subscribed before lifecycle.Attach below so we see
+	// every transition; the initial Idle from Attach leaves the flag false.
+	go func() {
+		ch, unsub := runtime.bus.Subscribe()
+		defer unsub()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case evt, ok := <-ch:
+				if !ok {
+					return
+				}
+				if sc, ok := evt.(lifecycle.StatusChanged); ok {
+					lifecycleRunning.Store(sc.Status == lifecycle.Running)
+				}
+			}
+		}
+	}()
 	// OS notifications (design-log/047): project the critical run transitions
 	// (server up / clean stop / failure) onto native toasts. Pure bus consumer
 	// behind the notify.Notifier port — wailsNotifier is the only platform seam.

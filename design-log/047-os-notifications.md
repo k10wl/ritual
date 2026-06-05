@@ -200,3 +200,42 @@ Windows registration before any toast is sent.
 - **Per-event goroutine** for `Notify` trades strict ordering of toasts for a
   guarantee that the bus consumer never blocks. Toast ordering is not
   user-meaningful here.
+
+## Implementation Results
+
+Shipped as designed (commit `39f1531`).
+
+- **Subsystem** — `internal/subsystems/notify/notify.go`: `Notifier` port +
+  `Attach` consumer with the `sawReady`/`runSeq` latches per the §Design table.
+  No Wails import (verified — unit-tested against a fake notifier).
+- **Adapter + wiring** — `cmd/gui/notify.go` (`wailsNotifier`); `notifications.New()`
+  registered in `Services` and `notify.Attach(ctx, runtime.bus, …)` after
+  `wailsApp.Context()`.
+- **Q3 / Q5 confirmed** as proposed: notify on **any** flow failure; **no**
+  focus suppression.
+- **Tests** — `notify_test.go`: start→stop emits two toasts; Download `Done`
+  emits none (gate); `Failed` emits one with the error in the body; `runSeq`
+  increments per `FlowStartedInfo`. `go test ./internal/subsystems/notify/...`
+  + `./cmd/gui/...` green.
+
+### Adjacent fix — close-hook drain skip (out of original scope)
+
+While wiring the `ctx`-subscription consumer, the same bus-consumer pattern
+exposed a pre-existing shutdown bug, fixed in the same region of `main.go`:
+
+- **Symptom** — closing the window always blocked the full 20s `waitTerminal`
+  budget before quitting; the app looked like it ignored the close.
+- **Cause** — the close hook published `StopRequested` and waited for a terminal
+  `StatusChanged`. Outside `Running`, `lifecycle.stop()` is a no-op and publishes
+  nothing, so `waitTerminal` only ever returned on the 20s timeout.
+- **Fix** — a `lifecycleRunning atomic.Bool` mirrored from `StatusChanged`
+  (every flow transits `Running`, lifecycle.go:160-165, so the latch means "any
+  flow in flight"). The close hook now quits immediately when the latch is false
+  and only runs the graceful drain when a flow is actually live. The mirror
+  goroutine subscribes before `lifecycle.Attach` so the initial `Idle` leaves the
+  flag false.
+
+### Deviations
+
+None from the 047 design. The close-hook drain skip above is an adjacent
+shutdown-correctness fix, not a change to the notifications design.
