@@ -36,16 +36,19 @@ func (s StatusChanged) String() string {
 }
 
 // Entries holds the pipeline entry strategies the controller can drive
-// (design-log/031, /038). Session is the play-a-world chain; Download, Upload,
-// and Restore are the server-free flows. A nil entry means that gesture is not
-// wired — startWith rejects it. The composition root builds them from
-// pipeline.Build / BuildDownload / BuildUpload / BuildRestore.
+// (design-log/031, /038, /045). Session is the play-a-world chain; Download,
+// Upload, Restore, Revert, and RetentionApply are the server-free flows. A nil
+// entry means that gesture is not wired — startWith rejects it. The
+// composition root builds them from pipeline.Build / BuildDownload /
+// BuildUpload / BuildRestore / BuildRevert / BuildRetentionApply.
 type Entries struct {
-	Session      machine.Strategy[ritual.RunState]
-	LocalSession machine.Strategy[ritual.RunState]
-	Download     machine.Strategy[ritual.RunState]
-	Upload       machine.Strategy[ritual.RunState]
-	Restore      machine.Strategy[ritual.RunState]
+	Session        machine.Strategy[ritual.RunState]
+	LocalSession   machine.Strategy[ritual.RunState]
+	Download       machine.Strategy[ritual.RunState]
+	Upload         machine.Strategy[ritual.RunState]
+	Restore        machine.Strategy[ritual.RunState]
+	Revert         machine.Strategy[ritual.RunState]
+	RetentionApply machine.Strategy[ritual.RunState]
 }
 
 // Controller holds the per-run mutable state. The Attach goroutine is the
@@ -119,6 +122,15 @@ func Attach(parent context.Context, bus ports.EventBus, entries Entries, session
 					c.startWith(ctx, c.entries.Restore, ritual.FlowRestore, false, func(rs *ritual.RunState) {
 						rs.TargetRefID = refID
 					})
+				case ritual.RevertRequested:
+					// Revert (design-log/045 §C): snap workdir back to local HEAD.
+					// No target id — the chain resolves HEAD via LocalHeadResolver.
+					c.startWith(ctx, c.entries.Revert, ritual.FlowRevert, false)
+				case ritual.ApplyRetentionRequested:
+					// Apply retention now (design-log/045 §D): runs the same
+					// retention Jobs the sync flows already drive, end-to-end in
+					// one beat.
+					c.startWith(ctx, c.entries.RetentionApply, ritual.FlowRetentionApply, false)
 				case ritual.StopRequested:
 					c.stop()
 				case ritual.DismissRequested:

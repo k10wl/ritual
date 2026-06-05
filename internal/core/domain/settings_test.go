@@ -200,7 +200,8 @@ func TestSettingsSavePrettyPrints(t *testing.T) {
     "keep_daily": 0,
     "keep_weekly": 0,
     "keep_monthly": 0
-  }
+  },
+  "loaded_ref_id": ""
 }`, config.DefaultMinRAMMB, config.DefaultMinDiskMB, config.DefaultMinJavaVersion)
 	if string(content) != expected {
 		t.Errorf("expected pretty printed JSON:\n%s\n\ngot:\n%s", expected, string(content))

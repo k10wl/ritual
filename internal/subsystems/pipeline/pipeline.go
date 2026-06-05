@@ -162,6 +162,47 @@ func BuildRestore(d Deps) machine.Strategy[ritual.RunState] {
 	return check
 }
 
+// BuildRevert wires the "snap workdir back to local HEAD" flow (design-log/045
+// §C): Checking → Pulling(FromHead(localHeadResolver)) → Done. Same family as
+// BuildRestore but the resolver is the local HEAD (not a per-request target),
+// so the chain has no `rs.TargetRefID` dependency. Read-only on the remote
+// (no Acquiring/Pushing/Unlocking), and no retention — re-applying an existing
+// ref creates nothing to prune. HEAD never moves; the workdir is restored from
+// local blobs. The trailing nil onOK terminates the chain (Done). On the
+// `ErrNoHead` path (no local refs yet — fresh install) the Pulling stage
+// short-circuits to onOK as a no-op success; Revert is a no-op there, the
+// honest outcome.
+func BuildRevert(d Deps) machine.Strategy[ritual.RunState] {
+	failCheck := failed.New(ritual.StageChecking)
+	failPull := failed.New(ritual.StagePulling)
+
+	pull := pulling.New(d.Puller, d.Applier, d.LocalHeadResolver, nil, failPull)
+	check := checking.New(d.Checks, pull, failCheck)
+
+	return check
+}
+
+// BuildRetentionApply wires the user-triggered prune-now flow (design-log/045
+// §D): Checking → Retaining(local) → Retaining(remote) → Done. Reuses the
+// session/sync flows' Jobs unchanged (rules are read fresh from settings.json
+// at Select time per [[039]]), so applying the latest Apply'd policy needs no
+// new wiring beyond the chain. No Pulling/Pushing/Acquiring — the prune
+// operates entirely on the manifest keyspace (refs/, objects/), and remote
+// retention is the same lockless Delete pattern the sync flows already use.
+// A remote failure routes to failRetRemote (Failed with attribution); local
+// always runs first so a remote outage cannot block local cleanup.
+func BuildRetentionApply(d Deps) machine.Strategy[ritual.RunState] {
+	failCheck := failed.New(ritual.StageChecking)
+	failRetLocal := failed.New(ritual.StageRetainingLocal)
+	failRetRemote := failed.New(ritual.StageRetainingRemote)
+
+	pruneRemote := retaining.New(d.RemoteRetentions, d.Bus, failRetRemote, nil)
+	pruneLocal := retaining.New(d.LocalRetentions, d.Bus, failRetLocal, pruneRemote)
+	check := checking.New(d.Checks, pruneLocal, failCheck)
+
+	return check
+}
+
 // BuildLocalSession wires the skip-sync / local-only session (design-log/036,
 // no-save reversal): Checking → Running → Done. The entire save half is
 // dropped — no Pulling, no Acquiring (lock), no Committing, no Retaining, no

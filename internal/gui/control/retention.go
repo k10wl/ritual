@@ -6,15 +6,13 @@ import (
 	"ritual/internal/core/domain"
 )
 
-// maxTier is the inclusive upper bound the GUI segmented control offers per tier
-// (design-log/033 §Q1). keep_last:0 is allowed — it is the spec's documented
-// "prune everything next session" edge case, surfaced with a caution in the UI,
-// not blocked here.
-const maxTier = 5
-
 // RetentionConfig is the local + remote retention rule pair surfaced to the
-// Retention section in Advanced (design-log/039). Each side is four 0..5 tier
-// counts. The frontend edits one side at a time (scope switch) and persists both.
+// Retention section in Advanced (design-log/039). Each side is four
+// non-negative tier counts (uncapped per design-log/033 supersession §3 —
+// the original 0..5 §Q1 cap was lifted along with the segmented→stepper
+// switch). The frontend edits one side at a time (scope switch) and persists
+// both. keep_last:0 is allowed — the spec's documented "prune everything next
+// session" edge case, surfaced with a caution in the UI, not blocked here.
 type RetentionConfig struct {
 	Local  domain.RetentionRules `json:"local"`
 	Remote domain.RetentionRules `json:"remote"`
@@ -37,9 +35,10 @@ func (c *ControlService) GetRetentionRules() RetentionConfig {
 
 // SetRetentionRules validates and persists both sides' rules. The next prune
 // reads the file fresh (design-log/039 §Q1), so the change takes effect on the
-// next sync without a restart. Each tier must be 0..5; keep_last:0 is permitted
-// (the spec edge case). Out-of-range values are rejected before any write so a
-// malformed call can't corrupt the policy.
+// next sync without a restart. Each tier must be non-negative (no upper cap —
+// see design-log/033 supersession §3); keep_last:0 is permitted (the spec
+// edge case). Negatives are rejected before any write so a malformed call
+// can't corrupt the policy.
 func (c *ControlService) SetRetentionRules(local, remote domain.RetentionRules) error {
 	if err := validateRules("local", local); err != nil {
 		return err
@@ -78,8 +77,8 @@ func validateRules(side string, r domain.RetentionRules) error {
 		{"keep_weekly", r.KeepWeekly},
 		{"keep_monthly", r.KeepMonthly},
 	} {
-		if tier.n < 0 || tier.n > maxTier {
-			return fmt.Errorf("%s %s must be between 0 and %d, got %d", side, tier.name, maxTier, tier.n)
+		if tier.n < 0 {
+			return fmt.Errorf("%s %s must be non-negative, got %d", side, tier.name, tier.n)
 		}
 	}
 	return nil

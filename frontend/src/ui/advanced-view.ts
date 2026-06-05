@@ -18,7 +18,7 @@ import "./retention-rules";
 import "./primitives/rune-button";
 import type { PrepSettings } from "./prep-settings";
 import type { SyncVerdict } from "./sync-view";
-import type { VersionRow } from "./versions-view";
+import type { VersionRow, VersionScope, LocalStorageStatsLike } from "./versions-view";
 import type { RetentionChangeDetail } from "./retention-rules";
 import type { RetentionRules } from "./retention-model";
 
@@ -28,13 +28,24 @@ type RetentionPair = { local: RetentionRules; remote: RetentionRules };
 @customElement("advanced-view")
 export class AdvancedView extends LitElement {
     @property({ attribute: false }) config: PrepSettings = { port: 25565, memoryMB: 4096 };
+    // Transient skip-sync toggle (design-log/036 §Q6), host-owned per [[044]].
+    // Forwarded down so a re-mounted <prep-settings> (lazy nav stack, [[034]])
+    // reflects the session's current value instead of resetting to OFF.
+    @property({ type: Boolean }) skipSync = false;
     @property({ attribute: false }) check: () => Promise<SyncVerdict> = async () => ({
         behind: false,
         ahead: false,
     });
-    // Version listing for the rollback section (design-log/038), injected by the
-    // host (wraps listVersions). `dirty` surfaces the "Publish first" nudge.
-    @property({ attribute: false }) versions: () => Promise<VersionRow[]> = async () => [];
+    // Version listing for the rollback section (design-log/038), now scope-
+    // aware so the tab switch (design-log/045 §B) can re-run with Local /
+    // Remote. `dirty` surfaces the "Publish first" nudge inside the Restore
+    // confirm. `versionStats` feeds the on-disk header (Local tab only,
+    // design-log/045 §E).
+    @property({ attribute: false }) versions: (scope: VersionScope) => Promise<VersionRow[]> = async () => [];
+    @property({ attribute: false }) versionStats: () => Promise<LocalStorageStatsLike> = async () => ({
+        bytesOnDisk: 0,
+        objectCount: 0,
+    });
     @property({ type: Boolean }) dirty = false;
     // Retention rules section (design-log/039), injected by the host: loadRules
     // wraps getRetentionRules (snake→camel mapped host-side). The preview is
@@ -83,7 +94,7 @@ export class AdvancedView extends LitElement {
         return html`
             <section>
                 <p class="label">Server</p>
-                <prep-settings .config=${this.config}></prep-settings>
+                <prep-settings .config=${this.config} ?skipSync=${this.skipSync}></prep-settings>
             </section>
             <section>
                 <p class="label">Sync</p>
@@ -91,7 +102,11 @@ export class AdvancedView extends LitElement {
             </section>
             <section>
                 <p class="label">Versions</p>
-                <versions-view .list=${this.versions} ?dirty=${this.dirty}></versions-view>
+                <versions-view
+                    .list=${this.versions}
+                    .stats=${this.versionStats}
+                    ?dirty=${this.dirty}
+                ></versions-view>
             </section>
             <section>
                 <p class="label">Retention</p>
@@ -99,6 +114,7 @@ export class AdvancedView extends LitElement {
                     .local=${this._rules.local}
                     .remote=${this._rules.remote}
                     @change=${this.#onRetentionChange}
+                    @apply=${this.#onRetentionApply}
                 ></retention-rules>
             </section>
             <section>
@@ -119,16 +135,39 @@ export class AdvancedView extends LitElement {
         this.dispatchEvent(new CustomEvent("checkupdate", { bubbles: true, composed: true }));
     };
 
-    // Retention edits arrive as a generic `change`; stop it here so it can't be
-    // mistaken for the prep-settings `change` the host already listens to, then
-    // re-emit as the distinct `retentionchange` the host persists. Track the new
-    // rules locally so the picker's summary/timeline stay consistent.
+    // Retention edits arrive as a generic `change` from `<retention-rules>`.
+    // Under the staged-edit model (design-log/045 §D) this fires on every
+    // stepper tap but does NOT auto-save; the host listens for `apply`
+    // instead. We still track the live values locally so the cascade stays
+    // consistent, and we still re-emit as `retentionchange` so any external
+    // subscribers (none in production today) keep seeing them. Stop the
+    // generic `change` so it can't be mistaken for the prep-settings `change`
+    // the host listens to.
     #onRetentionChange = (e: Event) => {
         e.stopPropagation();
         const detail = (e as CustomEvent<RetentionChangeDetail>).detail;
         this._rules = { local: detail.local, remote: detail.remote };
         this.dispatchEvent(
             new CustomEvent<RetentionChangeDetail>("retentionchange", {
+                detail,
+                bubbles: true,
+                composed: true,
+            }),
+        );
+    };
+
+    // Retention Apply (design-log/045 §D): the user pressed Apply on the
+    // staged-edit bar. Stop the inner `apply` so it doesn't collide with any
+    // unrelated `apply` events bubbling through the navigation stack, and
+    // re-emit as the distinct `retentionapply` the host handles
+    // (setRetentionRules + applyRetentionNow). Carries the {local, remote}
+    // payload the host needs to persist.
+    #onRetentionApply = (e: Event) => {
+        e.stopPropagation();
+        const detail = (e as CustomEvent<RetentionChangeDetail>).detail;
+        this._rules = { local: detail.local, remote: detail.remote };
+        this.dispatchEvent(
+            new CustomEvent<RetentionChangeDetail>("retentionapply", {
                 detail,
                 bubbles: true,
                 composed: true,

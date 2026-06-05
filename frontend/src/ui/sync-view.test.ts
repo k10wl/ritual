@@ -126,4 +126,49 @@ describe("sync-view", () => {
         expect(fired).to.equal(false);
         expect(button(el, "Download")).to.exist; // back to the verdict
     });
+
+    // ── design-log/045 §C ─────────────────────────────────────────────────────
+
+    it("ahead → 'Revert to last saved' appears as secondary beside Publish", async () => {
+        const el = await mount(async () => ({ behind: false, ahead: true, dirty: true }));
+        press(button(el, "Check remote")!);
+        await aTimeout(0);
+        await el.updateComplete;
+        expect(button(el, "Publish")).to.exist;
+        expect(button(el, "Revert to last saved")).to.exist;
+    });
+
+    it("not ahead (in sync) → no Revert button", async () => {
+        const el = await mount(async () => ({ behind: false, ahead: false }));
+        press(button(el, "Check remote")!);
+        await aTimeout(0);
+        await el.updateComplete;
+        expect(button(el, "Revert to last saved")).to.not.exist;
+    });
+
+    it("Revert confirm with dirty workdir spells out the consequence", async () => {
+        const el = await mount(async () => ({ behind: false, ahead: true, dirty: true }));
+        press(button(el, "Check remote")!);
+        await aTimeout(0);
+        await el.updateComplete;
+
+        press(button(el, "Revert to last saved")!);
+        await el.updateComplete;
+        expect(bodyText(el)).to.contain("Throw away your unsaved changes");
+
+        setTimeout(() => press(button(el, "Revert")!));
+        const ev = await oneEvent(el, "sync");
+        expect((ev.detail as SyncConfirmDetail).direction).to.equal("revert");
+    });
+
+    it("Revert confirm in unpushed-only state is honest about being a no-op", async () => {
+        const el = await mount(async () => ({ behind: false, ahead: true, dirty: false }));
+        press(button(el, "Check remote")!);
+        await aTimeout(0);
+        await el.updateComplete;
+
+        press(button(el, "Revert to last saved")!);
+        await el.updateComplete;
+        expect(bodyText(el)).to.contain("Nothing changes — there's nothing to throw away");
+    });
 });

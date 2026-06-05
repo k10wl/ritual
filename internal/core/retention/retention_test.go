@@ -27,13 +27,17 @@ func writeRules(t *testing.T, local, remote domain.RetentionRules) {
 	require.NoError(t, s.Save(), "seed settings.json for the prune-time read")
 }
 
+// Refs use domain.RefIDFormat ("2006-01-02T15-04-05.000Z"), not the dense
+// log-filename format. Earlier fixtures used the wrong format and passed only
+// because the production parseTime had the same bug — fixed 2026-06-05 per
+// design-log/045 §Bug3 follow-up.
 func threeRefs() *mocks.MockStorageRepository {
 	storage := &mocks.MockStorageRepository{}
 	storage.ListFunc = func(_ context.Context, _ string) ([]string, error) {
 		return []string{
-			"refs/20260414160000.json",
-			"refs/20260413160000.json",
-			"refs/20260412160000.json",
+			"refs/2026-04-14T16-00-00.000Z.json",
+			"refs/2026-04-13T16-00-00.000Z.json",
+			"refs/2026-04-12T16-00-00.000Z.json",
 		}, nil
 	}
 	return storage
@@ -50,9 +54,9 @@ func TestRefsRetention_Select_ListsRefsAndReturnsMarkedDrops(t *testing.T) {
 			t.Errorf("refs retention must list the refs/ keyspace, got prefix %q", prefix)
 		}
 		return []string{
-			"refs/20260414160000.json",
-			"refs/20260413160000.json",
-			"refs/20260412160000.json",
+			"refs/2026-04-14T16-00-00.000Z.json",
+			"refs/2026-04-13T16-00-00.000Z.json",
+			"refs/2026-04-12T16-00-00.000Z.json",
 		}, nil
 	}
 
@@ -62,7 +66,7 @@ func TestRefsRetention_Select_ListsRefsAndReturnsMarkedDrops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("healthy list must not error: %v", err)
 	}
-	if len(got) != 1 || got[0] != "refs/20260412160000.json" {
+	if len(got) != 1 || got[0] != "refs/2026-04-12T16-00-00.000Z.json" {
 		t.Errorf("KeepLast:2 must drop only the oldest; got %v", got)
 	}
 }

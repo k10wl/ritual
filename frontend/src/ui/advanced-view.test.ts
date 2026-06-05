@@ -60,6 +60,33 @@ describe("advanced-view", () => {
         expect(v.dirty).to.equal(true);
     });
 
+    it("forwards versionStats down to versions-view (design-log/045 §E)", async () => {
+        const stats = async () => ({ bytesOnDisk: 0, objectCount: 0 });
+        const el = await fixture<AdvancedView>(
+            html`<advanced-view .versionStats=${stats}></advanced-view>`,
+        );
+        const v = el.shadowRoot!.querySelector("versions-view") as HTMLElement & {
+            stats: unknown;
+        };
+        expect(v.stats).to.equal(stats);
+    });
+
+    it("lets child delete events bubble through to the host (design-log/045 §A)", async () => {
+        const el = await fixture<AdvancedView>(html`<advanced-view></advanced-view>`);
+        let bubbled = false;
+        el.addEventListener("delete", () => (bubbled = true));
+        el.shadowRoot!
+            .querySelector("versions-view")!
+            .dispatchEvent(
+                new CustomEvent("delete", {
+                    detail: { refID: "x" },
+                    bubbles: true,
+                    composed: true,
+                }),
+            );
+        expect(bubbled).to.equal(true);
+    });
+
     it("re-emits retention-rules `change` as a distinct `retentionchange` (no collision with prep `change`)", async () => {
         const el = await fixture<AdvancedView>(html`<advanced-view></advanced-view>`);
         let prepChange = false;
@@ -87,6 +114,16 @@ describe("advanced-view", () => {
             .querySelector("versions-view")!
             .dispatchEvent(new CustomEvent("restore", { detail: { refID: "x" }, bubbles: true, composed: true }));
         expect(bubbled).to.equal(true);
+    });
+
+    it("forwards skipSync down to prep-settings (design-log/044 §Phase C)", async () => {
+        const el = await fixture<AdvancedView>(
+            html`<advanced-view ?skipSync=${true}></advanced-view>`,
+        );
+        const prep = el.shadowRoot!.querySelector("prep-settings") as HTMLElement & {
+            skipSync: boolean;
+        };
+        expect(prep.skipSync).to.equal(true);
     });
 
     it("disables Check for update unless canUpdate (dial idle) — design-log/037 §Q4", async () => {

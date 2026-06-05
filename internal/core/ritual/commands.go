@@ -47,6 +47,25 @@ type RestoreRequested struct{ RefID domain.RefID }
 
 func (r RestoreRequested) String() string { return "restore requested " + string(r.RefID) }
 
+// RevertRequested commands the lifecycle to snap the workdir back to local
+// HEAD (design-log/045 §C). Same chain shape as Restore but the target is the
+// local HEAD resolver, not a per-request ref. Server-free, lockless, read-
+// only on the remote. HEAD never moves; the workdir is re-applied from local
+// blobs. In the dirty case this drops uncommitted edits; in the unpushed-
+// only case it is an observable no-op (workdir already matches HEAD).
+// Rejected while any other flow is Running (shared status).
+type RevertRequested struct{}
+
+func (RevertRequested) String() string { return "revert requested" }
+
+// ApplyRetentionRequested commands the lifecycle to run the retention prune
+// now (design-log/045 §D). Routes to a Checking → Retaining(local) →
+// Retaining(remote) → Done chain that reuses the same retention jobs the
+// session/sync flows already run. Rejected while any other flow is Running.
+type ApplyRetentionRequested struct{}
+
+func (ApplyRetentionRequested) String() string { return "apply retention requested" }
+
 // StopRequested commands the lifecycle to cancel the running pipeline.
 // Userstop is graceful: a cancellation propagating through stages resolves
 // to Done, not Failed.

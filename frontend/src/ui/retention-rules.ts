@@ -1,32 +1,49 @@
 /**
  * Retention rules — editable Borg-style tier picker, explained at an ELI5 level
- * (design-log/033; wired by /039; re-revised 2026-06-04 to plain language).
+ * (design-log/033; wired by /039; re-revised 2026-06-04 to plain language;
+ * staged-edits rework 2026-06-05 per design-log/045 §D).
  *
  * One row per keep-type: a friendly `Keep …` label, an uncapped `rune-stepper`,
- * and a single plain-English sentence that rewrites itself as the number changes
- * (e.g. "Always keep your 9 newest backups."). No timeline, no dots — earlier
- * dot/calendar previews turned a count into a clump of meaningless dots; the
- * meaning lives better in words (frontend/CLAUDE.md: cut what doesn't earn its
- * space). A Local·Remote scope `rune-segmented` edits both sides; a keep_last:0
- * caution remains.
+ * and a single plain-English sentence that rewrites itself as the number
+ * changes (e.g. "Always keep your 9 newest backups."). A Local·Remote
+ * `rune-segmented` edits both sides; a keep_last:0 caution remains.
  *
- * Presentational + pure: holds both sides' `rules`, emits `change` {local,
- * remote} on any edit. No wall-clock read.
+ * **Staged-edit model (design-log/045 §D / §Q6 decided):** stepper taps mutate
+ * a local *draft* state; the saved baseline (the `local` / `remote` props the
+ * host passes in) is unchanged until Apply. When the draft differs from the
+ * baseline, an **Apply bar** appears with Apply (primary) + Discard (tinted).
+ * Apply emits `apply` { local, remote }; the host persists via
+ * `setRetentionRules` AND runs `applyRetentionNow` to prune immediately. The
+ * old auto-save-on-every-tap behaviour is gone — the user now has a clear
+ * commit moment and can twiddle without committing.
+ *
+ * Presentational + pure: no wall-clock read; no Wails-api calls; renders from
+ * either draft (when dirty) or baseline (clean).
  */
 
-import { LitElement, css, html } from "lit";
+import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./primitives/rune-segmented";
 import "./primitives/rune-stepper";
+import "./primitives/rune-button";
 import "./primitives/decoder";
 import type { RetentionRules, Tier } from "./retention-model";
 
 export type RetentionScope = "local" | "remote";
 
+/** Emitted on every staged edit (`change`) and on Apply (`apply`). Same shape;
+ * the host listens to `apply` to persist + prune, and may ignore `change`
+ * (kept for testability + future hooks). */
 export interface RetentionChangeDetail {
     local: RetentionRules;
     remote: RetentionRules;
 }
+
+const equalRules = (a: RetentionRules, b: RetentionRules) =>
+    a.keepLast === b.keepLast &&
+    a.keepDaily === b.keepDaily &&
+    a.keepWeekly === b.keepWeekly &&
+    a.keepMonthly === b.keepMonthly;
 
 // One active tier in the nested cascade: tier, subtle label, selected count, and
 // how far back it reaches (days, the shared scale that drives the nesting widths).
@@ -155,10 +172,19 @@ export function describePolicy(r: RetentionRules): string {
 
 @customElement("retention-rules")
 export class RetentionRulesEl extends LitElement {
+    // Baseline — the persisted rules the host hands down. Treated as the
+    // single source of truth for "what's saved right now"; the draft is what
+    // the user has typed but not yet committed (design-log/045 §D).
     @property({ attribute: false }) local: RetentionRules = { ...DEFAULT_RULES };
     @property({ attribute: false }) remote: RetentionRules = { ...DEFAULT_RULES };
 
     @state() private _scope: RetentionScope = "local";
+
+    // Drafts — null means "no staged edits, render from baseline". On the first
+    // stepper tap they fork from baseline; Apply / Discard / new baseline (host
+    // re-load) clears them back to null.
+    @state() private _draftLocal: RetentionRules | null = null;
+    @state() private _draftRemote: RetentionRules | null = null;
 
     static styles = css`
         :host {
@@ -265,10 +291,67 @@ export class RetentionRulesEl extends LitElement {
             line-height: 1.5;
             font-size: var(--fs-caption);
         }
+
+        /* Apply bar — surfaces only when there are staged edits
+           (design-log/045 §D). Quiet hint on the left, Discard + Apply pinned
+           right. Same register as the rest of Advanced: monospace, low-key,
+           the primary action carries the weight. */
+        .apply-bar {
+            margin-top: var(--space-4);
+            padding: var(--space-3);
+            border-top: 1px solid var(--stone-bevel);
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: center;
+            gap: var(--space-3);
+        }
+        .apply-hint {
+            color: var(--text-muted);
+            font-size: var(--fs-caption);
+        }
+        .apply-actions {
+            display: flex;
+            gap: var(--space-2);
+        }
     `;
 
+    // Effective rules for the active scope: draft when dirty, baseline when
+    // clean. Always normalised (zero-default-fill) — never `undefined`-leaning
+    // since the prune engine treats {0,0,0,0} as defaults.
     private get rules(): RetentionRules {
-        return normalizeRules(this._scope === "remote" ? this.remote : this.local);
+        if (this._scope === "remote") {
+            return normalizeRules(this._draftRemote ?? this.remote);
+        }
+        return normalizeRules(this._draftLocal ?? this.local);
+    }
+
+    /** Combined effective draft (or baseline if clean) for both sides — what
+     * Apply emits. */
+    private effectiveBoth(): { local: RetentionRules; remote: RetentionRules } {
+        return {
+            local: normalizeRules(this._draftLocal ?? this.local),
+            remote: normalizeRules(this._draftRemote ?? this.remote),
+        };
+    }
+
+    /** True iff the user has touched either side since the last Apply/Discard. */
+    private isDirty(): boolean {
+        const eff = this.effectiveBoth();
+        return !equalRules(eff.local, normalizeRules(this.local)) ||
+            !equalRules(eff.remote, normalizeRules(this.remote));
+    }
+
+    // Reset drafts to null whenever the host hands down a new baseline (e.g.
+    // after Apply success the host re-loads and pipes fresh `local` / `remote`
+    // values back in). Without this the staged edits would shadow the saved
+    // state forever after a successful Apply.
+    willUpdate(changed: Map<string, unknown>) {
+        if (changed.has("local") && this._draftLocal && equalRules(this._draftLocal, normalizeRules(this.local))) {
+            this._draftLocal = null;
+        }
+        if (changed.has("remote") && this._draftRemote && equalRules(this._draftRemote, normalizeRules(this.remote))) {
+            this._draftRemote = null;
+        }
     }
 
     // Shared decoder tuning: this panel shows many texts at once, so idle jitter is
@@ -288,6 +371,7 @@ export class RetentionRulesEl extends LitElement {
 
     render() {
         const rules = this.rules;
+        const dirty = this.isDirty();
         return html`
             <div class="switch">
                 <rune-segmented
@@ -302,6 +386,23 @@ export class RetentionRulesEl extends LitElement {
             </div>
             ${this.#renderCascade(rules)}
             ${rules.keepLast === 0 ? this.#renderCaution(rules) : null}
+            ${dirty ? this.#renderApplyBar() : nothing}
+        `;
+    }
+
+    // Apply bar (design-log/045 §D) — appears only when the draft differs from
+    // the saved baseline. Two actions: Apply (primary, persists + prunes via
+    // the host) and Discard (tinted, drops the staged edits and restores the
+    // baseline rules in-place).
+    #renderApplyBar() {
+        return html`
+            <div class="apply-bar" role="region" aria-label="Pending retention edits">
+                ${this.#decoder("Unsaved changes.", "apply-hint")}
+                <div class="apply-actions">
+                    <rune-button variant="tinted" @press=${this.#discard}>Discard</rune-button>
+                    <rune-button variant="primary" @press=${this.#apply}>Apply</rune-button>
+                </div>
+            </div>
         `;
     }
 
@@ -397,18 +498,63 @@ export class RetentionRulesEl extends LitElement {
         this._scope = e.detail.value as RetentionScope;
     };
 
+    // Stepper changes mutate the *draft*, not the baseline (design-log/045
+    // §D). The `change` event still fires for fine-grained subscribers /
+    // tests, but the host listens for `apply` and ignores `change`. If the
+    // edit happens to land back on the baseline value, the draft self-clears
+    // so the Apply bar collapses honestly.
     #onTier(key: keyof RetentionRules, value: number) {
         const next: RetentionRules = { ...this.rules, [key]: value };
-        if (this._scope === "remote") this.remote = next;
-        else this.local = next;
+        if (this._scope === "remote") {
+            this._draftRemote = equalRules(next, normalizeRules(this.remote)) ? null : next;
+        } else {
+            this._draftLocal = equalRules(next, normalizeRules(this.local)) ? null : next;
+        }
+        const eff = this.effectiveBoth();
         this.dispatchEvent(
             new CustomEvent<RetentionChangeDetail>("change", {
-                detail: { local: this.local, remote: this.remote },
+                detail: eff,
                 bubbles: true,
                 composed: true,
             }),
         );
     }
+
+    #apply = () => {
+        const detail = this.effectiveBoth();
+        // Optimistically commit the draft to baseline so the Apply bar collapses
+        // immediately. The host re-load after persistence will land on the same
+        // values, so willUpdate's null-self-heal keeps drafts at null.
+        this.local = detail.local;
+        this.remote = detail.remote;
+        this._draftLocal = null;
+        this._draftRemote = null;
+        this.dispatchEvent(
+            new CustomEvent<RetentionChangeDetail>("apply", {
+                detail,
+                bubbles: true,
+                composed: true,
+            }),
+        );
+    };
+
+    #discard = () => {
+        this._draftLocal = null;
+        this._draftRemote = null;
+        // Echo a clean `change` so subscribers tracking the "live" rules go
+        // back to baseline. The host doesn't need it (it only listens for
+        // `apply`) but tests + Storybook find it handy.
+        this.dispatchEvent(
+            new CustomEvent<RetentionChangeDetail>("change", {
+                detail: {
+                    local: normalizeRules(this.local),
+                    remote: normalizeRules(this.remote),
+                },
+                bubbles: true,
+                composed: true,
+            }),
+        );
+    };
 }
 
 declare global {

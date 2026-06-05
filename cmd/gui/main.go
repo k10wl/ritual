@@ -34,6 +34,7 @@ import (
 	"ritual/internal/gui/projection"
 	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/subsystems/livesync"
+	"ritual/internal/subsystems/loadedref"
 	"ritual/internal/subsystems/logging"
 	"ritual/internal/subsystems/pipeline"
 	"ritual/internal/subsystems/remote"
@@ -63,6 +64,11 @@ func main() {
 	}
 
 	controlSvc := control.NewControlService(runtime.bus, runtime.projection, runtime.syncProber, runtime.dirtyProber, runtime.versionLister, nil)
+	// Design-log/045 §A — per-version delete + loaded-id clear, and §E — local
+	// on-disk stats. Wired here rather than through the constructor to keep the
+	// positional signature stable; tests stub these via the setters as needed.
+	controlSvc.SetVersionDeleter(runtime.localVersionDeleter, runtime.loadedRefIDFn, runtime.clearLoadedRefID)
+	controlSvc.SetLocalStatsFn(runtime.localStatsFn)
 
 	wailsApp := application.New(application.Options{
 		Name:        config.ProductName,
@@ -161,15 +167,17 @@ func main() {
 	drainer := livesync.NewDrainer(ticker, engine, dispatcher, livesync.DefaultDrainTimeout)
 	pipelineDeps := runtime.pipelineDeps
 	pipelineDeps.Drainable = drainer
-	// Three flows from shared stage nodes (design-log/031). Download/Upload
-	// ignore d.Drainable (no Running, no livesync), so passing the session
-	// deps verbatim is harmless.
+	// Three flows from shared stage nodes (design-log/031, /038, /045).
+	// Download/Upload/Restore/Revert/RetentionApply ignore d.Drainable (no
+	// Running, no livesync), so passing the session deps verbatim is harmless.
 	entries := lifecycle.Entries{
-		Session:      pipeline.Build(pipelineDeps),
-		LocalSession: pipeline.BuildLocalSession(pipelineDeps),
-		Download:     pipeline.BuildDownload(pipelineDeps),
-		Upload:       pipeline.BuildUpload(pipelineDeps),
-		Restore:      pipeline.BuildRestore(pipelineDeps),
+		Session:        pipeline.Build(pipelineDeps),
+		LocalSession:   pipeline.BuildLocalSession(pipelineDeps),
+		Download:       pipeline.BuildDownload(pipelineDeps),
+		Upload:         pipeline.BuildUpload(pipelineDeps),
+		Restore:        pipeline.BuildRestore(pipelineDeps),
+		Revert:         pipeline.BuildRevert(pipelineDeps),
+		RetentionApply: pipeline.BuildRetentionApply(pipelineDeps),
 	}
 
 	sessionHook := func(rs *ritual.RunState) {
@@ -177,6 +185,15 @@ func main() {
 	}
 	stopLifecycle := lifecycle.Attach(ctx, runtime.bus, entries, sessionHook)
 	defer stopLifecycle()
+	// loadedref keeps settings.LoadedRefID in sync with what the workdir reflects
+	// (design-log/044) by subscribing to pulling.HeadResolvedInfo +
+	// committing.CommittedInfo. Reads + saves are best-effort — a stale field
+	// only ever degrades the "current" badge to a fallback.
+	stopLoadedRef := loadedref.Attach(ctx, runtime.bus,
+		domain.LoadSettings,
+		func(s *domain.Settings) error { return s.Save() },
+	)
+	defer stopLoadedRef()
 	defer runtime.stopLogFile()
 	go runtime.projection.Run(ctx)
 	go runtime.logsink.Run(ctx)
@@ -274,6 +291,12 @@ type guiRuntime struct {
 	versionLister control.VersionLister                   // historical-ref listing for restore (design-log/038)
 	remoteStorage ports.StorageRepository                 // for the autoupdate feed (design-log/037)
 	consoleReader func(context.Context) ([]string, error) // on-demand latest.log backfill (design-log/043)
+	// design-log/045 §A — per-version delete + loaded-id readers/writers.
+	localVersionDeleter control.LocalDeleter
+	loadedRefIDFn       control.LoadedIDFn
+	clearLoadedRefID    control.SettingsClearer
+	// design-log/045 §E — local on-disk stats walker.
+	localStatsFn control.StorageStatFn
 }
 
 func buildRuntime() (*guiRuntime, error) {
@@ -422,10 +445,52 @@ func buildRuntime() (*guiRuntime, error) {
 	// Version lister (design-log/038): enumerate historical refs per scope so
 	// the Versions section in Advanced can offer a restore target. Remote is the
 	// canonical history; a remote failure degrades to the cached local refs.
+	// Loaded ref id (design-log/044): the lister flags IsLoaded so the Versions
+	// "current" badge follows the workdir instead of HEAD. Read fresh per list
+	// so a Restore/Publish landed between Advanced mounts is visible without
+	// re-wiring; a load error / empty field falls back to IsHead inside the
+	// lister.
+	loadedRefIDFn := func() domain.RefID {
+		s, err := domain.LoadSettings()
+		if err != nil || s == nil {
+			return ""
+		}
+		return s.LoadedRefID
+	}
 	versionLister := control.NewVersionLister(
 		control.VersionScope{List: localStorage.List, ReadRef: readRef},
 		control.VersionScope{List: remoteStorage.List, ReadRef: makeRefReader(remoteStorage)},
+		loadedRefIDFn,
 	)
+	// Per-version delete + GC (design-log/045 §A). Composition root closure:
+	// delete refs/<id>.json then sweep orphaned objects/. Uses the same
+	// refs.Collector the Retaining stage's GC job uses, so the cleanup
+	// semantics are identical to a normal sync's local-side prune.
+	localCollector := refs.NewCollector(localStorage)
+	localDeleter := func(ctx context.Context, id domain.RefID) error {
+		key := "refs/" + string(id) + ".json"
+		if err := localStorage.Delete(ctx, key); err != nil {
+			return fmt.Errorf("delete %s: %w", key, err)
+		}
+		if err := localCollector.Collect(ctx); err != nil {
+			return fmt.Errorf("collect orphans: %w", err)
+		}
+		return nil
+	}
+	clearLoadedRefID := func() error {
+		s, err := domain.LoadSettings()
+		if err != nil || s == nil {
+			return err
+		}
+		s.LoadedRefID = ""
+		return s.Save()
+	}
+	// Local on-disk stats (design-log/045 §E). Walks the local FS sandbox
+	// directly to sum file sizes under a prefix (objects/). Stays inside the
+	// existing os.Root so the read can't escape the work root.
+	localStatsFn := func(_ context.Context, prefix string) (int64, int, error) {
+		return walkLocalPrefix(workRoot, prefix)
+	}
 
 	// Wire pull/push plan callbacks into the bus so the projection can
 	// populate ViewModel.BytesTotal before the first progress.Tick lands —
@@ -514,22 +579,26 @@ func buildRuntime() (*guiRuntime, error) {
 	}
 
 	return &guiRuntime{
-		bus:           bus,
-		pipelineDeps:  pipelineDeps,
-		projection:    proj,
-		logsink:       sink,
-		viewEmitter:   viewEmitter,
-		logEmitter:    logEmitter,
-		ticker:        remoteTicker,
-		stopLogFile:   stopLogFile,
-		committer:     committer,
-		pusher:        pusher,
-		commitTargets: commitTargets,
-		syncProber:    syncProber,
-		dirtyProber:   dirtyProber,
-		versionLister: versionLister,
-		remoteStorage: remoteStorage,
-		consoleReader: consoleReader,
+		bus:                 bus,
+		pipelineDeps:        pipelineDeps,
+		projection:          proj,
+		logsink:             sink,
+		viewEmitter:         viewEmitter,
+		logEmitter:          logEmitter,
+		ticker:              remoteTicker,
+		stopLogFile:         stopLogFile,
+		committer:           committer,
+		pusher:              pusher,
+		commitTargets:       commitTargets,
+		syncProber:          syncProber,
+		dirtyProber:         dirtyProber,
+		versionLister:       versionLister,
+		remoteStorage:       remoteStorage,
+		consoleReader:       consoleReader,
+		localVersionDeleter: localDeleter,
+		loadedRefIDFn:       loadedRefIDFn,
+		clearLoadedRefID:    clearLoadedRefID,
+		localStatsFn:        localStatsFn,
 	}, nil
 }
 
@@ -702,6 +771,37 @@ func (e *batchingLogEmitter) flush() {
 		default:
 		}
 	}
+}
+
+// walkLocalPrefix sums file sizes + counts under a top-level directory inside
+// the work-root sandbox (design-log/045 §E). Used by the local on-disk stats
+// for the Versions Local-tab header. Honours os.Root so the walk can't escape
+// the sandbox. Shallow Readdir is enough: objects/ is a flat keyspace (one
+// file per hash, no subdirs). A missing prefix (fresh install with no blobs
+// yet) reads as (0, 0, nil) — the header simply renders 0 B on disk.
+func walkLocalPrefix(root *os.Root, prefix string) (int64, int, error) {
+	dir, err := root.Open(prefix)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, 0, nil
+		}
+		return 0, 0, fmt.Errorf("open %s: %w", prefix, err)
+	}
+	defer func() { _ = dir.Close() }()
+	entries, err := dir.Readdir(0)
+	if err != nil {
+		return 0, 0, fmt.Errorf("readdir %s: %w", prefix, err)
+	}
+	var bytes int64
+	var count int
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		bytes += e.Size()
+		count++
+	}
+	return bytes, count, nil
 }
 
 // wailsWindowControl adapts a Wails WebviewWindow to services.WindowControl.

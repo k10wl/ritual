@@ -9,10 +9,25 @@ package committing
 import (
 	"context"
 
+	"ritual/internal/core/domain"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 )
+
+// CommittedInfo carries the RefID of a freshly minted local ref. Fires on the
+// commit-success path so subsystems that need to know "the workdir was just
+// captured into this ref" can react without poking RunState. The loadedref
+// subsystem (design-log/044) consumes this + pulling.HeadResolvedInfo to keep
+// settings.LoadedRefID in sync with what the workdir actually reflects.
+//
+// Published from both the Committing stage and the livesync ticker — every
+// successful Commit (fresh or amend) emits exactly one CommittedInfo.
+type CommittedInfo struct {
+	RefID domain.RefID
+}
+
+func (c CommittedInfo) String() string { return "committed " + string(c.RefID) }
 
 // OptsResolver produces the CommitOpts for this run. Composition-root
 // convention, honoured by the canonical resolver:
@@ -64,6 +79,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 		return s.onFail, nil
 	}
 	rs.RefID = id
+	publish(rs.Bus, CommittedInfo{RefID: id})
 	publish(rs.Bus, ritual.FinishInfo{Operation: "commit"})
 	return s.onOK, nil
 }

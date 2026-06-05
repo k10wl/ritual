@@ -49,7 +49,7 @@ func TestVersionLister_NewestFirst_FlagsHeadAndSumsMetadata(t *testing.T) {
 		"2026-04-15T10-00-00.000Z": ref("2026-03-01T08-00-00.000Z", map[string]domain.Object{"a": {Size: 100}, "b": {Size: 200}}),
 		"2026-05-20T09-30-00.000Z": ref("2026-04-15T10-00-00.000Z", map[string]domain.Object{"a": {Size: 100}, "b": {Size: 200}, "c": {Size: 50}}),
 	}
-	lister := control.NewVersionLister(fakeScope(local, nil), control.VersionScope{})
+	lister := control.NewVersionLister(fakeScope(local, nil), control.VersionScope{}, nil)
 
 	vs, err := lister(t.Context(), "local")
 	require.NoError(t, err)
@@ -65,6 +65,49 @@ func TestVersionLister_NewestFirst_FlagsHeadAndSumsMetadata(t *testing.T) {
 	assert.Greater(t, vs[0].UnixMs, int64(0), "UnixMs must be the parsed RefID timestamp")
 }
 
+func TestVersionLister_FlagsIsLoadedFromSettingsHook(t *testing.T) {
+	local := map[domain.RefID]*domain.Ref{
+		"2026-03-01T08-00-00.000Z": ref("", map[string]domain.Object{"a": {Size: 1}}),
+		"2026-04-15T10-00-00.000Z": ref("2026-03-01T08-00-00.000Z", map[string]domain.Object{"a": {Size: 1}}),
+		"2026-05-20T09-30-00.000Z": ref("2026-04-15T10-00-00.000Z", map[string]domain.Object{"a": {Size: 1}}),
+	}
+	// LoadedRefID points at an older ref — the workdir reflects it after a
+	// Restore (design-log/044). IsLoaded must sit on that row, IsHead stays
+	// on the newest.
+	loaded := domain.RefID("2026-04-15T10-00-00.000Z")
+	lister := control.NewVersionLister(
+		fakeScope(local, nil),
+		control.VersionScope{},
+		func() domain.RefID { return loaded },
+	)
+	vs, err := lister(t.Context(), "local")
+	require.NoError(t, err)
+	require.Len(t, vs, 3)
+	assert.True(t, vs[0].IsHead, "newest is HEAD")
+	assert.False(t, vs[0].IsLoaded, "HEAD is not what the workdir reflects after a Restore")
+	assert.True(t, vs[1].IsLoaded, "the restored ref is what the workdir reflects")
+	assert.False(t, vs[1].IsHead)
+}
+
+func TestVersionLister_EmptyLoadedID_FallsBackToHead(t *testing.T) {
+	local := map[domain.RefID]*domain.Ref{
+		"2026-03-01T08-00-00.000Z": ref("", map[string]domain.Object{"a": {Size: 1}}),
+		"2026-05-20T09-30-00.000Z": ref("2026-03-01T08-00-00.000Z", map[string]domain.Object{"a": {Size: 1}}),
+	}
+	// Empty LoadedRefID (never-restored fresh install): IsLoaded falls back to
+	// IsHead so the "current" badge is never silent on a clean store.
+	lister := control.NewVersionLister(
+		fakeScope(local, nil),
+		control.VersionScope{},
+		func() domain.RefID { return "" },
+	)
+	vs, err := lister(t.Context(), "local")
+	require.NoError(t, err)
+	require.Len(t, vs, 2)
+	assert.True(t, vs[0].IsLoaded, "fresh install: IsLoaded follows IsHead")
+	assert.False(t, vs[1].IsLoaded)
+}
+
 func TestVersionLister_RemoteListError_DegradesToLocal(t *testing.T) {
 	local := map[domain.RefID]*domain.Ref{
 		"2026-05-20T09-30-00.000Z": ref("", map[string]domain.Object{"a": {Size: 1}}),
@@ -72,6 +115,7 @@ func TestVersionLister_RemoteListError_DegradesToLocal(t *testing.T) {
 	lister := control.NewVersionLister(
 		fakeScope(local, nil),
 		fakeScope(nil, errors.New("r2 offline")), // remote List fails
+		nil,
 	)
 
 	vs, err := lister(t.Context(), "remote")
@@ -81,7 +125,7 @@ func TestVersionLister_RemoteListError_DegradesToLocal(t *testing.T) {
 }
 
 func TestVersionLister_EmptyStore_ReturnsNil(t *testing.T) {
-	lister := control.NewVersionLister(fakeScope(map[domain.RefID]*domain.Ref{}, nil), control.VersionScope{})
+	lister := control.NewVersionLister(fakeScope(map[domain.RefID]*domain.Ref{}, nil), control.VersionScope{}, nil)
 	vs, err := lister(t.Context(), "local")
 	require.NoError(t, err)
 	assert.Empty(t, vs)
@@ -101,7 +145,7 @@ func TestVersionLister_SkipsNonRefKeys(t *testing.T) {
 			return ref("", map[string]domain.Object{"a": {Size: 1}}), nil
 		},
 	}
-	vs, err := control.NewVersionLister(scope, control.VersionScope{})(t.Context(), "local")
+	vs, err := control.NewVersionLister(scope, control.VersionScope{}, nil)(t.Context(), "local")
 	require.NoError(t, err)
 	require.Len(t, vs, 1, "only the one well-formed ref key must survive parsing")
 	assert.Equal(t, "2026-05-20T09-30-00.000Z", vs[0].ID)

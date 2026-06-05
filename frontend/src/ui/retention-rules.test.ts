@@ -154,4 +154,69 @@ describe("retention-rules", () => {
         expect(d.remote.keepLast).to.equal(4);
         expect(d.local.keepLast).to.equal(2, "switching scope must not mutate the other side");
     });
+
+    // ── design-log/045 §D — staged edits + Apply/Discard ─────────────────────
+
+    it("no Apply bar when the picker is clean (baseline matches draft)", async () => {
+        const el = await mount(r({ keepLast: 2 }));
+        expect(el.shadowRoot!.querySelector(".apply-bar")).to.not.exist;
+    });
+
+    it("editing a tier reveals the Apply bar", async () => {
+        const el = await mount(r({ keepLast: 2 }));
+        setStepper(steppers(el)[0], 5);
+        await el.updateComplete;
+        expect(el.shadowRoot!.querySelector(".apply-bar"), "Apply bar after edit").to.exist;
+    });
+
+    it("editing back to the baseline clears the Apply bar (clean draft)", async () => {
+        const el = await mount(r({ keepLast: 2 }));
+        setStepper(steppers(el)[0], 5);
+        await el.updateComplete;
+        expect(el.shadowRoot!.querySelector(".apply-bar")).to.exist;
+        setStepper(steppers(el)[0], 2); // back to baseline
+        await el.updateComplete;
+        expect(el.shadowRoot!.querySelector(".apply-bar")).to.not.exist;
+    });
+
+    it("Apply emits an apply event with {local, remote} and clears the bar", async () => {
+        const el = await mount(r({ keepLast: 2 }), r({ keepLast: 3 }));
+        setStepper(steppers(el)[0], 5); // local edit
+        await el.updateComplete;
+        const apply = el.shadowRoot!
+            .querySelector(".apply-bar")!
+            .querySelector("rune-button[variant='primary']") as HTMLElement;
+        setTimeout(() =>
+            apply.dispatchEvent(new CustomEvent("press", { bubbles: true, composed: true })),
+        );
+        const ev = await oneEvent(el, "apply");
+        const d = ev.detail as RetentionChangeDetail;
+        expect(d.local.keepLast).to.equal(5);
+        expect(d.remote.keepLast).to.equal(3, "untouched side carries through");
+        await el.updateComplete;
+        expect(el.shadowRoot!.querySelector(".apply-bar")).to.not.exist;
+    });
+
+    it("Discard drops the staged edits back to baseline", async () => {
+        const el = await mount(r({ keepLast: 2 }));
+        setStepper(steppers(el)[0], 5);
+        await el.updateComplete;
+        const discard = el.shadowRoot!
+            .querySelector(".apply-bar")!
+            .querySelector("rune-button[variant='tinted']") as HTMLElement;
+        discard.dispatchEvent(new CustomEvent("press", { bubbles: true, composed: true }));
+        await el.updateComplete;
+        expect(el.shadowRoot!.querySelector(".apply-bar")).to.not.exist;
+        // The stepper now shows the baseline value again.
+        expect((steppers(el)[0] as HTMLElement & { value: number }).value).to.equal(2);
+    });
+
+    it("stepper edits no longer auto-save: only `change` (not `apply`) fires on tap", async () => {
+        const el = await mount(r({ keepLast: 2 }));
+        let appliedFired = false;
+        el.addEventListener("apply", () => (appliedFired = true));
+        setStepper(steppers(el)[0], 5);
+        await el.updateComplete;
+        expect(appliedFired).to.equal(false, "apply must NOT fire on a stepper tap (staged edits)");
+    });
 });

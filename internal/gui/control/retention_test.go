@@ -79,13 +79,16 @@ func TestSetRetentionRules_KeepLastZeroAllowed(t *testing.T) {
 	), "keep_last:0 is the spec's documented edge case — allowed (cautioned in UI), never blocked")
 }
 
-func TestSetRetentionRules_RejectsOutOfRange(t *testing.T) {
+func TestSetRetentionRules_RejectsNegative(t *testing.T) {
+	// No upper cap (design-log/033 supersession §3 — the stepper is uncapped),
+	// so large counts must round-trip. Negatives are still nonsense and stay
+	// rejected before any write.
 	isolateSettings(t)
 	svc := control.NewControlService(nil, nil, nil, nil, nil, nil)
-	require.Error(t, svc.SetRetentionRules(
-		domain.RetentionRules{KeepLast: 6},
+	require.NoError(t, svc.SetRetentionRules(
+		domain.RetentionRules{KeepLast: 6, KeepMonthly: 99},
 		domain.DefaultRetentionRules(),
-	), "a tier above 5 is outside the control's range and must be rejected before any write")
+	), "tiers above 5 must round-trip — the stepper is uncapped (design-log/033 supersession §3)")
 	require.Error(t, svc.SetRetentionRules(
 		domain.DefaultRetentionRules(),
 		domain.RetentionRules{KeepWeekly: -1},

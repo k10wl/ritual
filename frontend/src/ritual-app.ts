@@ -1,9 +1,12 @@
 import { css, html, LitElement } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import {
+    applyRetentionNow,
+    deleteLocalVersion,
     dismiss,
     checkForUpdate,
     download,
+    getLocalStorageStats,
     getPrep,
     getRetentionRules,
     getSnapshot,
@@ -11,6 +14,7 @@ import {
     listVersions,
     onView,
     restore,
+    revert,
     setRetentionRules,
     showLogs,
     start,
@@ -34,7 +38,7 @@ import "./ui/advanced-view";
 import type { RuneStack } from "./ui/primitives/rune-stack";
 import type { NavView } from "./ui/contexts/nav-context";
 import type { SyncConfirmDetail, SyncVerdict } from "./ui/sync-view";
-import type { RestoreConfirmDetail } from "./ui/versions-view";
+import type { RestoreConfirmDetail, DeleteConfirmDetail, VersionScope, LocalStorageStatsLike } from "./ui/versions-view";
 import type { RetentionRules as RetentionModelRules } from "./ui/retention-model";
 
 // Wails RetentionRules is snake_case (keep_last…); the model/component speak
@@ -271,6 +275,8 @@ export class RitualApp extends LitElement {
     private applyVm(vm: ViewModel) {
         const wasPlaying = this.vm.phase === Phase.PhasePlaying;
         const isPlaying = vm.phase === Phase.PhasePlaying;
+        const wasIdle = this.vm.phase === Phase.PhaseIdle;
+        const isIdle = vm.phase === Phase.PhaseIdle;
         // Order matters (design-log/020 §Class C): refresh the transfer-beat
         // anchors and the speed snapshot BEFORE the arc/ctx read so the arc
         // is computed against the new beat, not the stale one.
@@ -283,6 +289,7 @@ export class RitualApp extends LitElement {
         if (isPlaying && !wasPlaying) this.startUptime();
         if (!isPlaying && wasPlaying) this.stopUptime();
         this.vm = vm;
+        if (!wasIdle && isIdle) void this.refreshUnpublished();
     }
 
     // trackTransferBeat snapshots wall time + bytesDone at the moment a
@@ -415,8 +422,10 @@ export class RitualApp extends LitElement {
         title: "advanced",
         render: () => html`<advanced-view
             .config=${this.prep}
+            ?skipSync=${this.skipSync}
             .check=${this.checkSync}
             .versions=${this.listVersions}
+            .versionStats=${this.loadLocalStats}
             ?dirty=${this.unpublished}
             .loadRules=${this.loadRetention}
             .canUpdate=${this.vm.phase === Phase.PhaseIdle}
@@ -424,15 +433,26 @@ export class RitualApp extends LitElement {
             @sync=${this.onSyncConfirmed}
             @checkupdate=${this.onCheckUpdate}
             @restore=${this.onRestoreConfirmed}
+            @delete=${this.onDeleteConfirmed}
             @publishfirst=${this.onPublishFirst}
             @retentionchange=${this.onRetentionChange}
+            @retentionapply=${this.onRetentionApply}
         ></advanced-view>`,
     };
 
-    // Version listing injected into <versions-view> — remote is the canonical
-    // history; the backend degrades to cached local refs when offline
-    // (design-log/038 §Q2). Bound so `this` is stable across renders.
-    private listVersions = () => listVersions("remote");
+    // Version listing injected into <versions-view>, scope-aware
+    // (design-log/045 §B). The backend lister degrades remote→local on offline
+    // failure (design-log/038 §Q2) but with explicit tabs the user can also
+    // choose Local directly. Bound so `this` is stable across renders.
+    private listVersions = (scope: VersionScope) => listVersions(scope);
+
+    // Local on-disk stats fetcher injected into <versions-view> Local-tab
+    // header (design-log/045 §E). Cached 5s server-side; invalidates on
+    // delete + apply success.
+    private loadLocalStats = async (): Promise<LocalStorageStatsLike> => {
+        const s = await getLocalStorageStats();
+        return { bytesOnDisk: s.bytesOnDisk, objectCount: s.objectCount };
+    };
 
     // Retention rules load + persist (design-log/039). The Wails RetentionRules
     // model is snake_case (keep_last…); the retention-model/component speak
@@ -443,8 +463,15 @@ export class RitualApp extends LitElement {
         return { local: toModelRules(c.local), remote: toModelRules(c.remote) };
     };
 
-    private onRetentionChange = (e: CustomEvent<{ local: RetentionModelRules; remote: RetentionModelRules }>) => {
-        void setRetentionRules(toBindingRules(e.detail.local), toBindingRules(e.detail.remote));
+    // Retention `change` is now a fine-grained signal that fires on every
+    // stepper tap (design-log/045 §D / §Q6 decided: staged edits). It carries
+    // the *staged* draft, but the host does not persist it here — auto-save
+    // is gone. Persistence happens on the user's explicit Apply press
+    // (onRetentionApply below). Keeping this listener as a no-op so the
+    // payload remains inspectable for future use and the existing test
+    // contract (advanced-view re-emits as `retentionchange`) is unchanged.
+    private onRetentionChange = (_e: CustomEvent<{ local: RetentionModelRules; remote: RetentionModelRules }>) => {
+        // Intentional no-op (design-log/045 §D).
     };
 
     private openAdvanced = () => this._stack?.push(this.advancedView);
@@ -469,13 +496,16 @@ export class RitualApp extends LitElement {
     // compare with the workdir-dirty scan (design-log/035). `ahead` now means
     // "any uncanonical local state to publish" — dirty edits OR a committed-but-
     // unpushed ref (§Q7) — not just a newer local HEAD. `behind` no longer
-    // gates the offer; it only adds a loud warning in sync-view. Errors
-    // propagate so sync-view shows "Couldn't reach the remote".
+    // gates the offer; it only adds a loud warning in sync-view. `dirty` is
+    // forwarded too so the Revert confirm (design-log/045 §C) can pick honest
+    // copy (drops edits vs no-op refresh). Errors propagate so sync-view shows
+    // "Couldn't reach the remote".
     private checkSync = async (): Promise<SyncVerdict> => {
         const s = await getSyncStatus();
         return {
             behind: s.behind,
             ahead: s.dirty || s.unpushed,
+            dirty: s.dirty,
         };
     };
 
@@ -491,12 +521,21 @@ export class RitualApp extends LitElement {
         }
     }
 
-    // Confirmed Download/Upload (design-log/031). The flow animates the root
-    // dial via the same onView stream as a session, so unwind the stack to the
-    // dial to watch it run.
+    // Confirmed Download/Upload (design-log/031) + Revert (design-log/045 §C).
+    // All three flows animate the root dial via the onView stream, so unwind
+    // the stack to the dial to watch them run.
     private onSyncConfirmed = (e: CustomEvent<SyncConfirmDetail>) => {
-        if (e.detail.direction === "download") void download();
-        else void upload();
+        switch (e.detail.direction) {
+            case "download":
+                void download();
+                break;
+            case "upload":
+                void upload();
+                break;
+            case "revert":
+                void revert();
+                break;
+        }
         this._stack?.popToRoot();
     };
 
@@ -507,6 +546,31 @@ export class RitualApp extends LitElement {
     private onRestoreConfirmed = (e: CustomEvent<RestoreConfirmDetail>) => {
         void restore(e.detail.refID);
         this._stack?.popToRoot();
+    };
+
+    // Confirmed per-version delete (design-log/045 §A). Fast and local — no
+    // dial takeover; the versions-view re-loads its listing optimistically so
+    // the row vanishes immediately. Errors raise no UI; the row reappears on
+    // the next refresh, which is the honest "still here" signal.
+    private onDeleteConfirmed = (e: CustomEvent<DeleteConfirmDetail>) => {
+        void deleteLocalVersion(e.detail.refID);
+    };
+
+    // Apply retention (design-log/045 §D). The advanced-view re-emits the
+    // inner `<retention-rules>` `apply` event with the {local, remote} payload
+    // — persist first via setRetentionRules so the next prune reads the
+    // freshly-saved policy ([[039]] §Q1 reads-fresh-at-Select), then publish
+    // ApplyRetentionRequested to run the prune. Animates the dial via
+    // FlowRetentionApply (gray ring — reuses PhasePreflight) so pop the stack
+    // to watch it. The two calls are serialised: applyRetentionNow waits on
+    // setRetentionRules so the prune cannot read stale settings.
+    private onRetentionApply = async (e: CustomEvent<{ local: RetentionModelRules; remote: RetentionModelRules }>) => {
+        try {
+            await setRetentionRules(toBindingRules(e.detail.local), toBindingRules(e.detail.remote));
+            void applyRetentionNow();
+        } finally {
+            this._stack?.popToRoot();
+        }
     };
 
     // "Publish first" nudge from the restore confirm when the workdir is dirty

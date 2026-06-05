@@ -16,6 +16,11 @@ const SettingsFilename = "settings.json"
 // MinRAMMB / MinDiskMB / MinJavaVersion are the pre-flight thresholds used
 // by the Checking stage; defaults are the same constants the legacy
 // manifest fallbacks read from internal/config.
+//
+// LoadedRefID (design-log/044) records which ref the workdir last matched
+// — refreshed by the loadedref subsystem on successful Pulling/Committing.
+// Empty on a never-pulled install; the Versions UI then falls back to the
+// IsHead flag so the "current" badge is never silent on a clean store.
 type Settings struct {
 	Port            int            `json:"port"`
 	Memory          int            `json:"memory"`
@@ -25,6 +30,7 @@ type Settings struct {
 	MinJavaVersion  int            `json:"min_java_version"`
 	LocalRetention  RetentionRules `json:"local_retention"`
 	RemoteRetention RetentionRules `json:"remote_retention"`
+	LoadedRefID     RefID          `json:"loaded_ref_id"`
 }
 
 // DefaultStartScript is the launcher filename when settings.start_script is

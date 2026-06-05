@@ -199,6 +199,22 @@ type ControlService struct {
 	dirty    LocalDirtyProber
 	versions VersionLister
 
+	// Per-version delete + the loaded-id readers/writers wired in by the
+	// composition root for design-log/045 §A. localDeleter performs
+	// refs/<id>.json delete + GC sweep; loadedRefID + clearLoadedRefID let
+	// DeleteLocalVersion clear settings.LoadedRefID when the deleted ref is
+	// the one the workdir was anchored to (design-log/044 + /045 §Q2). Any
+	// of these may be nil in tests; the methods degrade explicitly.
+	localDeleter     LocalDeleter
+	loadedRefID      LoadedIDFn
+	clearLoadedRefID SettingsClearer
+
+	// Local storage stats (design-log/045 §E). statsFn walks objects/* on the
+	// local FS root; stats caches the last-good result for statsCacheTTL so
+	// rapid pane visits don't hammer disk. nil statsFn ⇒ zero stats.
+	statsFn StorageStatFn
+	stats   statsCache
+
 	// Lazy logs window (design-log/043): no eager window at startup. The
 	// composition root injects a factory via SetLogsWindowFactory; ShowLogs
 	// builds the window on first open and caches it (close→hide for reuse).
@@ -274,6 +290,26 @@ func (c *ControlService) Download() {
 // (design-log/031). The lifecycle rejects it while another flow is Running.
 func (c *ControlService) Upload() {
 	c.bus.Publish(ritual.UploadRequested{})
+}
+
+// Revert publishes a RevertRequested command — the workdir-snap-to-local-HEAD
+// flow (design-log/045 §C). Server-free, lockless, read-only on the remote.
+// Drops uncommitted edits when dirty; observable no-op when unpushed-only.
+// The lifecycle rejects it while another flow is Running.
+func (c *ControlService) Revert() {
+	c.bus.Publish(ritual.RevertRequested{})
+}
+
+// ApplyRetentionNow publishes an ApplyRetentionRequested command — the user-
+// triggered prune-now flow (design-log/045 §D). The lifecycle routes it to
+// the Checking → Retaining(local) → Retaining(remote) → Done chain. Settings
+// must be persisted before this call so the prune reads the freshly-applied
+// policy (design-log/039 §Q1 — rules read fresh at Select time). Rejected
+// while another flow is Running. Also invalidates the local storage stats
+// cache so the post-prune dial-return shows the new on-disk number.
+func (c *ControlService) ApplyRetentionNow() {
+	c.invalidateStats()
+	c.bus.Publish(ritual.ApplyRetentionRequested{})
 }
 
 // CheckForUpdate publishes a selfupdate.CheckRequested command — the manual
@@ -408,6 +444,25 @@ func (c *ControlService) SetLogsWindowFactory(f func() WindowControl) {
 	c.mu.Lock()
 	c.logsFactory = f
 	c.mu.Unlock()
+}
+
+// SetVersionDeleter wires DeleteLocalVersion (design-log/045 §A). deleter
+// performs the refs/<id>.json delete + GC sweep; loadedID + clearLoaded let
+// the delete clear settings.LoadedRefID when the deleted ref is the one the
+// workdir was anchored to ([[044]] + /045 §Q2). Any nil leaves the
+// corresponding behaviour disabled — the method then degrades explicitly.
+func (c *ControlService) SetVersionDeleter(deleter LocalDeleter, loadedID LoadedIDFn, clearLoaded SettingsClearer) {
+	c.localDeleter = deleter
+	c.loadedRefID = loadedID
+	c.clearLoadedRefID = clearLoaded
+}
+
+// SetLocalStatsFn wires GetLocalStorageStats (design-log/045 §E). The
+// composition root supplies a walker over the local FS root that sums file
+// sizes + counts under the given prefix. nil disables the call (returns
+// zero stats).
+func (c *ControlService) SetLocalStatsFn(fn StorageStatFn) {
+	c.statsFn = fn
 }
 
 // ReadServerLog returns the tail of the running server's own console log

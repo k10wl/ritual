@@ -42,6 +42,15 @@ describe("prep-settings — skip sync this session (design-log/036)", () => {
         expect(detail!.skipSync).to.equal(true);
     });
 
+    it("accepts an initial value via the .skipSync property (design-log/044 §Phase C)", async () => {
+        const el = await fixture<PrepSettingsEl>(
+            html`<prep-settings ?skipSync=${true}></prep-settings>`,
+        );
+        await el.updateComplete;
+        expect(el.skipSyncEnabled()).to.equal(true);
+        expect(skipSyncBox(el).checked).to.equal(true);
+    });
+
     it("is not part of the persisted port/memory payload (read())", async () => {
         const el = await mount();
         skipSyncBox(el).click();

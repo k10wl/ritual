@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"strings"
@@ -71,13 +70,22 @@ func (r *refsRetention) Select(ctx context.Context) ([]string, error) {
 // parseTime extracts the UTC timestamp from a refs/{ts}.json key.
 // Returns zero time for any key not matching the refs layout; the engine
 // treats zero-time as "not ours, skip".
+//
+// Refs are written under `domain.RefIDFormat` ("2006-01-02T15-04-05.000Z"),
+// NOT `config.TimestampFormat` (the log-filename format "20060102150405").
+// Bug fix 2026-06-05 (design-log/045 §Bug3 follow-up): the pre-existing
+// retention engine used the log format here, so every real ref key parsed to
+// zero time and was silently skipped by markKeys — Select returned an empty
+// delete list regardless of rules, making the whole retention pipeline a
+// no-op for refs. The Apply Now button (design-log/045 §D) surfaced this
+// because nothing got pruned despite an explicit user action.
 func (r *refsRetention) parseTime(key string) time.Time {
 	base := path.Base(key)
 	if path.Ext(base) != ".json" {
 		return time.Time{}
 	}
 	stem := strings.TrimSuffix(base, ".json")
-	t, err := time.ParseInLocation(config.TimestampFormat, stem, time.UTC)
+	t, err := time.ParseInLocation(domain.RefIDFormat, stem, time.UTC)
 	if err != nil {
 		return time.Time{}
 	}

@@ -6,6 +6,7 @@ import (
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
+	"ritual/internal/core/stages/committing"
 	"ritual/internal/core/stages/running"
 	"sync"
 	"time"
@@ -128,6 +129,10 @@ func (e *Engine) tick(ctx context.Context) {
 	e.mu.Lock()
 	e.lastRefID = id
 	e.mu.Unlock()
+	// CommittedInfo mirrors the Committing stage so the loadedref subsystem
+	// (design-log/044) can refresh settings.LoadedRefID off the bus without
+	// caring whether the commit came from a stage or a livesync tick.
+	e.bus.Publish(committing.CommittedInfo{RefID: id})
 	e.bus.Publish(LiveDraftCommitted{RefID: id})
 
 	if err := e.pusher.Push(ctx, id); err != nil {

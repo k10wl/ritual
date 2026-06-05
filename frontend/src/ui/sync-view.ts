@@ -20,17 +20,23 @@ import { customElement, property, state } from "lit/decorators.js";
 import "./primitives/rune-button";
 import "./primitives/decoder";
 
-export type SyncDirection = "download" | "upload";
+export type SyncDirection = "download" | "upload" | "revert";
 
 /**
  * What a check found. Unlike 031's exclusive trichotomy, 035 lets `behind` and
  * `ahead` co-occur: `ahead` keys on any uncanonical local state (`dirty ||
  * unpushed`), so the remote can be newer (`behind`) while local also has work to
  * publish. Both-true renders Publish primary + a loud "remote is newer" warning.
+ *
+ * `dirty` is needed too for the Revert confirm copy (design-log/045 §C / §Q5):
+ * the confirm message adapts depending on whether the user actually has
+ * uncommitted edits or only an unpushed commit (Revert is an observable no-op
+ * in that case but we still surface the button per user direction).
  */
 export interface SyncVerdict {
     behind: boolean; // remote HEAD newer than local → something to Download
     ahead: boolean; // local has uncanonical work (dirty || unpushed) → Publish
+    dirty?: boolean; // workdir ≠ HEAD (subset of ahead) → Revert has visible effect
 }
 
 export interface SyncConfirmDetail {
@@ -42,7 +48,7 @@ type CheckPhase = "unchecked" | "checking" | "checked" | "error";
 // Humane confirm copy (design-log/031 §Q8 spirit): the action is
 // destructive-in-spirit, so Cancel is the calm default and the body spells out
 // the consequence — but presented inline, never as a dialog.
-const CONFIRM_COPY: Record<SyncDirection, { body: string; cta: string }> = {
+const CONFIRM_COPY: Record<Exclude<SyncDirection, "revert">, { body: string; cta: string }> = {
     download: {
         body: "Get the latest world from the remote. This replaces your local copy and removes local-only files in the synced folder.",
         cta: "Download",
@@ -52,6 +58,21 @@ const CONFIRM_COPY: Record<SyncDirection, { body: string; cta: string }> = {
         // version, it never destroys — nothing is lost.
         body: "Publish your local worlds as the version everyone gets. Your current state becomes the latest — nothing is lost.",
         cta: "Publish",
+    },
+};
+
+// Revert copy adapts to dirty vs unpushed-only (design-log/045 §Q5). The dirty
+// case is the headline action — drops uncommitted edits. The unpushed-only
+// case is honest about being a no-op so the user isn't misled into thinking
+// the button will drop their unpushed commit.
+const REVERT_COPY = {
+    dirty: {
+        body: "Throw away your unsaved changes and bring back the last saved version. Nothing on the remote changes.",
+        cta: "Revert",
+    },
+    unpushedOnly: {
+        body: "Re-apply the last saved version to your workdir. Nothing changes — there's nothing to throw away.",
+        cta: "Revert",
     },
 };
 
@@ -187,6 +208,13 @@ export class SyncView extends LitElement {
                 return html`<rune-button variant="tinted" @press=${this.#runCheck}>Try again</rune-button>`;
             case "checked": {
                 const { behind, ahead } = this._verdict;
+                // Revert appears whenever publishable (design-log/045 §Q5
+                // decided: dirty || unpushed). Secondary action — Publish stays
+                // primary. In the unpushed-only case Revert is observably a
+                // no-op; the confirm copy is honest about it (REVERT_COPY).
+                const revertBtn = ahead
+                    ? html`<rune-button variant="tinted" @press=${this.#ask("revert")}>Revert to last saved</rune-button>`
+                    : nothing;
                 // Both-true: Publish is primary, with a loud warning + a
                 // secondary "Download latest". Non-blocking (design-log/035
                 // §Q4b/c) — the warning is the whole intervention.
@@ -199,10 +227,14 @@ export class SyncView extends LitElement {
                         <div class="actions">
                             <rune-button variant="primary" @press=${this.#ask("upload")}>Publish</rune-button>
                             <rune-button variant="tinted" @press=${this.#ask("download")}>Download latest</rune-button>
+                            ${revertBtn}
                         </div>
                     `;
                 if (ahead)
-                    return html`<rune-button variant="primary" @press=${this.#ask("upload")}>Publish</rune-button>`;
+                    return html`<div class="actions">
+                        <rune-button variant="primary" @press=${this.#ask("upload")}>Publish</rune-button>
+                        ${revertBtn}
+                    </div>`;
                 if (behind)
                     return html`<rune-button variant="primary" @press=${this.#ask("download")}>⬇ Download</rune-button>`;
                 return html`<rune-button variant="plain" size="sm" @press=${this.#runCheck}>Check again</rune-button>`;
@@ -213,6 +245,18 @@ export class SyncView extends LitElement {
     }
 
     #renderConfirm(direction: SyncDirection) {
+        // Revert has its own copy table that depends on whether dirty is true
+        // (design-log/045 §Q5). Other directions read from CONFIRM_COPY.
+        if (direction === "revert") {
+            const copy = this._verdict.dirty ? REVERT_COPY.dirty : REVERT_COPY.unpushedOnly;
+            return html`
+                <p class="confirm-body">${copy.body}</p>
+                <div class="confirm-actions">
+                    <rune-button variant="tinted" @press=${this.#cancel}>Cancel</rune-button>
+                    <rune-button variant="primary" @press=${this.#confirm}>${copy.cta}</rune-button>
+                </div>
+            `;
+        }
         const copy = CONFIRM_COPY[direction];
         return html`
             <p class="confirm-body">${copy.body}</p>

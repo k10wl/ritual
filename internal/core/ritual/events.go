@@ -65,6 +65,15 @@ const (
 	// the download dial beat (bytes flow in) — the projection only needs the
 	// flow value to name the gesture in logs; no bespoke dial colour.
 	FlowRestore Flow = "restore"
+	// FlowRevert is the workdir-snap-to-local-HEAD flow (design-log/045 §C).
+	// Same shape as FlowRestore but the target is the local HEAD resolved at
+	// chain entry — no per-request target id. Reuses the download dial beat.
+	FlowRevert Flow = "revert"
+	// FlowRetentionApply is the user-triggered prune-now flow (design-log/045
+	// §D). Runs both local + remote retention jobs in one beat; reuses the
+	// gray "system working" ring (PhasePreflight) so no bespoke dial state is
+	// needed.
+	FlowRetentionApply Flow = "retention-apply"
 )
 
 // FlowStartedInfo is published by the lifecycle at the start of every run,

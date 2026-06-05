@@ -13,7 +13,7 @@
  */
 
 import { LitElement, css, html } from "lit";
-import { customElement, property, queryAll, state } from "lit/decorators.js";
+import { customElement, property, queryAll } from "lit/decorators.js";
 import "./primitives/rune-field";
 import {
     composeValidators,
@@ -74,9 +74,12 @@ const memoryValidator = composeValidators(required, memoryShape, memoryRange);
 export class PrepSettingsEl extends LitElement {
     @property({ type: Object }) config: PrepSettings = { port: 25565, memoryMB: 4096 };
 
-    // Transient "Skip sync this session" toggle (design-log/036 §Q6). Defaults
-    // OFF on every mount — it is NOT part of the persisted port/memory payload.
-    @state() private skipSync = false;
+    // Transient "Skip sync this session" toggle (design-log/036 §Q6). Host-owned
+    // (design-log/044 §Phase C) so the value survives Advanced pop/push under the
+    // lazy nav stack ([[034]]); per-launch reset stays — the host's @state is
+    // fresh on app construct. Initial value comes in; `change` re-emits keep the
+    // host authoritative.
+    @property({ type: Boolean }) skipSync = false;
 
     @queryAll("rune-field") private _fields!: NodeListOf<RuneField>;
 
