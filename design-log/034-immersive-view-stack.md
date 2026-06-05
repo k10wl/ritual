@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft |
+| **Status** | Implemented (commit 23d1a16, 2026-05-30) — Phase A primitive + Phase B app integration (advanced-view + sync-view), 64 tests green; Phase C (retention tenant) deferred pending [[033-retention-ui]] migration |
 | **Date** | 2026-05-30 |
 | **Related** | [[007-hig-ux-coherence]] (one-dial calm), [[031-bidirectional-sync]] (sync gestures — first tenant), [[033-retention-ui]] (retention — second tenant), [[015-design-system]] (primitive layer), [[023-disable-resize]] (fixed 560×720 viewport) |
 | **Scope** | New `rune-stack` navigation primitive + Storybook experiment. No app wiring, no backend change. App integration + tenant migration are later phases. |

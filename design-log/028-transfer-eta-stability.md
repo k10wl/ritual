@@ -1,7 +1,7 @@
 # 028 — Transfer ETA stability (kill the swing)
 
 **Date:** 2026-05-25
-**Status:** Implemented (pending live smoke — Phase D)
+**Status:** Implemented
 **Related:** [[001-progress-projection]] (three speed flavours: `Average`, `Smooth`, `DataAverage`), [[009-telemetry-hierarchy]] (ETA in dial sub), [[018-logical-rate-in-ui]] (`logicalMbps` = `Stream.DataAverage` for ETA + under-slot), [[027-saving-worlds-prep-eta]] (parallel ETA work for server start/stop — different data source).
 
 ## Background

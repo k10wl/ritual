@@ -1,6 +1,6 @@
 import { css, html, LitElement } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
-import { onServerLogs, sendConsole, type ServerLog, type ServerLogBatch } from "./wails-api";
+import { onServerLogs, readServerLog, sendConsole, ServerLog, ServerLogBatch } from "./wails-api";
 
 const RING_CAPACITY = 1024;
 // While scrolled up reading scrollback we DON'T trim (trimming reflows the list
@@ -40,10 +40,18 @@ export class RitualLogs extends LitElement {
     // compensation once — so visible rows don't jitter while scrolled up.
     private pendingNodes: Node[] = [];
     private flushScheduled = false;
+    // Backfill bootstrap (design-log/043 §3c): subscribe to the live wire FIRST
+    // into a hold buffer, then read latest.log, then cross-reference the seam so
+    // the file tail and the first live lines don't double up. `booting` gates
+    // the live handler into the buffer until the backfill has been rendered.
+    private booting = true;
+    private holdLines: ServerLog[] = [];
+    private holdDropped = 0;
 
     connectedCallback() {
         super.connectedCallback();
-        this.unsubscribe = onServerLogs((b) => this.appendBatch(b));
+        this.unsubscribe = onServerLogs((b) => this.onWire(b));
+        void this.bootstrap();
         window.addEventListener("focus", this.focusEditor);
         window.addEventListener("keydown", this.onHostKey);
         document.addEventListener("visibilitychange", this.onVisibility);
@@ -70,6 +78,42 @@ export class RitualLogs extends LitElement {
         this.io.observe(this.sentinel);
         this.focusEditor();
         this.flush(); // drain anything queued before the DOM existed
+    }
+
+    // onWire routes live server:logs batches: while bootstrapping they queue in
+    // the hold buffer (drained + deduped by bootstrap); afterwards they append
+    // straight through (design-log/043 §3c).
+    private onWire(b: ServerLogBatch) {
+        if (!this.booting) {
+            this.appendBatch(b);
+            return;
+        }
+        this.holdDropped += b.dropped;
+        for (const l of b.lines) this.holdLines.push(l);
+    }
+
+    // bootstrap reads the one-shot latest.log tail, renders it as the backfill,
+    // then flushes the held live lines minus the seam overlap (lines present in
+    // both the file tail and the early live stream — byte-identical stdout, so a
+    // plain text compare dedups them; design-log/043 §Q7). After this the live
+    // wire appends directly. A missing/empty file ⇒ live-only, no error.
+    private async bootstrap() {
+        let raw: string[] = [];
+        try {
+            raw = (await readServerLog()) ?? [];
+        } catch {
+            raw = [];
+        }
+        const backfill = raw.map((text) => new ServerLog({ kind: "out", text }));
+        const held = this.holdLines;
+        const drop = seamOverlap(backfill, held);
+        const tail = held.slice(drop);
+        const dropped = this.holdDropped;
+        this.booting = false;
+        this.holdLines = [];
+        this.holdDropped = 0;
+        if (backfill.length) this.appendBatch(new ServerLogBatch({ lines: backfill, dropped: 0 }));
+        if (tail.length || dropped) this.appendBatch(new ServerLogBatch({ lines: tail, dropped }));
     }
 
     // appendBatch builds the rows and queues them; the actual DOM write happens
@@ -426,6 +470,26 @@ function renderLine(l: ServerLog): HTMLLIElement {
     else if (/\/WARN\]/.test(l.text)) li.classList.add("lvl-warn");
     li.textContent = l.text;
     return li;
+}
+
+// seamOverlap returns how many leading held (live) lines duplicate the tail of
+// the backfill — the largest k where the last k backfill lines equal the first
+// k held lines by text. Both come from the same server stdout, so the overlap
+// at the read↔live seam is byte-identical and dedups with a plain compare
+// (design-log/043 §Q7). 0 when there's no overlap.
+export function seamOverlap(backfill: ServerLog[], held: ServerLog[]): number {
+    const maxK = Math.min(backfill.length, held.length);
+    for (let k = maxK; k > 0; k--) {
+        let match = true;
+        for (let i = 0; i < k; i++) {
+            if (backfill[backfill.length - k + i].text !== held[i].text) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return k;
+    }
+    return 0;
 }
 
 function gapRow(n: number): HTMLLIElement {

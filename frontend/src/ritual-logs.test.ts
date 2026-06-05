@@ -1,7 +1,7 @@
 import { html } from "lit";
 import { fixture, expect } from "@open-wc/testing";
 import "./ritual-logs";
-import type { RitualLogs } from "./ritual-logs";
+import { seamOverlap, type RitualLogs } from "./ritual-logs";
 import { Level, type ServerLog, type ServerLogBatch } from "./wails-api";
 
 const mount = () => fixture<RitualLogs>(html`<ritual-logs></ritual-logs>`);
@@ -107,5 +107,31 @@ describe("ritual-logs", () => {
         (el as unknown as { atBottom: boolean }).atBottom = false;
         await el.updateComplete;
         expect(pill().hidden).to.be.false;
+    });
+});
+
+// seamOverlap drives the read↔live dedup at the backfill handoff (design-log/043
+// §Q7): file tail and the first live lines are the same stdout, so the contiguous
+// overlap is dropped by a plain text compare.
+describe("ritual-logs seamOverlap", () => {
+    it("returns 0 when the live tail does not overlap the backfill", () => {
+        expect(seamOverlap(["a", "b", "c"].map(out), ["d", "e"].map(out))).to.equal(0);
+    });
+
+    it("detects a one-line overlap at the seam", () => {
+        expect(seamOverlap(["a", "b", "c"].map(out), ["c", "d", "e"].map(out))).to.equal(1);
+    });
+
+    it("detects a multi-line overlap", () => {
+        expect(seamOverlap(["x", "b", "c"].map(out), ["b", "c", "z"].map(out))).to.equal(2);
+    });
+
+    it("prefers the largest contiguous overlap", () => {
+        expect(seamOverlap(["c", "b", "c"].map(out), ["b", "c", "n"].map(out))).to.equal(2);
+    });
+
+    it("handles empty inputs", () => {
+        expect(seamOverlap([], ["a"].map(out))).to.equal(0);
+        expect(seamOverlap(["a"].map(out), [])).to.equal(0);
     });
 });

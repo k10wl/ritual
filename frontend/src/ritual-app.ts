@@ -10,7 +10,6 @@ import {
     getSyncStatus,
     listVersions,
     onView,
-    openRootFolder,
     restore,
     setRetentionRules,
     showLogs,
@@ -29,6 +28,7 @@ import "./ui/ritual-shell";
 import "./ui/ritual-dial";
 import "./ui/dial-telemetry";
 import "./ui/run-addresses";
+import "./ui/run-console-link";
 import "./ui/primitives/rune-stack";
 import "./ui/advanced-view";
 import type { RuneStack } from "./ui/primitives/rune-stack";
@@ -554,14 +554,19 @@ export class RitualApp extends LitElement {
         void start(this.prep.port, this.prep.memoryMB, true);
     };
 
-    private onAmbientAction = (e: CustomEvent<"logs" | "folder">) => {
-        if (e.detail === "logs") void showLogs();
-        else void openRootFolder();
-    };
+    // RUN-stage console affordance (design-log/043 Part 2): the only path to the
+    // logs window. <run-console-link> emits `press`; ShowLogs builds the window
+    // lazily and the console backfills from latest.log on open.
+    private onOpenConsole = () => void showLogs();
 
     private underSlotChild(d: Derived) {
         if (d.underSlot === "addresses") {
-            return html`<run-addresses .addresses=${d.addresses}></run-addresses>`;
+            // Addresses + the console clickyclacky share the playing under-slot
+            // (design-log/043 Part 2), stacked in one cluster.
+            return html`<div class="run-cluster">
+                <run-addresses .addresses=${d.addresses}></run-addresses>
+                <run-console-link @press=${this.onOpenConsole}></run-console-link>
+            </div>`;
         }
         if (d.underSlot === "telemetry") {
             return html`<dial-telemetry
@@ -580,7 +585,7 @@ export class RitualApp extends LitElement {
         // (design-log/034). No modals anywhere.
         return html`
             <rune-stack>
-                <ritual-shell .state=${d.dial.state} @ambient-action=${this.onAmbientAction}>
+                <ritual-shell .state=${d.dial.state}>
                     <ritual-dial
                         .state=${d.dial.state}
                         .arc=${d.dial.arc}
@@ -688,6 +693,15 @@ export class RitualApp extends LitElement {
         .under-slot[data-shown] {
             opacity: 1;
             transform: translateY(0);
+        }
+        /* Playing under-slot: addresses with the console clickyclacky set apart
+           beneath them (design-log/043 Part 2). */
+        .run-cluster {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: var(--space-6);
+            width: 100%;
         }
     `;
 }

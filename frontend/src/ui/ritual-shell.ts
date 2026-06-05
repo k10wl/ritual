@@ -3,21 +3,11 @@ import { customElement, property } from "lit/decorators.js";
 import { ContextProvider } from "@lit/context";
 import { dialStateContext } from "./contexts/dial-state-context";
 import type { DialState } from "./ritual-dial";
-import "./ambient-footer";
 
 @customElement("ritual-shell")
 export class RitualShell extends LitElement {
     @property({ reflect: true }) state: DialState = "idle";
     private dial = new ContextProvider(this, { context: dialStateContext, initialValue: "idle" });
-
-    private relay = (e: Event) => {
-        const ce = e as CustomEvent<"logs" | "folder">;
-        this.dispatchEvent(new CustomEvent("ambient-action", {
-            detail: ce.detail,
-            bubbles: true,
-            composed: true,
-        }));
-    };
 
     willUpdate(changed: PropertyValues) {
         if (changed.has("state")) this.dial.setValue(this.state);
@@ -35,7 +25,6 @@ export class RitualShell extends LitElement {
             <section class="stage">
                 <slot></slot>
             </section>
-            <ambient-footer @ambient-action=${this.relay}></ambient-footer>
         `;
     }
 
@@ -108,8 +97,7 @@ export class RitualShell extends LitElement {
             .halo { animation: none; }
         }
 
-        .stage,
-        ambient-footer {
+        .stage {
             position: relative;
             z-index: 1;
         }

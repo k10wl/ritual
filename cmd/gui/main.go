@@ -80,23 +80,6 @@ func main() {
 
 	var shuttingDown atomic.Bool
 
-	logsWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:             "logs",
-		Title:            config.ProductName + " — Logs",
-		Width:            960,
-		Height:           640,
-		Hidden:           true,
-		BackgroundColour: application.NewRGB(16, 20, 28),
-		URL:              "/logs.html",
-	})
-	logsWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
-		if shuttingDown.Load() {
-			return
-		}
-		e.Cancel()
-		logsWindow.Hide()
-	})
-
 	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:                "main",
 		Title:               config.ProductName,
@@ -114,8 +97,31 @@ func main() {
 	})
 
 	runtime.viewEmitter.bind(wailsApp)
-	runtime.logEmitter.bind(logsWindow)
-	controlSvc.SetLogsWindow(&wailsWindowControl{win: logsWindow})
+	// Lazy logs window (design-log/043): built on the first ShowLogs, never at
+	// startup. The factory creates the window, wires its close→hide hook, binds
+	// the console emitter, and returns a WindowControl. ShowLogs only fires from
+	// the RUN-stage console affordance (no global entry).
+	controlSvc.SetLogsWindowFactory(func() control.WindowControl {
+		w := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+			Name:             "logs",
+			Title:            config.ProductName + " — Logs",
+			Width:            960,
+			Height:           640,
+			Hidden:           true,
+			BackgroundColour: application.NewRGB(16, 20, 28),
+			URL:              "/logs.html",
+		})
+		w.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+			if shuttingDown.Load() {
+				return
+			}
+			e.Cancel()
+			w.Hide()
+		})
+		runtime.logEmitter.bind(w)
+		return &wailsWindowControl{win: w}
+	})
+	controlSvc.SetConsoleReader(runtime.consoleReader)
 
 	mainWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		if shuttingDown.Load() {
@@ -265,8 +271,9 @@ type guiRuntime struct {
 	commitTargets []string
 	syncProber    control.SyncProber
 	dirtyProber   control.LocalDirtyProber
-	versionLister control.VersionLister   // historical-ref listing for restore (design-log/038)
-	remoteStorage ports.StorageRepository // for the autoupdate feed (design-log/037)
+	versionLister control.VersionLister                   // historical-ref listing for restore (design-log/038)
+	remoteStorage ports.StorageRepository                 // for the autoupdate feed (design-log/037)
+	consoleReader func(context.Context) ([]string, error) // on-demand latest.log backfill (design-log/043)
 }
 
 func buildRuntime() (*guiRuntime, error) {
@@ -443,6 +450,12 @@ func buildRuntime() (*guiRuntime, error) {
 		return nil, fmt.Errorf("server cmd builder: %w", err)
 	}
 
+	// On-demand console backfill (design-log/043): read the running server's own
+	// <cwd>/logs/latest.log tail when the logs window opens. cwd mirrors the
+	// cmd builder (filepath.Dir of the start script), so this stays correct for
+	// instance-subfolder start scripts.
+	consoleReader := newConsoleReader(serverPath, settings.StartScript)
+
 	readiness := adapters.NewTCPReadinessCheck(fmt.Sprintf("127.0.0.1:%d", settings.Port), bus)
 
 	localRets, remoteRets := retention.Build(localStorage, remoteStorage, bus)
@@ -519,6 +532,7 @@ func buildRuntime() (*guiRuntime, error) {
 		dirtyProber:   dirtyProber,
 		versionLister: versionLister,
 		remoteStorage: remoteStorage,
+		consoleReader: consoleReader,
 	}, nil
 }
 

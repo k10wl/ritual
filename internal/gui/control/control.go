@@ -17,6 +17,7 @@ import (
 	"ritual/internal/gui/projection"
 	"ritual/internal/subsystems/selfupdate"
 	"runtime"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,11 @@ import (
 // remote can't hang the IDLE screen. On timeout/error GetSyncStatus
 // degrades to a zero status (Behind:false) — design-log/031 OQ3.
 const syncProbeTimeout = 5 * time.Second
+
+// consoleReadTimeout bounds the on-demand server-log backfill read
+// (design-log/043). A local file read is fast; on timeout/error ReadServerLog
+// degrades to nil so the console simply opens to live-only, never an error.
+const consoleReadTimeout = 3 * time.Second
 
 // SnapshotSource is the read-side of the GUI projection. Bound at wiring
 // time to the *projection.Projection produced in cmd/gui. Narrow interface
@@ -189,10 +195,21 @@ func resolveHeadOrEmpty(ctx context.Context, resolve pulling.HeadResolver) (doma
 type ControlService struct {
 	bus      ports.EventBus
 	snapshot SnapshotSource
-	logs     WindowControl
 	sync     SyncProber
 	dirty    LocalDirtyProber
 	versions VersionLister
+
+	// Lazy logs window (design-log/043): no eager window at startup. The
+	// composition root injects a factory via SetLogsWindowFactory; ShowLogs
+	// builds the window on first open and caches it (close→hide for reuse).
+	// `logs` may also be pre-set through the constructor (tests). mu guards the
+	// one-time lazy build against concurrent ShowLogs calls.
+	mu          sync.Mutex
+	logs        WindowControl
+	logsFactory func() WindowControl
+	// console reads the running server's own latest.log for the one-shot
+	// backfill (design-log/043 §3b); nil ⇒ ReadServerLog returns nil.
+	console func(ctx context.Context) ([]string, error)
 }
 
 // NewControlService wires the service to the shared bus, projection, sync
@@ -364,21 +381,59 @@ func (c *ControlService) SendConsole(line string) {
 	c.bus.Publish(running.ConsoleInput{Text: line})
 }
 
-// ShowLogs reveals the logs console window. Preloaded at startup, so
-// Show() is near-instant. No-op until SetLogsWindow has been called — the
-// logs window is created after services.NewControlService in the Wails
-// composition root.
+// ShowLogs reveals the logs console window, building it lazily on the first
+// call (design-log/043 §3a — no eager window at startup). Subsequent calls
+// reuse the cached window (close→hide). No-op until a factory or window has
+// been injected. The window only becomes reachable via the RUN-stage console
+// affordance (design-log/043 Part 2).
 func (c *ControlService) ShowLogs() {
-	if c.logs == nil {
+	c.mu.Lock()
+	if c.logs == nil && c.logsFactory != nil {
+		c.logs = c.logsFactory()
+	}
+	logs := c.logs
+	c.mu.Unlock()
+	if logs == nil {
 		return
 	}
-	c.logs.Show()
-	c.logs.Focus()
+	logs.Show()
+	logs.Focus()
 }
 
-// SetLogsWindow attaches the logs window control after construction. The
-// composition root calls this once the Wails WebviewWindow exists.
-func (c *ControlService) SetLogsWindow(logs WindowControl) { c.logs = logs }
+// SetLogsWindowFactory injects the lazy window builder. The composition root
+// supplies a closure that creates the Wails WebviewWindow, registers its
+// close→hide hook, binds the console emitter, and returns a WindowControl —
+// invoked once, on the first ShowLogs (design-log/043).
+func (c *ControlService) SetLogsWindowFactory(f func() WindowControl) {
+	c.mu.Lock()
+	c.logsFactory = f
+	c.mu.Unlock()
+}
+
+// ReadServerLog returns the tail of the running server's own console log
+// (latest.log) for the one-shot backfill the logs window requests on open
+// (design-log/043 §3b). Raw lines, newest-last, no parsing. A nil reader,
+// timeout, missing file, or any read error collapses to nil — the console
+// opens to live-only, never an error.
+func (c *ControlService) ReadServerLog() []string {
+	if c.console == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), consoleReadTimeout)
+	defer cancel()
+	lines, err := c.console(ctx)
+	if err != nil {
+		return nil
+	}
+	return lines
+}
+
+// SetConsoleReader injects the latest.log tail reader (design-log/043). The
+// composition root resolves the running server's working dir from the start
+// script and supplies a reader over <cwd>/logs/latest.log.
+func (c *ControlService) SetConsoleReader(fn func(ctx context.Context) ([]string, error)) {
+	c.console = fn
+}
 
 // OpenRootFolder reveals the Ritual working root (config.RootPath) in the
 // OS file manager. Used by the "Show folder" button in the main window so

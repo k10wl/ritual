@@ -42,6 +42,10 @@ export const getSyncStatus = () => Control.GetSyncStatus();
 export const getSnapshot = () => Control.GetSnapshot();
 export const getPrep = () => Control.GetPrep();
 export const showLogs = () => Control.ShowLogs();
+// One-shot server-console backfill (design-log/043): the tail of the running
+// server's own latest.log, raw lines newest-last. The logs window calls this
+// once on open, before switching to the live server:logs wire.
+export const readServerLog = () => Control.ReadServerLog();
 export const sendConsole = (line: string) => Control.SendConsole(line);
 export const openRootFolder = () => Control.OpenRootFolder();
 

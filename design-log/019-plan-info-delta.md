@@ -1,7 +1,7 @@
 # 019 — PlanInfo announces the delta, not the ref total
 
 **Date:** 2026-05-25
-**Status:** Implemented (pending manual verification)
+**Status:** Implemented
 **Builds on:** design-log/001 §"What this means for the size estimate" (introduced `PlanInfo` as bar denominator); design-log/018 (logical-units ETA, exposed the consequences of an inflated denominator).
 
 ## Background

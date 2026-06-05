@@ -1,7 +1,7 @@
 # 031 — Bidirectional Sync (Download / Upload + launch staleness)
 
 **Date:** 2026-05-29
-**Status:** Draft
+**Status:** Implemented (commit c768529, 2026-05-30) — Download/Upload pipelines + `GetSyncStatus` staleness shipped; 22 tests green
 **Supersedes:** [[021-sync-upstream]] (single local-authoritative "Sync upstream" force-push).
 **Related:** [[016-live-sync-resurrected]] (commit/push substrate, retention tail), [[014-prep-advanced-settings]] (IDLE Advanced disclosure host), [[017-stage-bucket-honesty]] (Phase taxonomy), [[007-hig-ux-coherence]] (one-dial metaphor), [[009-telemetry-hierarchy]] (dial `sub` caption).
 
