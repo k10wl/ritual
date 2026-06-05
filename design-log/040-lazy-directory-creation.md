@@ -1,6 +1,6 @@
 # 040 — Lazy directory creation (no empty folders on boot)
 
-**Status:** Draft
+**Status:** Implemented
 **Date:** 2026-06-04
 
 ## Background
@@ -158,3 +158,41 @@ pull/launch:
   this is an improvement, not a regression.
 - **Con:** the root `MkdirAll` (Q1) survives as a documented exception; the
   principle is "no *empty* folders," and the root is never empty.
+
+## Implementation Results (2026-06-05)
+
+Shipped the resolved design with **zero deviations**. Single-commit change,
+two files + tests.
+
+**Backend — `internal/adapters/cmdbuilder.go`:**
+- `ServerCmdBuilder` no longer takes a pre-opened `*os.Root`. Constructor
+  signature changed `NewServerCmdBuilder(workRoot *os.Root, …)` →
+  `NewServerCmdBuilder(serverPath string, …)`; validation message
+  `workRoot cannot be nil` → `server path cannot be empty`.
+- New lazy `root()` accessor (mutex-guarded, cached) opens the server sandbox
+  on **first `Build`**, not at composition. `os.OpenRoot` on an absent dir
+  fails with `IsNotExist` → honest `"no server files at <path> — run a sync
+  first"`; it never `MkdirAll`s, so no empty `server/` is left behind (Q3).
+  The `Apply` that writes the install materialises `server/` via the existing
+  RootPath `FSRepository.PutStream`.
+
+**Composition — `cmd/gui/main.go`:**
+- Deleted the eager `os.MkdirAll(serverPath)` + `os.OpenRoot(serverPath)`
+  (old `:441-447`). Now just `serverPath := filepath.Join(config.RootPath,
+  config.ServerDir)` passed by string. Inline comment documents the surviving
+  root anchor as the only sanctioned eager create (Q1, Phase D).
+
+**Scope held to design:** `remote-mock/` left eager (Q4, out of scope);
+`logs/` unchanged (already JIT); root `MkdirAll` kept (Q1).
+
+**Tests (`cmdbuilder_test.go`):** retargeted all constructors to pass a path;
+`_NilWorkRoot` → `_EmptyServerPath`. Added `TestServerCmdBuilder_Build_NoServerDir`
+(Phase A + verification): `Build` on an absent server path returns a
+`"no server files"` error **and** asserts `os.Stat(serverPath)` is
+`IsNotExist` — the dir must not be created on launch. `go build ./...`,
+`go vet ./...`, full `go test ./...` all green.
+
+**Verification criteria met:** post-`buildRuntime` pre-Apply, `server/` does
+not exist (regression test); after Apply it appears content-first via
+`PutStream`; fresh-host skip-sync surfaces a clean error instead of an empty
+dir + silent no-op launch.

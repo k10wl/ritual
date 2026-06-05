@@ -437,15 +437,12 @@ func buildRuntime() (*guiRuntime, error) {
 	// Real NeoForge launcher: settings.StartScript (default "start.bat")
 	// resolved relative to <root>/server/. Operators may override via
 	// settings.json — empty/missing falls back to domain.DefaultStartScript.
+	// Server sandbox is NOT created here: the os.Root is opened lazily by the
+	// builder on first launch, so a fresh host carries no empty server/ until an
+	// Apply has written into it (design-log/040). The only eager MkdirAll is the
+	// root sandbox anchor above, which never stays empty (logs/ lands at once).
 	serverPath := filepath.Join(config.RootPath, config.ServerDir)
-	if err := os.MkdirAll(serverPath, config.DirPermission); err != nil {
-		return nil, fmt.Errorf("create server dir: %w", err)
-	}
-	serverRoot, err := os.OpenRoot(serverPath)
-	if err != nil {
-		return nil, fmt.Errorf("open server dir: %w", err)
-	}
-	cmdBuilder, err := adapters.NewServerCmdBuilder(serverRoot, settings.StartScript, settings.ToServerRuntime)
+	cmdBuilder, err := adapters.NewServerCmdBuilder(serverPath, settings.StartScript, settings.ToServerRuntime)
 	if err != nil {
 		return nil, fmt.Errorf("server cmd builder: %w", err)
 	}

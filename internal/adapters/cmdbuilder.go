@@ -13,21 +13,29 @@ import (
 	"ritual/internal/core/ports"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var _ ports.CmdBuilder = (*ServerCmdBuilder)(nil)
 
 // ServerCmdBuilder composes the server start command from a start script and runtime settings.
 type ServerCmdBuilder struct {
-	workRoot    *os.Root
+	serverPath  string
 	startScript string
 	runtime     func() (*domain.ServerRuntime, error)
+
+	mu       sync.Mutex
+	workRoot *os.Root // lazily opened on first Build (design-log/040)
 }
 
 // NewServerCmdBuilder validates inputs and returns a ServerCmdBuilder ready to build commands.
-func NewServerCmdBuilder(workRoot *os.Root, startScript string, runtime func() (*domain.ServerRuntime, error)) (*ServerCmdBuilder, error) {
-	if workRoot == nil {
-		return nil, errors.New("workRoot cannot be nil")
+//
+// serverPath is the server sandbox directory; it is NOT created or opened here.
+// The os.Root is opened lazily on first Build, so a fresh host carries no empty
+// server/ folder until an Apply has actually written into it (design-log/040).
+func NewServerCmdBuilder(serverPath string, startScript string, runtime func() (*domain.ServerRuntime, error)) (*ServerCmdBuilder, error) {
+	if serverPath == "" {
+		return nil, errors.New("server path cannot be empty")
 	}
 	if startScript == "" {
 		return nil, errors.New("start script cannot be empty")
@@ -37,10 +45,33 @@ func NewServerCmdBuilder(workRoot *os.Root, startScript string, runtime func() (
 	}
 
 	return &ServerCmdBuilder{
-		workRoot:    workRoot,
+		serverPath:  serverPath,
 		startScript: startScript,
 		runtime:     runtime,
 	}, nil
+}
+
+// root opens the server sandbox lazily on first launch and caches it.
+//
+// It never MkdirAll's: when server/ is absent (e.g. a fresh-host skip-sync run
+// with no prior Apply) it surfaces an honest error and leaves nothing behind —
+// the dir is materialised only by the Apply that writes into it (design-log/040
+// Q3). os.OpenRoot does not create its target, so an absent dir fails here.
+func (b *ServerCmdBuilder) root() (*os.Root, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.workRoot != nil {
+		return b.workRoot, nil
+	}
+	root, err := os.OpenRoot(b.serverPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("no server files at %s — run a sync first", b.serverPath)
+		}
+		return nil, fmt.Errorf("open server dir: %w", err)
+	}
+	b.workRoot = root
+	return root, nil
 }
 
 // Build reads the start script and returns an *exec.Cmd configured with runtime memory/port.
@@ -50,7 +81,12 @@ func (b *ServerCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io
 		return nil, fmt.Errorf("resolve runtime: %w", err)
 	}
 
-	f, err := b.workRoot.Open(b.startScript)
+	workRoot, err := b.root()
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := workRoot.Open(b.startScript)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("start script not found at %s", b.startScript)
@@ -72,7 +108,7 @@ func (b *ServerCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io
 	}
 	parts = append(parts, "--port", strconv.Itoa(server.Port))
 
-	scriptPath := filepath.Join(b.workRoot.Name(), b.startScript)
+	scriptPath := filepath.Join(workRoot.Name(), b.startScript)
 	// #nosec G204 -- parts sourced from project-controlled start script, not user input
 	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
 	cmd.Dir = filepath.Dir(scriptPath)
