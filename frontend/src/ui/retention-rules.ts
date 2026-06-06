@@ -416,7 +416,12 @@ export class RetentionRulesEl extends LitElement {
                     min="0"
                     .max=${Infinity}
                     label=${t.label}
-                    @change=${(e: CustomEvent<{ value: number }>) => this.#onTier(t.key, e.detail.value)}
+                    @change=${(e: CustomEvent<{ value: number }>) => {
+                        // Contain the primitive's composed `change` (see #onScope)
+                        // so only our own {local, remote} `change` reaches the host.
+                        e.stopPropagation();
+                        this.#onTier(t.key, e.detail.value);
+                    }}
                 ></rune-stepper>
             </div>
             ${this.#decoder(explain(t.tier, count), "explain")}
@@ -494,7 +499,15 @@ export class RetentionRulesEl extends LitElement {
         return html`<p class="caution">${this.#decoder(text, "")}</p>`;
     }
 
+    // Contain the inner <rune-segmented> `change` (design-log/045 post-ship):
+    // the primitive fires `change` with `composed: true`, so without this stop
+    // it bubbles out of our shadow root and is mistaken by the host for *our*
+    // semantic `change` event — except its detail is `{value}`, not
+    // `{local, remote}`, so the host reads `undefined` rules and the picker
+    // collapses to all-zeros on a scope flip. Our public `change` is emitted
+    // explicitly by #onTier / #discard; raw primitive events stay inside.
     #onScope = (e: CustomEvent<{ value: string }>) => {
+        e.stopPropagation();
         this._scope = e.detail.value as RetentionScope;
     };
 

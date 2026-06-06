@@ -367,6 +367,18 @@ func buildRuntime() (*guiRuntime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
+	// Materialise settings.json on first boot if it's missing (user direction
+	// 2026-06-05). LoadSettings collapses a missing file to in-memory defaults
+	// but never writes it, so a fresh install had no file for the user to
+	// inspect/edit and the Retention section read pure defaults. Persist those
+	// defaults once, only when absent (never clobber a real file). The root dir
+	// already exists (sandbox anchor, design-log/040 §Q1) so this writes a
+	// content file, not an empty folder — consistent with the lazy-dir rule.
+	if _, statErr := os.Stat(domain.SettingsPath()); os.IsNotExist(statErr) {
+		if err := settings.Save(); err != nil {
+			return nil, fmt.Errorf("init settings file: %w", err)
+		}
+	}
 
 	// Remote backend selected at runtime by RITUAL_REMOTE_MODE
 	// (design-log/030). Default ModeR2 reads credentials from

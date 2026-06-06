@@ -106,6 +106,41 @@ describe("advanced-view", () => {
         expect(prepChange).to.equal(false, "a retention edit must not masquerade as a prep-settings change");
     });
 
+    it("switching the retention scope keeps the loaded rules (no all-zeros wipe) — design-log/045 post-ship", async () => {
+        const rules = {
+            local: { keepLast: 2, keepDaily: 0, keepWeekly: 0, keepMonthly: 0 },
+            remote: { keepLast: 3, keepDaily: 1, keepWeekly: 1, keepMonthly: 6 },
+        };
+        const el = await fixture<AdvancedView>(
+            html`<advanced-view .loadRules=${async () => rules}></advanced-view>`,
+        );
+        // firstUpdated → loadRules resolves a microtask later; flush it.
+        await new Promise((r) => setTimeout(r, 0));
+        await el.updateComplete;
+
+        const ret = el.shadowRoot!.querySelector("retention-rules") as HTMLElement & {
+            local: typeof rules.local;
+            remote: typeof rules.remote;
+        };
+        expect(ret.local).to.deep.equal(rules.local, "baseline loaded before the flip");
+        expect(ret.remote).to.deep.equal(rules.remote);
+
+        // Flip scope to Remote via the real inner primitive (composed change).
+        ret.shadowRoot!
+            .querySelector("rune-segmented")!
+            .dispatchEvent(new CustomEvent("change", { detail: { value: "remote" }, bubbles: true, composed: true }));
+        await el.updateComplete;
+        await ret.updateComplete;
+
+        // Baseline survives the flip — was being nulled to {undefined} → zeros.
+        expect(ret.local).to.deep.equal(rules.local, "scope flip must not clobber the host baseline");
+        expect(ret.remote).to.deep.equal(rules.remote);
+        const stepperValues = [...ret.shadowRoot!.querySelectorAll("rune-stepper")].map(
+            (s) => (s as HTMLElement & { value: number }).value,
+        );
+        expect(stepperValues).to.deep.equal([3, 1, 1, 6], "remote tab shows the saved rules, not zeros");
+    });
+
     it("lets child restore events bubble through to the host", async () => {
         const el = await fixture<AdvancedView>(html`<advanced-view></advanced-view>`);
         let bubbled = false;

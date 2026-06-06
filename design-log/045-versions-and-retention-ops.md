@@ -452,3 +452,29 @@ User direction (2026-06-05): *"allow me to remove versions from remote too! not 
 - **Frontend:** `npx tsc --noEmit` clean; `npx web-test-runner` — 169/169 across 17 files (+3 versions-view tests on top of the prior 166).
 - **Bindings:** `task gui:bindings` regenerated — `DeleteRemoteVersion` + `SetRemoteVersionDeleter` land in `controlservice.ts`.
 - **Live smoke:** deferred — needs a real R2 dev session with multiple remote refs to exercise the GC sweep against canonical history.
+
+## Post-ship fixes #2 (2026-06-05, retention scope flip + settings file)
+
+User report: *"open advanced → retention → click remote → all 0 in view → click local → all 0 in view. it is almost like we don't know how to reset properly. also settings.json should be created on app start if it did not exist previously."*
+
+### Bug — scope flip wipes the picker to all-zeros
+
+**Symptom:** flipping the Local·Remote scope `<rune-segmented>` in the Retention section blanked every tier to `0` for *both* sides — the loaded rules (and the saved policy) vanished from view.
+
+**Root cause (regression from §F's staged-edit rework):** two coupled defects.
+1. **Inner primitive `change` leak.** `<rune-segmented>` and `<rune-stepper>` both dispatch `change` with `composed: true`. `<retention-rules>`'s `#onScope` (and the stepper handler) did not `stopPropagation`, so the primitive's `change` escaped the shadow root and reached `<advanced-view>`'s `@change` listener — which is meant for `<retention-rules>`'s *own* `{local, remote}` semantic `change`. The leaked detail is `{value}`, so `detail.local` / `detail.remote` were `undefined`.
+2. **Host clobbered its own baseline.** `advanced-view.#onRetentionChange` wrote `this._rules = {local: detail.local, remote: detail.remote}` on every `change`. With (1) that stored `{undefined, undefined}`, fed straight back down as the child's `.local`/`.remote` baseline → `normalizeRules(undefined)` → all-zeros. (Stepper edits dodged the visible blanking only because the live draft masked the nulled baseline; a scope flip has no draft, so the zeros showed.) Independently, echoing the live draft into the baseline made the child's `willUpdate` self-heal clear the draft and collapse the Apply bar after a single tap.
+
+**Fix:**
+- `frontend/src/ui/retention-rules.ts` — `#onScope` and the per-tier stepper handler now `e.stopPropagation()`, containing the primitives' `change` so only the component's explicit `{local, remote}` `change` (from `#onTier`/`#discard`) reaches the host.
+- `frontend/src/ui/advanced-view.ts` — `#onRetentionChange` no longer writes `_rules`. The baseline now changes only on load (`firstUpdated`) and on Apply (`#onRetentionApply`); a transient/leaked `change` can no longer overwrite it, and the Apply bar survives a tap.
+- Tests: `retention-rules.test.ts` pins containment (a segmented `change` must not surface as the component's `change`); `advanced-view.test.ts` pins the integration (a scope flip with loaded rules keeps the steppers at the saved values, not zeros).
+
+### settings.json created on first boot
+
+`domain.LoadSettings()` collapsed a missing file to in-memory defaults but never wrote it, so a fresh install had no `settings.json` and the Retention section read pure defaults (the original "doesn't read from settings.json" symptom — the file simply didn't exist at `config.RootPath`). `cmd/gui/main.go:buildRuntime` now `os.Stat`s `domain.SettingsPath()` after the load and, only when absent, persists the defaults via `settings.Save()`. Never clobbers an existing file. The root dir is already the eager sandbox anchor ([[040]] §Q1), so this writes a content file, not an empty folder — consistent with the lazy-dir rule.
+
+### Verification (post-ship #2)
+
+- **Frontend:** `npx tsc --noEmit` clean; `npx web-test-runner` — 171/171 across 17 files (+2 regression tests).
+- **Backend:** `go build ./...` clean.

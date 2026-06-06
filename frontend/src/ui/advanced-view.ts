@@ -138,15 +138,20 @@ export class AdvancedView extends LitElement {
     // Retention edits arrive as a generic `change` from `<retention-rules>`.
     // Under the staged-edit model (design-log/045 §D) this fires on every
     // stepper tap but does NOT auto-save; the host listens for `apply`
-    // instead. We still track the live values locally so the cascade stays
-    // consistent, and we still re-emit as `retentionchange` so any external
-    // subscribers (none in production today) keep seeing them. Stop the
-    // generic `change` so it can't be mistaken for the prep-settings `change`
-    // the host listens to.
+    // instead.
+    //
+    // Crucially we must NOT write the draft back into `this._rules`: that field
+    // is the *baseline* we hand down as `.local` / `.remote`, and the child
+    // treats it as "what's saved right now". Echoing the live draft into it
+    // (a) makes the child's `willUpdate` self-heal clear the draft, collapsing
+    // the Apply bar after a single tap, and (b) lets a stray composed event
+    // overwrite a good baseline with garbage. `_rules` only changes on load
+    // (firstUpdated) and on Apply (#onRetentionApply). Here we just re-emit as
+    // `retentionchange` for external subscribers and stop the generic `change`
+    // so it can't be mistaken for the prep-settings `change` the host listens to.
     #onRetentionChange = (e: Event) => {
         e.stopPropagation();
         const detail = (e as CustomEvent<RetentionChangeDetail>).detail;
-        this._rules = { local: detail.local, remote: detail.remote };
         this.dispatchEvent(
             new CustomEvent<RetentionChangeDetail>("retentionchange", {
                 detail,

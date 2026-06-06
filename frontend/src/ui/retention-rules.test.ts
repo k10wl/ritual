@@ -140,6 +140,20 @@ describe("retention-rules", () => {
         expect(nonzero.shadowRoot!.querySelector(".caution")).to.not.exist;
     });
 
+    it("contains the inner primitives' `change` — a scope flip must not surface as our own `change` (045 post-ship leak fix)", async () => {
+        const el = await mount(r({ keepLast: 2 }), r({ keepLast: 3 }));
+        let leaked: unknown = "untouched";
+        el.addEventListener("change", (e) => (leaked = (e as CustomEvent).detail));
+        // The real <rune-segmented> fires `change` with composed:true; if we let
+        // it bubble out it masquerades as our {local,remote} change with a
+        // {value} detail, and the host reads undefined rules → all-zeros picker.
+        el.shadowRoot!
+            .querySelector("rune-segmented")!
+            .dispatchEvent(new CustomEvent("change", { detail: { value: "remote" }, bubbles: true, composed: true }));
+        await el.updateComplete;
+        expect(leaked).to.equal("untouched", "the segmented's raw change must not escape as our change");
+    });
+
     it("scope switch edits the remote side independently", async () => {
         const el = await mount(r({ keepLast: 2 }), r({ keepLast: 3 }));
         el.shadowRoot!
