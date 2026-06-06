@@ -87,17 +87,18 @@ func Attach(ctx context.Context, bus ports.EventBus, n Notifier) func() {
 	}
 }
 
-// send dispatches one notification off the consumer goroutine. Title is always
-// the product name; the human-facing line lives in the body so the toast reads
-// "Ritual / Server started". Errors are best-effort — a dropped toast is never
-// load-bearing.
+// send dispatches one notification off the consumer goroutine. Title is the
+// variant display name ("Ritual" or "Ritual Dev") so a dev-variant toast is
+// visibly distinct from a prod one in the action center; the human-facing
+// line lives in the body so the toast reads "Ritual / Server started".
+// Errors are best-effort — a dropped toast is never load-bearing.
 func send(n Notifier, kind string, runSeq int, line, detail string) {
 	id := fmt.Sprintf("ritual-%s-%d", kind, runSeq)
 	body := line
 	if detail != "" {
 		body = line + ": " + detail
 	}
-	go func() { _ = n.Notify(id, config.ProductName, body) }()
+	go func() { _ = n.Notify(id, config.DisplayName(), body) }()
 }
 
 func failBody(err error) string {

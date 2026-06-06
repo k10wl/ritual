@@ -22,11 +22,27 @@ const (
 	Description = "Ritual - Minecraft Server Manager"
 )
 
-// AppName is injected at build time via ldflags (ritualdev or ritual)
+// AppName identifies the build variant: "ritualdev" for the dev iteration
+// build, "ritual" for the production release. Set via -ldflags
+// -X ritual/internal/config.AppName=<name> by build/windows/Taskfile.yml
+// based on RITUAL_ENV. Drives RootPath (~/<GroupName>/<AppName>) so the two
+// variants never share on-disk state, and DisplayName() so the window title
+// telegraphs which variant is running.
 var AppName = "ritualdev"
 
 // AppVersion is the semver string derived from VersionMajor/Minor/Patch.
 var AppVersion string
+
+// DisplayName returns the user-visible product name. Dev builds get a " Dev"
+// suffix so the window title and OS taskbar entry are distinguishable from
+// the production release at a glance — mirrors the .syso ProductName written
+// by cmd/genversioninfo -dev.
+func DisplayName() string {
+	if AppName == "ritualdev" {
+		return ProductName + " Dev"
+	}
+	return ProductName
+}
 
 // Directory names
 const (

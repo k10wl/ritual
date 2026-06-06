@@ -87,8 +87,10 @@ func TestAttach_StartThenStop(t *testing.T) {
 	if calls[1].body != "Server stopped" {
 		t.Fatalf("second toast body = %q, want %q", calls[1].body, "Server stopped")
 	}
-	if calls[0].title != "Ritual" {
-		t.Fatalf("title = %q, want %q", calls[0].title, "Ritual")
+	// Tests run via `go test` which keeps the default config.AppName
+	// ("ritualdev"), so DisplayName() returns "Ritual Dev".
+	if calls[0].title != "Ritual Dev" {
+		t.Fatalf("title = %q, want %q", calls[0].title, "Ritual Dev")
 	}
 }
 

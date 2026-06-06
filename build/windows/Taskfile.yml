@@ -42,13 +42,34 @@ tasks:
     cmds:
       - task: generate:versioninfo
       - task: generate:syso
-      - go build {{.BUILD_FLAGS}} -o "{{.BIN_DIR}}/{{.APP_NAME}}.exe" {{.MAIN_PKG}}
+        vars:
+          ARCH: '{{.ARCH}}'
+      - go build {{.BUILD_FLAGS}} {{.LINK_FLAGS}} -o "{{.BIN_DIR}}/{{.OUT_NAME}}.exe" {{.MAIN_PKG}}
       - cmd: powershell Remove-item cmd/gui/*.syso
         platforms: [windows]
       - cmd: rm -f cmd/gui/*.syso
         platforms: [linux, darwin]
     vars:
-      BUILD_FLAGS: '{{if eq .DEV "true"}}{{if .EXTRA_TAGS}}-tags {{.EXTRA_TAGS}} {{end}}-buildvcs=false -gcflags=all="-l"{{else}}-tags production{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}} -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui"{{end}}'
+      # Dev/prod split is driven by RITUAL_ENV (global, default "dev"), not DEV.
+      # DEV controls iteration mode (debug gcflags, vite dev) and is orthogonal.
+      # So OUT_NAME / AppName ldflag follow RITUAL_ENV — `task gui:dev` (env=dev)
+      # produces bin/ritualdev.exe identifying as AppName="ritualdev", and
+      # `task publish RITUAL_ENV=prod` produces bin/ritual.exe identifying as
+      # AppName="ritual". RootPath (~/k10wl/<AppName>) follows accordingly.
+      OUT_NAME: '{{if eq .RITUAL_ENV "prod"}}{{.APP_NAME}}{{else}}{{.APP_NAME}}dev{{end}}'
+      APPNAME_LDFLAG: '-X ritual/internal/config.AppName={{.OUT_NAME}}'
+      # Bake R2 creds for the active profile into the binary so it's
+      # self-contained — Taskfile's dotenv block reads .env.{RITUAL_ENV}.local
+      # and exposes the four R2_* values; we forward them as -X ldflags into
+      # remote.bakedBucket/AccountID/AccessKeyID/SecretAccessKey. At runtime,
+      # env vars still win (so dev iteration via shell exports keeps working);
+      # baked values are the fallback when no env is set. Held in LINK_FLAGS
+      # (not BUILD_FLAGS) because the bindings generator's label includes
+      # BUILD_FLAGS verbatim, and the full ldflag string blows past Windows
+      # MAX_PATH when Task derives a checksum filename from it.
+      R2_LDFLAGS: '-X ritual/internal/subsystems/remote.bakedBucket={{.R2_BUCKET_NAME}} -X ritual/internal/subsystems/remote.bakedAccountID={{.R2_ACCOUNT_ID}} -X ritual/internal/subsystems/remote.bakedAccessKeyID={{.R2_ACCESS_KEY_ID}} -X ritual/internal/subsystems/remote.bakedSecretAccessKey={{.R2_SECRET_ACCESS_KEY}}'
+      LINK_FLAGS: '{{if eq .DEV "true"}}-ldflags="{{.APPNAME_LDFLAG}} {{.R2_LDFLAGS}}"{{else}}-ldflags="-w -s -H windowsgui {{.APPNAME_LDFLAG}} {{.R2_LDFLAGS}}"{{end}}'
+      BUILD_FLAGS: '{{if eq .DEV "true"}}{{if .EXTRA_TAGS}}-tags {{.EXTRA_TAGS}} {{end}}-buildvcs=false -gcflags=all="-l"{{else}}-tags production{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}} -trimpath -buildvcs=false{{end}}'
     env:
       GOOS: windows
       CGO_ENABLED: '{{.CGO_ENABLED | default "0"}}'
@@ -100,18 +121,18 @@ tasks:
       FORMAT: '{{.FORMAT | default "nsis"}}'
 
   generate:versioninfo:
-    summary: Generates Windows `info.json` from internal/config/config.go (single source of truth).
+    summary: Generates Windows `info.json` from internal/config/config.go (single source of truth). When RITUAL_ENV != "prod", ProductName gets a " Dev" suffix so the .syso telegraphs the variant in Properties / Task Manager.
     cmds:
-      - go run ./cmd/genversioninfo build/windows/info.json
+      - go run ./cmd/genversioninfo {{if ne .RITUAL_ENV "prod"}}-dev{{end}} build/windows/info.json
 
   generate:syso:
-    summary: Generates Windows `.syso` file. Icon is selected from assets/baiki-<ENV>.ico (defaults to prod).
+    summary: Generates Windows `.syso` file. Icon is selected from assets/baiki-<ENV>.ico based on RITUAL_ENV (default "dev" → baiki-dev.ico; "prod" → baiki-prod.ico).
     dir: build
     cmds:
       - wails3 generate syso -arch {{.ARCH}} -icon ../assets/baiki-{{.ICON_ENV}}.ico -manifest windows/wails.exe.manifest -info windows/info.json -out ../cmd/gui/wails_windows_{{.ARCH}}.syso
     vars:
       ARCH: '{{.ARCH | default ARCH}}'
-      ICON_ENV: '{{if eq .DEV "true"}}dev{{else}}prod{{end}}'
+      ICON_ENV: '{{if eq .RITUAL_ENV "prod"}}prod{{else}}dev{{end}}'
 
   create:nsis:installer:
     summary: Creates an NSIS installer
@@ -159,7 +180,9 @@ tasks:
 
   run:
     cmds:
-      - '{{.BIN_DIR}}/{{.APP_NAME}}.exe'
+      - '{{.BIN_DIR}}/{{.OUT_NAME}}.exe'
+    vars:
+      OUT_NAME: '{{if eq .RITUAL_ENV "prod"}}{{.APP_NAME}}{{else}}{{.APP_NAME}}dev{{end}}'
 
   sign:
     summary: Signs the Windows executable

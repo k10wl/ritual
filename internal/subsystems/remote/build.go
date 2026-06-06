@@ -56,6 +56,26 @@ const (
 	EnvR2SecretAccessKey = "RITUAL_R2_SECRET_ACCESS_KEY"
 )
 
+// Baked-in R2 credentials, injected at build time via -ldflags
+// -X ritual/internal/subsystems/remote.bakedBucket=... etc. The Taskfile
+// reads .env.{RITUAL_ENV}.local at build time and injects the matching
+// profile's creds into the binary, so the shipped .exe is self-contained
+// — no env file needs to travel with it.
+//
+// Env vars still win at runtime (godotenv-style precedence) so an operator
+// can override a single profile's creds without rebuilding; the baked
+// values are only the fallback when the env var is empty.
+//
+// Tradeoff: anyone with the binary can `strings` it to extract these creds.
+// Scope them narrowly (e.g. R2 tokens limited to the bin/ prefix the
+// updater needs) — design-log/037 §publish covers the access model.
+var (
+	bakedBucket          string
+	bakedAccountID       string
+	bakedAccessKeyID     string
+	bakedSecretAccessKey string
+)
+
 // EnvRemoteMode toggles the remote backend at runtime. Values: "mock"
 // → ModeMock; anything else (including unset) → ModeR2. Documented as
 // the way to opt into the dev-only local-FS mock without rebuilding
@@ -106,10 +126,13 @@ func buildMock() (ports.StorageRepository, error) {
 }
 
 func buildR2FromEnv(ctx context.Context, bus ports.EventBus) (ports.StorageRepository, error) {
-	bucket := os.Getenv(EnvR2Bucket)
-	accountID := os.Getenv(EnvR2AccountID)
-	accessKeyID := os.Getenv(EnvR2AccessKeyID)
-	secretAccessKey := os.Getenv(EnvR2SecretAccessKey)
+	// Env wins, baked-in falls back. So an operator can override a single
+	// cred via shell export without rebuilding, but the shipped binary
+	// still starts on a fresh machine with no env file in sight.
+	bucket := firstNonEmpty(os.Getenv(EnvR2Bucket), bakedBucket)
+	accountID := firstNonEmpty(os.Getenv(EnvR2AccountID), bakedAccountID)
+	accessKeyID := firstNonEmpty(os.Getenv(EnvR2AccessKeyID), bakedAccessKeyID)
+	secretAccessKey := firstNonEmpty(os.Getenv(EnvR2SecretAccessKey), bakedSecretAccessKey)
 
 	var missing []string
 	if bucket == "" {
@@ -133,6 +156,13 @@ func buildR2FromEnv(ctx context.Context, bus ports.EventBus) (ports.StorageRepos
 		return nil, fmt.Errorf("remote: R2: %w", err)
 	}
 	return repo, nil
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 func mockRemoteDir() (string, error) {

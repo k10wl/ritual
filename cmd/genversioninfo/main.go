@@ -2,15 +2,26 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"ritual/internal/config"
 )
 
 func main() {
+	// -dev suffixes ProductName with " Dev" so the .syso resource (visible in
+	// Windows Properties, Task Manager, etc.) telegraphs the variant. The flag
+	// rather than reading config.AppName because genversioninfo runs via
+	// `go run`, which never picks up the build's -X ldflag override.
+	dev := flag.Bool("dev", false, "produce dev-variant resource info (suffix ProductName with \" Dev\")")
+	flag.Parse()
 	out := "build/windows/info.json"
-	if len(os.Args) > 1 {
-		out = os.Args[1]
+	if args := flag.Args(); len(args) > 0 {
+		out = args[0]
+	}
+	productName := config.ProductName
+	if *dev {
+		productName += " Dev"
 	}
 	version := fmt.Sprintf("%d.%d.%d", config.VersionMajor, config.VersionMinor, config.VersionPatch)
 	data := map[string]any{
@@ -21,7 +32,7 @@ func main() {
 				"CompanyName":     config.GroupName,
 				"FileDescription": config.Description,
 				"LegalCopyright":  fmt.Sprintf("(c) %s", config.GroupName),
-				"ProductName":     config.ProductName,
+				"ProductName":     productName,
 				"Comments":        "",
 			},
 		},

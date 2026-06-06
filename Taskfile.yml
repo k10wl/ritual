@@ -61,29 +61,99 @@ vars:
 
 tasks:
   # --- GUI (cmd/gui, real backend) ----------------------------------------
-  gui:build:
-    desc: Build GUI binary for host OS (bin/ritual[.exe]).
-    deps: [gui:assets]
-    cmds:
-      - task: "{{OS}}:build"
+  #
+  # NestJS-style :stage suffix — every script that cares about the env has
+  # symmetric `<task>:dev` and `<task>:prod` variants, and ONLY the suffixed
+  # form is callable from the CLI. No bare `gui:build` / `gui:run` /
+  # `gui:package` / `publish` exists: forcing the stage in the task name
+  # means a glance at the command line says what was built, run, or shipped.
+  #
+  #   task gui:build:dev   → bin/ritualdev.exe (dev R2, "Ritual Dev")
+  #   task gui:build:prod  → bin/ritual.exe    (prod R2, "Ritual")
+  #
+  # Implementation: each :stage variant subprocess-invokes a private
+  # underscore-prefixed impl (`gui:_build`, `gui:_run`, `gui:_package`,
+  # `_publish`) with RITUAL_ENV inlined POSIX-style. The subprocess gets a
+  # fresh Task instance that re-evaluates the file-level `dotenv:` against
+  # the right profile, so build creds, icon, name, and binary all match
+  # without any second-guessing about shell state. The underscore prefix is
+  # purely a "don't call me directly" signal — Task has no built-in privacy
+  # for tasks invoked via subprocess, and the wails3 dev workflow needs to
+  # reach them via the aliases at the bottom of the file.
+  #
+  # Two stage axes coexist:
+  #   - build/run/package/publish carry `:dev` / `:prod` — picks which
+  #     profile's creds & identity get baked into the binary.
+  #   - dev iteration carries `:local` / `:remote` — picks which storage
+  #     backend the *running* binary talks to (mock vs real R2). The binary
+  #     itself is always the dev variant; only the runtime backend differs.
+  #
+  # No bare CLI task here is env- or backend-aware: every such task carries
+  # its stage suffix in the name.
+  #
+  # DEV (build-mode flag for -gcflags / vite dev mode) is orthogonal to
+  # RITUAL_ENV (which profile's creds & identity get baked); the :dev
+  # variants forward DEV through so `wails3 build DEV=true` still produces
+  # a debug-flagged binary.
 
-  gui:run:
-    desc: Run last-built GUI binary.
+  gui:build:dev:
+    desc: Build GUI dev variant → bin/ritualdev.exe (dev R2 creds baked, "Ritual Dev" identity).
     cmds:
-      - task: "{{OS}}:run"
+      - RITUAL_ENV=dev DEV={{.DEV}} task gui:_build
 
-  gui:dev:
-    desc: GUI dev mode — vite hot-reload + wails3 webview.
-    deps: [gui:assets]
+  gui:build:prod:
+    desc: Build GUI prod variant → bin/ritual.exe (prod R2 creds baked, "Ritual" identity).
     cmds:
-      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+      - RITUAL_ENV=prod DEV={{.DEV}} task gui:_build
 
-  gui:package:
-    desc: Package GUI for distribution (NSIS on win, .app on mac).
-    deps: [gui:assets]
+  gui:run:dev:
+    desc: Run bin/ritualdev.exe.
     cmds:
-      - task: "{{OS}}:package"
+      - RITUAL_ENV=dev task gui:_run
 
+  gui:run:prod:
+    desc: Run bin/ritual.exe.
+    cmds:
+      - RITUAL_ENV=prod task gui:_run
+
+  gui:package:dev:
+    desc: Package GUI dev variant for distribution.
+    cmds:
+      - RITUAL_ENV=dev task gui:_package
+
+  gui:package:prod:
+    desc: Package GUI prod variant for distribution.
+    cmds:
+      - RITUAL_ENV=prod task gui:_package
+
+  publish:dev:
+    desc: Test + lint + build the dev-variant binary, then publish it to the dev R2 channel.
+    cmds:
+      - RITUAL_ENV=dev task _publish
+
+  publish:prod:
+    desc: Test + lint + build the prod-variant binary, then publish it to the prod R2 channel.
+    cmds:
+      - RITUAL_ENV=prod task _publish
+
+  # --- GUI dev iteration (stage = which storage backend) -----------------
+  # The dev/iteration mode itself has two stages — :local routes the running
+  # binary to the local-FS mock backend (RITUAL_REMOTE_MODE=mock), :remote
+  # leaves it pointing at real R2. The build is always the dev-variant
+  # binary (via the wails3 alias `build:` → `gui:build:dev`); only the
+  # runtime backend differs.
+
+  gui:dev:local:
+    desc: Dev iteration against the local-FS mock backend (RITUAL_REMOTE_MODE=mock — offline, no R2 hit, <root>/remote-mock).
+    cmds:
+      - RITUAL_REMOTE_MODE=mock task gui:_dev
+
+  gui:dev:remote:
+    desc: Dev iteration against real R2 (dev profile creds baked into bin/ritualdev.exe).
+    cmds:
+      - RITUAL_REMOTE_MODE= task gui:_dev
+
+  # --- Stage-agnostic tasks (no env dependency, no :stage variant) --------
   gui:bindings:
     desc: Regenerate frontend/bindings/* from Go bound types.
     cmds:
@@ -96,32 +166,65 @@ tasks:
     cmds:
       - npm run storybook
 
-  publish:
-    desc: Test + lint + build the host-OS GUI binary, then publish it to R2 (design-log/037 Phase F).
+  # --- Private impls (called by :stage variants only; never run directly) -
+  # Underscore prefix = "do not invoke from CLI". Subprocess-only entry point
+  # for the :dev / :prod wrappers above.
+  gui:_build:
+    desc: "(private — use gui:build:dev or gui:build:prod)"
+    deps: [gui:assets]
+    cmds:
+      - task: "{{OS}}:build"
+
+  gui:_run:
+    desc: "(private — use gui:run:dev or gui:run:prod)"
+    cmds:
+      - task: "{{OS}}:run"
+
+  gui:_package:
+    desc: "(private — use gui:package:dev or gui:package:prod)"
+    deps: [gui:assets]
+    cmds:
+      - task: "{{OS}}:package"
+
+  gui:_dev:
+    desc: "(private — use gui:dev:local or gui:dev:remote)"
+    deps: [gui:assets]
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
+  _publish:
+    desc: "(private — use publish:dev or publish:prod)"
     cmds:
       # Gate the deploy on green tests + lint — a failing step aborts before
       # cmd/publish runs, so nothing red ever reaches R2. Build runs last so the
       # uploaded binary re-bakes the current config.AppVersion (anti-loop invariant).
       - task: test
       - task: lint
-      - task: gui:build
-      - go run ./cmd/publish -artifact {{.BIN_DIR}}/{{.APP_NAME}}{{.EXE}} -os {{OS}} -arch {{ARCH}}
+      - task: gui:_build
+      - go run ./cmd/publish -artifact {{.BIN_DIR}}/{{.OUT_NAME}}{{.EXE}} -os {{OS}} -arch {{ARCH}}
     vars:
       EXE: '{{if eq OS "windows"}}.exe{{end}}'
+      # Mirrors windows:build:native's OUT_NAME — keeps publish targeted at the
+      # variant the build actually produced (ritualdev.exe for dev, ritual.exe
+      # for prod). Same RITUAL_ENV switch end-to-end.
+      OUT_NAME: '{{if eq .RITUAL_ENV "prod"}}{{.APP_NAME}}{{else}}{{.APP_NAME}}dev{{end}}'
 
   gui:assets:
-    desc: Regenerate GUI assets from assets/baiki-dev.ico (favicon, .icns).
+    desc: Regenerate GUI assets from assets/baiki-{{.ICON_ENV}}.ico (favicon, .icns). ICON_ENV follows RITUAL_ENV (default dev).
     sources:
       - assets/baiki-dev.ico
+      - assets/baiki-prod.ico
     generates:
       - frontend/public/favicon.ico
       - build/darwin/icons.icns
+    vars:
+      ICON_ENV: '{{if eq .RITUAL_ENV "prod"}}prod{{else}}dev{{end}}'
     cmds:
-      - cmd: cp assets/baiki-dev.ico frontend/public/favicon.ico
+      - cmd: cp assets/baiki-{{.ICON_ENV}}.ico frontend/public/favicon.ico
         platforms: [linux, darwin]
-      - cmd: powershell -NoProfile -Command "Copy-Item assets\baiki-dev.ico frontend\public\favicon.ico -Force"
+      - cmd: powershell -NoProfile -Command "Copy-Item assets\baiki-{{.ICON_ENV}}.ico frontend\public\favicon.ico -Force"
         platforms: [windows]
-      - cmd: sips -s format icns assets/baiki-dev.ico --out build/darwin/icons.icns
+      - cmd: sips -s format icns assets/baiki-{{.ICON_ENV}}.ico --out build/darwin/icons.icns
         platforms: [darwin]
 
   # --- Lint ---------------------------------------------------------------
@@ -164,22 +267,25 @@ tasks:
         platforms: [windows]
 
   # --- Aliases (wails3 template convention) -------------------------------
+  # These exist for the wails3 CLI's hard-coded task names — `wails3 build`,
+  # `wails3 task run`, and the executes in build/config.yml call them by
+  # bare name. Since wails3 is the dev-iteration toolchain, these aliases
+  # all route to the `:dev` variant. Humans should call gui:build:dev /
+  # gui:build:prod / etc. directly; these short names are only here so the
+  # wails3 internals keep working.
   build:
-    desc: Alias for gui:build.
+    desc: "wails3 internal — forwards DEV to gui:build:dev. Humans: use gui:build:dev or gui:build:prod."
     cmds:
-      - task: gui:build
+      - task: gui:build:dev
+        vars: {DEV: '{{.DEV}}'}
   run:
-    desc: Alias for gui:run.
+    desc: "wails3 internal — forwards to gui:run:dev. Humans: use gui:run:dev or gui:run:prod."
     cmds:
-      - task: gui:run
-  dev:
-    desc: Alias for gui:dev.
-    cmds:
-      - task: gui:dev
+      - task: gui:run:dev
   package:
-    desc: Alias for gui:package.
+    desc: "wails3 internal — forwards to gui:package:dev. Humans: use gui:package:dev or gui:package:prod."
     cmds:
-      - task: gui:package
+      - task: gui:package:dev
   storybook:
     desc: Alias for gui:storybook.
     cmds:

@@ -80,7 +80,7 @@ func main() {
 	notifSvc := notifications.New()
 
 	wailsApp := application.New(application.Options{
-		Name:        config.ProductName,
+		Name:        config.DisplayName(),
 		Description: "Ritual — Minecraft server manager (POC)",
 		Services: []application.Service{
 			application.NewService(controlSvc),
@@ -104,7 +104,7 @@ func main() {
 
 	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:                "main",
-		Title:               config.ProductName,
+		Title:               config.DisplayName(),
 		Width:               560,
 		Height:              720,
 		DisableResize:       true,
@@ -126,7 +126,7 @@ func main() {
 	controlSvc.SetLogsWindowFactory(func() control.WindowControl {
 		w := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 			Name:             "logs",
-			Title:            config.ProductName + " — Logs",
+			Title:            config.DisplayName() + " — Logs",
 			Width:            960,
 			Height:           640,
 			Hidden:           true,
