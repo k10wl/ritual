@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"ritual/internal/core/ports"
@@ -113,44 +114,45 @@ func (f *FSRepository) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-// List returns all keys with the given prefix from filesystem
+// List returns the keys of every object under prefix, recursively, as full
+// slash-separated keys (e.g. "bin/windows-amd64/2.0.1/<sha>.exe"). This mirrors
+// S3/R2 ListObjectsV2 with no delimiter: a flat, recursive enumeration of
+// object keys with NO directory entries. Matching that contract is load-bearing
+// — the mock must list identically to R2 or deep-hierarchy consumers silently
+// break. Self-update's latest() expects "<version>/<sha>" keys two levels under
+// the platform prefix; the old one-directory-level List returned the version
+// dir instead, so the mock reported "no remote build" while R2 worked.
 func (f *FSRepository) List(_ context.Context, prefix string) ([]string, error) {
-	var keys []string
-
-	if prefix == "" {
-		prefix = "."
-	} else {
-		prefix = filepath.FromSlash(prefix)
+	walkRoot := strings.Trim(strings.ReplaceAll(prefix, "\\", "/"), "/")
+	if walkRoot == "" {
+		walkRoot = "."
 	}
 
-	file, err := f.root.Open(prefix)
+	fsys := f.root.FS()
+	info, err := fs.Stat(fsys, walkRoot)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return []string{}, nil
 		}
-		return nil, fmt.Errorf("failed to open directory %s: %w", prefix, err)
+		return nil, fmt.Errorf("failed to stat %s: %w", walkRoot, err)
 	}
-	defer func() { _ = file.Close() }()
-
-	info, err := file.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("failed to stat directory %s: %w", prefix, err)
-	}
-
 	if !info.IsDir() {
-		return []string{prefix}, nil
+		return []string{walkRoot}, nil
 	}
 
-	entries, err := file.Readdir(0)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read directory %s: %w", prefix, err)
+	var keys []string
+	if err := fs.WalkDir(fsys, walkRoot, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		keys = append(keys, p)
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to walk %s: %w", walkRoot, err)
 	}
-
-	for _, entry := range entries {
-		entryPath := strings.ReplaceAll(filepath.Join(prefix, entry.Name()), "\\", "/")
-		keys = append(keys, entryPath)
-	}
-
 	return keys, nil
 }
 

@@ -655,6 +655,18 @@ func buildRuntime() (*guiRuntime, error) {
 		return nil, fmt.Errorf("logging build: %w", err)
 	}
 
+	// Sweep the leftover ".old" backup a prior in-place self-update left beside
+	// us: minio/selfupdate can't delete the running binary on Windows, so its
+	// sidecar lingers until the next launch (design-log/037). Best-effort, and
+	// logged via the bus now that the file sink is live.
+	if exe, exeErr := os.Executable(); exeErr == nil {
+		if removed, rmErr := selfupdate.CleanupBackup(exe); rmErr != nil {
+			bus.Publish(observed.UpdateCleanupInfo{Path: selfupdate.BackupPath(exe), Err: rmErr})
+		} else if removed {
+			bus.Publish(observed.UpdateCleanupInfo{Path: selfupdate.BackupPath(exe), Removed: true})
+		}
+	}
+
 	return &guiRuntime{
 		bus:                 bus,
 		pipelineDeps:        pipelineDeps,

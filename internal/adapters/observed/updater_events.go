@@ -19,10 +19,11 @@ func (e UpdateCheckStarted) String() string { return "update check: started" }
 // running From is older than the latest remote To. Err is the listing/decision
 // error (offline, malformed); To is empty when the remote has nothing.
 type UpdateCheckInfo struct {
-	From     string
-	To       string
-	Outdated bool
-	Err      error
+	From       string
+	To         string
+	Outdated   bool
+	Candidates int // keys listed under the platform prefix (reasoning for the decision)
+	Err        error
 }
 
 func (e UpdateCheckInfo) String() string {
@@ -30,12 +31,18 @@ func (e UpdateCheckInfo) String() string {
 		return fmt.Sprintf("update check: %s err=%v", e.From, e.Err)
 	}
 	if e.To == "" {
-		return fmt.Sprintf("update check: %s — no remote build", e.From)
+		// Distinguish an empty remote from one that had keys we couldn't parse —
+		// the latter is a real misconfiguration (wrong key shape) that otherwise
+		// hides behind the same "no remote build" line.
+		if e.Candidates > 0 {
+			return fmt.Sprintf("update check: %s — no usable remote build (%d key(s) under prefix, none parsed as <version>/<sha>)", e.From, e.Candidates)
+		}
+		return fmt.Sprintf("update check: %s — no remote build (prefix empty)", e.From)
 	}
 	if e.Outdated {
-		return fmt.Sprintf("update check: %s → %s (outdated)", e.From, e.To)
+		return fmt.Sprintf("update check: %s → %s (outdated, %d candidate(s))", e.From, e.To, e.Candidates)
 	}
-	return fmt.Sprintf("update check: %s (up to date, remote %s)", e.From, e.To)
+	return fmt.Sprintf("update check: %s (up to date, remote %s, %d candidate(s))", e.From, e.To, e.Candidates)
 }
 
 // UpdateApplyStarted fires before the byte replace begins. Entry signal for the
@@ -70,6 +77,24 @@ func (e UpdateRestartInfo) String() string {
 		return "update restart: relaunching"
 	}
 	return "update restart: relaunching → " + e.Version
+}
+
+// UpdateCleanupInfo fires at startup when the leftover ".old" backup from a
+// prior in-place update is swept — Windows can't delete the running binary
+// mid-update, so minio/selfupdate's sidecar lingers until the next launch.
+// Published only when there is something to report (a removal or an error), so
+// a clean launch stays quiet.
+type UpdateCleanupInfo struct {
+	Path    string
+	Removed bool
+	Err     error
+}
+
+func (e UpdateCleanupInfo) String() string {
+	if e.Err != nil {
+		return fmt.Sprintf("update cleanup: %s err=%v", e.Path, e.Err)
+	}
+	return "update cleanup: removed stale backup " + e.Path
 }
 
 // UpdateFailed fires on any update failure so the failure is a first-class

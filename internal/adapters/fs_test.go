@@ -196,22 +196,25 @@ func TestFSRepository_List(t *testing.T) {
 		assert.Len(t, result, 0, "Expected 0 keys")
 	})
 
-	t.Run("list includes directories", func(t *testing.T) {
-		// Create files and directories
-		err := putBytes(repo, ctx,"dir1/file1.txt", []byte("data1"))
+	t.Run("list recurses to full file keys, no directory entries", func(t *testing.T) {
+		// Mirror S3/R2 ListObjectsV2: a flat, recursive enumeration of object
+		// keys with no directory entries (deep hierarchies like self-update's
+		// bin/<plat>/<version>/<sha> must surface their leaf keys).
+		err := putBytes(repo, ctx, "dir1/file1.txt", []byte("data1"))
 		assert.NoError(t, err)
-		err = putBytes(repo, ctx,"dir1/file2.txt", []byte("data2"))
+		err = putBytes(repo, ctx, "dir1/file2.txt", []byte("data2"))
 		assert.NoError(t, err)
-		err = putBytes(repo, ctx,"dir2/file3.txt", []byte("data3"))
+		err = putBytes(repo, ctx, "dir2/nested/file3.txt", []byte("data3"))
 		assert.NoError(t, err)
 
 		result, err := repo.List(ctx, "")
 		assert.NoError(t, err)
-		assert.Contains(t, result, "dir1", "Expected dir1 in results")
-		assert.Contains(t, result, "dir2", "Expected dir2 in results")
-		assert.NotContains(t, result, "dir1/file1.txt", "Should not show nested files")
-		assert.NotContains(t, result, "dir1/file2.txt", "Should not show nested files")
-		assert.NotContains(t, result, "dir2/file3.txt", "Should not show nested files")
+		assert.Contains(t, result, "dir1/file1.txt", "must surface nested file keys recursively")
+		assert.Contains(t, result, "dir1/file2.txt", "must surface nested file keys recursively")
+		assert.Contains(t, result, "dir2/nested/file3.txt", "must recurse arbitrarily deep, like S3")
+		assert.NotContains(t, result, "dir1", "must not emit directory entries (S3 has no dirs)")
+		assert.NotContains(t, result, "dir2", "must not emit directory entries (S3 has no dirs)")
+		assert.NotContains(t, result, "dir2/nested", "must not emit directory entries (S3 has no dirs)")
 	})
 }
 

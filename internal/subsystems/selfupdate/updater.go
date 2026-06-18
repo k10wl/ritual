@@ -51,8 +51,9 @@ func (u *Updater) Check(ctx context.Context) (ports.Update, bool, error) {
 		return ports.Update{}, false, fmt.Errorf("selfupdate: list %s: %w", u.prefix, err)
 	}
 	up := latest(u.prefix, keys)
+	up.Candidates = len(keys)
 	if up.Version == "" {
-		return ports.Update{}, false, nil
+		return up, false, nil
 	}
 	return up, IsVersionOlder(u.current, up.Version), nil
 }

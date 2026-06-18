@@ -16,16 +16,22 @@ import (
 
 // Attach subscribes a formatter to bus. Returns a stop func that
 // cancels the subscription and waits for the goroutine to drain.
+//
+// The file sink is written independently of stdout — NOT via io.MultiWriter.
+// MultiWriter short-circuits on the first writer's error, and in a -H windowsgui
+// release build os.Stdout is a dead handle whose Write fails, which previously
+// left <root>/logs/<ts>.log empty for every shipped build (defeating audit
+// fix #6). Writing the file first guarantees the on-disk record; stdout is
+// best-effort for the console/dev path.
 func Attach(bus ports.EventBus, logFile io.Writer) func() {
-	out := io.Writer(os.Stdout)
-	if logFile != nil {
-		out = io.MultiWriter(os.Stdout, logFile)
-	}
 	ch, cancel := bus.Subscribe()
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		for e := range ch {
-			write(out, e)
+			if logFile != nil {
+				write(logFile, e)
+			}
+			write(os.Stdout, e)
 		}
 	})
 	return func() {

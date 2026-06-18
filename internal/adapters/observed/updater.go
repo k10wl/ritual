@@ -34,7 +34,7 @@ var _ ports.UpdaterService = (*Updater)(nil)
 func (u *Updater) Check(ctx context.Context) (ports.Update, bool, error) {
 	u.publish(UpdateCheckStarted{})
 	up, outdated, err := u.inner.Check(ctx)
-	u.publish(UpdateCheckInfo{From: u.from, To: up.Version, Outdated: outdated, Err: err})
+	u.publish(UpdateCheckInfo{From: u.from, To: up.Version, Outdated: outdated, Candidates: up.Candidates, Err: err})
 	if err != nil {
 		u.publish(UpdateFailed{Stage: "check", Err: err})
 	}

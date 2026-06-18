@@ -43,6 +43,13 @@ type Update struct {
 	Version string
 	Key     string
 	SHA256  string
+
+	// Candidates is how many keys the Check listed under the platform prefix,
+	// set by the Updater (not by latest()). It exists purely so the on-disk log
+	// can explain a "no update" decision — distinguishing an empty remote (0)
+	// from keys that were present but unparseable (>0), which otherwise read
+	// identically as "no remote build".
+	Candidates int
 }
 
 // UpdaterService checks the remote for a newer build and applies it in place.
