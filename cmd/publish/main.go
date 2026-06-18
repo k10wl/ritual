@@ -62,7 +62,7 @@ func run(artifact, goos, goarch string) error {
 	// noise during the upload. remote.Build reads RITUAL_R2_* (or mock).
 	bus := adapters.NewEventBus(64)
 	go drainToStderr(ctx, bus)
-	storage, err := remote.Build(ctx, remote.ResolveModeFromEnv(), bus)
+	storage, err := remote.Build(ctx, remote.ResolveMode(), bus)
 	if err != nil {
 		return fmt.Errorf("build remote: %w", err)
 	}

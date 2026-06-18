@@ -96,10 +96,29 @@ tasks:
   # variants forward DEV through so `wails3 build DEV=true` still produces
   # a debug-flagged binary.
 
+  # The dev variant additionally carries the :local / :remote backend axis
+  # (design-log/048): :remote bakes dev R2 creds (bin/ritualdev.exe);
+  # :local bakes RITUAL_REMOTE_MODE=mock into the binary so it talks only to
+  # the local-FS store at <root>/remote-mock (bin/ritualdev-local.exe) — for
+  # testing the 037/038 self-update lifecycle fully offline, including an
+  # installed/double-clicked binary that has no shell env. config.AppName
+  # stays "ritualdev" for both, so they share RootPath (~/k10wl/ritualdev)
+  # and thus the same remote-mock that `go run ./cmd/publish` writes; only
+  # the filename differs so both can coexist in bin/. prod is remote-only.
   gui:build:dev:
+    desc: Alias for gui:build:dev:remote (R2-backed dev build; back-compat).
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE= DEV={{.DEV}} task gui:_build
+
+  gui:build:dev:remote:
     desc: Build GUI dev variant → bin/ritualdev.exe (dev R2 creds baked, "Ritual Dev" identity).
     cmds:
-      - RITUAL_ENV=dev DEV={{.DEV}} task gui:_build
+      - RITUAL_ENV=dev REMOTE_MODE= DEV={{.DEV}} task gui:_build
+
+  gui:build:dev:local:
+    desc: Build GUI dev variant baked LOCAL-only → bin/ritualdev-local.exe (RITUAL_REMOTE_MODE=mock baked, no R2 hit).
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE=mock DEV={{.DEV}} task gui:_build
 
   gui:build:prod:
     desc: Build GUI prod variant → bin/ritual.exe (prod R2 creds baked, "Ritual" identity).
@@ -107,9 +126,19 @@ tasks:
       - RITUAL_ENV=prod DEV={{.DEV}} task gui:_build
 
   gui:run:dev:
-    desc: Run bin/ritualdev.exe.
+    desc: Alias for gui:run:dev:remote (runs bin/ritualdev.exe; back-compat).
     cmds:
-      - RITUAL_ENV=dev task gui:_run
+      - RITUAL_ENV=dev REMOTE_MODE= task gui:_run
+
+  gui:run:dev:remote:
+    desc: Run bin/ritualdev.exe (R2-backed dev build).
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE= task gui:_run
+
+  gui:run:dev:local:
+    desc: Run bin/ritualdev-local.exe (local-FS baked build, no R2 hit).
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE=mock task gui:_run
 
   gui:run:prod:
     desc: Run bin/ritual.exe.
@@ -135,6 +164,11 @@ tasks:
     desc: Test + lint + build the prod-variant binary, then publish it to the prod R2 channel.
     cmds:
       - RITUAL_ENV=prod task _publish
+
+  publish:dev:local:
+    desc: Build the dev:local binary + publish it into <root>/remote-mock (offline, no R2) — seeds the local store for self-update testing.
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE=mock task _publish
 
   # --- GUI dev iteration (stage = which storage backend) -----------------
   # The dev/iteration mode itself has two stages — :local routes the running
@@ -193,7 +227,7 @@ tasks:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 
   _publish:
-    desc: "(private — use publish:dev or publish:prod)"
+    desc: "(private — use publish:dev, publish:prod, or publish:dev:local)"
     cmds:
       # Gate the deploy on green tests + lint — a failing step aborts before
       # cmd/publish runs, so nothing red ever reaches R2. Build runs last so the
@@ -201,13 +235,17 @@ tasks:
       - task: test
       - task: lint
       - task: gui:_build
-      - go run ./cmd/publish -artifact {{.BIN_DIR}}/{{.OUT_NAME}}{{.EXE}} -os {{OS}} -arch {{ARCH}}
+      # REMOTE_MODE=mock (publish:dev:local) routes cmd/publish itself at the
+      # local-FS store via RITUAL_REMOTE_MODE — scoped to this command only so
+      # test/lint/build above stay backend-agnostic (design-log/048).
+      - '{{if eq .REMOTE_MODE "mock"}}RITUAL_REMOTE_MODE=mock {{end}}go run ./cmd/publish -artifact {{.BIN_DIR}}/{{.OUT_NAME}}{{.EXE}} -os {{OS}} -arch {{ARCH}}'
     vars:
       EXE: '{{if eq OS "windows"}}.exe{{end}}'
       # Mirrors windows:build:native's OUT_NAME — keeps publish targeted at the
       # variant the build actually produced (ritualdev.exe for dev, ritual.exe
-      # for prod). Same RITUAL_ENV switch end-to-end.
-      OUT_NAME: '{{if eq .RITUAL_ENV "prod"}}{{.APP_NAME}}{{else}}{{.APP_NAME}}dev{{end}}'
+      # for prod, ritualdev-local.exe for dev:local). Same RITUAL_ENV/REMOTE_MODE
+      # switch end-to-end.
+      OUT_NAME: '{{if eq .RITUAL_ENV "prod"}}{{.APP_NAME}}{{else}}{{.APP_NAME}}dev{{if eq .REMOTE_MODE "mock"}}-local{{end}}{{end}}'
 
   gui:assets:
     desc: Regenerate GUI assets from assets/baiki-{{.ICON_ENV}}.ico (favicon, .icns). ICON_ENV follows RITUAL_ENV (default dev).
@@ -245,26 +283,37 @@ tasks:
       - task: test:helpers
       - task: test:unit
 
+  # TEST_TIMEOUT is a HARD per-package guard (go test -timeout applies to each
+  # package binary). It exists so a hung/deadlocked test panics with a goroutine
+  # dump naming the stuck test instead of stalling the run on Go's 10-minute
+  # default. The slowest package is ~10s, so 60s is a wide safety margin, not a
+  # perf budget. Override for a tighter check: `task test TEST_TIMEOUT=20s`.
   test:helpers:
     desc: Run internal/testhelpers fixture tests.
     cmds:
-      - go test ./internal/testhelpers/...
+      - go test -timeout {{.TEST_TIMEOUT}} ./internal/testhelpers/...
+    vars:
+      TEST_TIMEOUT: '{{.TEST_TIMEOUT | default "60s"}}'
 
   test:unit:
     desc: Run Go unit tests (excluding testhelpers).
     cmds:
-      - cmd: go test $(go list ./... | grep -v /internal/testhelpers)
+      - cmd: go test -timeout {{.TEST_TIMEOUT}} $(go list ./... | grep -v /internal/testhelpers)
         platforms: [linux, darwin]
-      - cmd: powershell -NoProfile -Command "go test (go list ./... | Where-Object { $_ -notmatch '/internal/testhelpers' })"
+      - cmd: powershell -NoProfile -Command "go test -timeout {{.TEST_TIMEOUT}} (go list ./... | Where-Object { $_ -notmatch '/internal/testhelpers' })"
         platforms: [windows]
+    vars:
+      TEST_TIMEOUT: '{{.TEST_TIMEOUT | default "60s"}}'
 
   test:race:
     desc: Run unit tests with race detector.
     cmds:
-      - cmd: go test -race $(go list ./... | grep -v /internal/testhelpers)
+      - cmd: go test -race -timeout {{.TEST_TIMEOUT}} $(go list ./... | grep -v /internal/testhelpers)
         platforms: [linux, darwin]
-      - cmd: powershell -NoProfile -Command "go test -race (go list ./... | Where-Object { $_ -notmatch '/internal/testhelpers' })"
+      - cmd: powershell -NoProfile -Command "go test -race -timeout {{.TEST_TIMEOUT}} (go list ./... | Where-Object { $_ -notmatch '/internal/testhelpers' })"
         platforms: [windows]
+    vars:
+      TEST_TIMEOUT: '{{.TEST_TIMEOUT | default "120s"}}'
 
   # --- Aliases (wails3 template convention) -------------------------------
   # These exist for the wails3 CLI's hard-coded task names — `wails3 build`,

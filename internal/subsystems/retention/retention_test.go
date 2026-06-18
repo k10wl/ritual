@@ -22,16 +22,16 @@ func TestBuild_PrunesRefsAndSweepsOrphanBlobs(t *testing.T) {
 	localDir := t.TempDir()
 	remoteDir := t.TempDir()
 
-	seedRef(t, localDir, "20260420100000", "blob-alive-1", "blob-alive-2")
-	seedRef(t, localDir, "20260419100000", "blob-shared")
-	seedRef(t, localDir, "20260418100000", "blob-old-only")
+	seedRef(t, localDir, "2026-04-20T10-00-00.000Z", "blob-alive-1", "blob-alive-2")
+	seedRef(t, localDir, "2026-04-19T10-00-00.000Z", "blob-shared")
+	seedRef(t, localDir, "2026-04-18T10-00-00.000Z", "blob-old-only")
 	seedBlob(t, localDir, "blob-alive-1")
 	seedBlob(t, localDir, "blob-alive-2")
 	seedBlob(t, localDir, "blob-shared")
 	seedBlob(t, localDir, "blob-old-only")
 	seedBlob(t, localDir, "blob-orphan-never-referenced")
 
-	seedRef(t, remoteDir, "20260420100000", "blob-alive-1")
+	seedRef(t, remoteDir, "2026-04-20T10-00-00.000Z", "blob-alive-1")
 	seedBlob(t, remoteDir, "blob-alive-1")
 
 	localStorage := newFSRepo(t, localDir)
@@ -58,9 +58,9 @@ func TestBuild_PrunesRefsAndSweepsOrphanBlobs(t *testing.T) {
 		require.NoError(t, job.Run(ctx), "each remote retention job must complete cleanly")
 	}
 
-	assertExists(t, localDir, "refs/20260420100000.json", "newest ref must survive KeepLast:1")
-	assertMissing(t, localDir, "refs/20260419100000.json", "older ref must be pruned under KeepLast:1")
-	assertMissing(t, localDir, "refs/20260418100000.json", "oldest ref must be pruned under KeepLast:1")
+	assertExists(t, localDir, "refs/2026-04-20T10-00-00.000Z.json", "newest ref must survive KeepLast:1")
+	assertMissing(t, localDir, "refs/2026-04-19T10-00-00.000Z.json", "older ref must be pruned under KeepLast:1")
+	assertMissing(t, localDir, "refs/2026-04-18T10-00-00.000Z.json", "oldest ref must be pruned under KeepLast:1")
 
 	assertExists(t, localDir, "objects/blob-alive-1", "live blob referenced by surviving ref must remain")
 	assertExists(t, localDir, "objects/blob-alive-2", "live blob referenced by surviving ref must remain")
@@ -81,6 +81,13 @@ func newFSRepo(t *testing.T, dir string) *adapters.FSRepository {
 
 func seedRef(t *testing.T, dir, ts string, blobHashes ...string) {
 	t.Helper()
+	// Guard against stale fixtures: refsRetention.parseTime only recognises keys
+	// in domain.RefIDFormat and silently skips anything else, which would make a
+	// compact-format ts produce unprunable refs and quietly defeat the prune
+	// assertions below (regression: design-log/045 §Bug3). Fail loud instead.
+	if _, err := time.ParseInLocation(domain.RefIDFormat, ts, time.UTC); err != nil {
+		t.Fatalf("seedRef ts %q must be domain.RefIDFormat (%s): %v", ts, domain.RefIDFormat, err)
+	}
 	objects := make(map[string]domain.Object, len(blobHashes))
 	for _, h := range blobHashes {
 		objects[h] = domain.Object{Hash: h, Size: 1}

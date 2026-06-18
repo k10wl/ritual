@@ -380,12 +380,13 @@ func buildRuntime() (*guiRuntime, error) {
 		}
 	}
 
-	// Remote backend selected at runtime by RITUAL_REMOTE_MODE
-	// (design-log/030). Default ModeR2 reads credentials from
+	// Remote backend selected by ResolveMode: RITUAL_REMOTE_MODE env wins,
+	// else the bakedRemoteMode ldflag (gui:build:dev:local — design-log/048),
+	// else default ModeR2 (design-log/030). ModeR2 reads credentials from
 	// RITUAL_R2_* — typically loaded by config.LoadEnvFiles from
-	// .env.{RITUAL_ENV}.local at startup. Set RITUAL_REMOTE_MODE=mock
-	// to opt into the local-FS dev backend without a rebuild.
-	rawRemote, err := remote.Build(context.Background(), remote.ResolveModeFromEnv(), bus)
+	// .env.{RITUAL_ENV}.local at startup. Set RITUAL_REMOTE_MODE=mock to opt
+	// into the local-FS dev backend without a rebuild.
+	rawRemote, err := remote.Build(context.Background(), remote.ResolveMode(), bus)
 	if err != nil {
 		return nil, fmt.Errorf("remote storage: %w", err)
 	}

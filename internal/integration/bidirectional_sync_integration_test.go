@@ -30,7 +30,7 @@ func (r *testRitual) attachSyncFlows(t *testing.T) {
 	require.NoError(t, os.MkdirAll(worldsPath, 0o755), "create worlds dir for sync flows")
 
 	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
-	puller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
+	puller, applier, headResolver := r.buildPullingVerbs(t, worldsPath, scanner)
 	localHeadResolver := pulling.NewHeadResolver(r.local)
 	committer, pusher, commitTargets := r.buildCommittingVerbs(t, worldsPath, scanner)
 

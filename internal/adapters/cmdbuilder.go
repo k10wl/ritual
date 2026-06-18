@@ -74,6 +74,21 @@ func (b *ServerCmdBuilder) root() (*os.Root, error) {
 	return root, nil
 }
 
+// Close releases the lazily-opened server-sandbox os.Root. Safe to call when
+// Build was never invoked (workRoot still nil) and idempotent. On Windows the
+// open directory handle blocks removal of the sandbox dir, so tests (and any
+// caller that tears a builder down before process exit) must release it.
+func (b *ServerCmdBuilder) Close() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.workRoot == nil {
+		return nil
+	}
+	err := b.workRoot.Close()
+	b.workRoot = nil
+	return err
+}
+
 // Build reads the start script and returns an *exec.Cmd configured with runtime memory/port.
 func (b *ServerCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io.Writer) (*exec.Cmd, error) {
 	server, err := b.runtime()

@@ -76,16 +76,35 @@ var (
 	bakedSecretAccessKey string
 )
 
+// bakedRemoteMode bakes the storage backend into the binary at build time
+// via -ldflags -X ritual/internal/subsystems/remote.bakedRemoteMode=mock
+// (set by gui:build:dev:local — design-log/048). "mock" selects the local-FS
+// backend; empty (the default, and every `go run` of cmd/publish) falls
+// through to ModeR2. The RITUAL_REMOTE_MODE env var still wins over this
+// baked value (ResolveMode), mirroring the env-over-baked creds precedence —
+// so a baked-local binary can be forced back to R2 without a rebuild.
+var bakedRemoteMode string
+
 // EnvRemoteMode toggles the remote backend at runtime. Values: "mock"
 // → ModeMock; anything else (including unset) → ModeR2. Documented as
 // the way to opt into the dev-only local-FS mock without rebuilding
 // (design-log/030).
 const EnvRemoteMode = "RITUAL_REMOTE_MODE"
 
-// ResolveModeFromEnv returns the Mode requested by RITUAL_REMOTE_MODE.
-// Default: ModeR2 — production posture per design-log/030.
-func ResolveModeFromEnv() Mode {
-	if os.Getenv(EnvRemoteMode) == "mock" {
+// ResolveMode returns the Mode for this process. Precedence (design-log/048):
+//   1. RITUAL_REMOTE_MODE env, if set — "mock" → ModeMock, anything else → ModeR2.
+//   2. bakedRemoteMode ldflag, if "mock" → ModeMock.
+//   3. default ModeR2 — production posture per design-log/030.
+// Env wins over baked so an operator can override a baked-local binary back to
+// R2 (or vice-versa) without rebuilding, symmetric with the baked-creds rule.
+func ResolveMode() Mode {
+	if v, ok := os.LookupEnv(EnvRemoteMode); ok && v != "" {
+		if v == "mock" {
+			return ModeMock
+		}
+		return ModeR2
+	}
+	if bakedRemoteMode == "mock" {
 		return ModeMock
 	}
 	return ModeR2

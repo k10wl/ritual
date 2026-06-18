@@ -70,6 +70,17 @@ func (t *ThrottledStorage) Copy(ctx context.Context, sourceKey, destKey string) 
 	return t.inner.Copy(ctx, sourceKey, destKey)
 }
 
+// Close releases the inner storage if it owns OS resources — the local-FS mock
+// holds an os.Root handle (adapters.FSRepository) that keeps <root>/remote-mock
+// open, which on Windows blocks directory removal until released. Backends with
+// no handle to free (R2) don't implement io.Closer, so this is a no-op there.
+func (t *ThrottledStorage) Close() error {
+	if c, ok := t.inner.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
+
 type throttledReader struct {
 	r   io.Reader
 	lim *rate.Limiter

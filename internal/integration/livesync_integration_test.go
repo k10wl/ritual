@@ -76,7 +76,7 @@ func (r *testRitual) startRitualWithLiveSync(t *testing.T, tickInterval, saveTim
 
 	cmdBuilder := &tickAwareCmdBuilder{server: server}
 
-	puller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
+	puller, applier, headResolver := r.buildPullingVerbs(t, worldsPath, scanner)
 	committer, pusher, commitTargets := r.buildCommittingVerbs(t, worldsPath, scanner)
 
 	host, _ := os.Hostname()

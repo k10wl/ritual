@@ -464,10 +464,18 @@ func TestCompressingStorage_EncoderPoolNoSerialization(t *testing.T) {
 		require.NoError(t, err, "concurrent PutStream must not fail")
 	}
 
-	ceiling := 2 * D
+	// Discriminate concurrent (~D, sleeps overlap) from serialized (N*D, sleeps
+	// run back-to-back under an encoder lock) — a 10x gap. The ceiling sits at
+	// the midpoint (N*D/2) rather than hugging D: Windows time.Sleep has ~15ms
+	// timer granularity and `go test ./...` runs packages in parallel, so a
+	// correctly-concurrent run's post-sleep zstd+IO can drift well past 2*D
+	// without any serialization regression. The midpoint keeps full signal
+	// (concurrent ~D ≪ ceiling ≪ serialized N*D) while absorbing that jitter.
+	serialized := time.Duration(N) * D
+	ceiling := serialized / 2
 	assert.Less(t, elapsed, ceiling,
 		"wall=%s exceeded ceiling=%s for N=%d concurrent slow-body pushes — encoder lock likely regressed (serialized N*D=%s)",
-		elapsed, ceiling, N, time.Duration(N)*D)
+		elapsed, ceiling, N, serialized)
 
 	for i, want := range payloads {
 		rc, err := dec.GetStream(t.Context(), keyFor(want))

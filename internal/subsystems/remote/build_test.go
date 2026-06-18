@@ -38,6 +38,14 @@ func TestBuild_ModeMock_ReturnsThrottledMockBackedByRemoteMockDir(t *testing.T) 
 
 	require.NoError(t, err, "Build must succeed in ModeMock — alpha default that runs against local-FS without any credentials")
 	require.NotNil(t, storage, "Build must return a non-nil storage so the composition-root decorator stack has something to wrap")
+	// Release the mock's os.Root before t.TempDir cleanup — on Windows the open
+	// directory handle blocks RemoveAll of <root>/remote-mock. Registered after
+	// t.TempDir so it runs first (LIFO).
+	t.Cleanup(func() {
+		if c, ok := storage.(io.Closer); ok {
+			_ = c.Close()
+		}
+	})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
@@ -82,7 +90,7 @@ func TestBuild_ModeR2WithEnvVars_AttemptsR2BranchAndReportsAdapterFailureCleanly
 	require.NotNil(t, storage, "if NewR2Repository accepts the fake creds without I/O the factory must still return a non-nil storage — operational issues surface lazily on the first Get/Put rather than at construction time")
 }
 
-func TestResolveModeFromEnv(t *testing.T) {
+func TestResolveMode(t *testing.T) {
 	cases := []struct {
 		name string
 		set  string
@@ -106,8 +114,8 @@ func TestResolveModeFromEnv(t *testing.T) {
 			} else {
 				t.Setenv(remote.EnvRemoteMode, tc.set)
 			}
-			if got := remote.ResolveModeFromEnv(); got != tc.want {
-				t.Fatalf("ResolveModeFromEnv() = %v, want %v (RITUAL_REMOTE_MODE=%q): only \"mock\" must select the dev backend; everything else lands on R2 per design-log/030 §Q1 fail-fast posture", got, tc.want, tc.set)
+			if got := remote.ResolveMode(); got != tc.want {
+				t.Fatalf("ResolveMode() = %v, want %v (RITUAL_REMOTE_MODE=%q): only \"mock\" must select the dev backend; everything else lands on R2 per design-log/030 §Q1 fail-fast posture", got, tc.want, tc.set)
 			}
 		})
 	}

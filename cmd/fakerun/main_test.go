@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -18,6 +19,9 @@ var fakerunBin string
 
 func TestMain(m *testing.M) {
 	bin := filepath.Join(os.TempDir(), "fakerun_test")
+	if runtime.GOOS == "windows" {
+		bin += ".exe" // go build -o appends .exe on Windows; exec needs the matching path
+	}
 	out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build fakerun: %s\n%s", err, out)

@@ -43,6 +43,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"ritual/internal/adapters"
 	"ritual/internal/adapters/observed"
 	"ritual/internal/config"
@@ -82,6 +83,9 @@ func TestMain(m *testing.M) {
 	}
 
 	bin := filepath.Join(tmp, fmt.Sprintf("fakerun_%d", time.Now().UnixNano()))
+	if runtime.GOOS == "windows" {
+		bin += ".exe" // go build -o appends .exe on Windows; exec needs the matching path
+	}
 	cmd := exec.Command("go", "build", "-o", bin, "ritual/cmd/fakerun")
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -310,7 +314,7 @@ func (r *testRitual) startRitualFull(t *testing.T, preflightChecks []checks.Chec
 
 	cmdBuilder := &fakeServerCmdBuilder{server: server}
 
-	puller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
+	puller, applier, headResolver := r.buildPullingVerbs(t, worldsPath, scanner)
 	committer, pusher, commitTargets := r.buildCommittingVerbs(t, worldsPath, scanner)
 
 	host, _ := os.Hostname()
@@ -468,11 +472,16 @@ func (r *testRitual) remoteDivergenceCheck() checks.Check {
 // resolver surfaces ErrNoHead when the remote has no refs yet so the
 // pulling stage's onOK short-circuit lets a fresh-remote first run reach
 // commit+push and bootstrap the first ref.
-func (r *testRitual) buildPullingVerbs(worldsPath string, scanner ports.DirectoryScanner) (ports.Puller, ports.Applier, pulling.HeadResolver) {
+func (r *testRitual) buildPullingVerbs(t *testing.T, worldsPath string, scanner ports.DirectoryScanner) (ports.Puller, ports.Applier, pulling.HeadResolver) {
+	t.Helper()
 	worldsRoot, err := os.OpenRoot(worldsPath)
 	if err != nil {
 		panic(fmt.Sprintf("open worlds root: %v", err))
 	}
+	// Release the workdir os.Root after the test — an unclosed handle blocks
+	// t.TempDir removal on Windows, leaking state into the next test (matches
+	// buildCommittingVerbs below).
+	t.Cleanup(func() { worldsRoot.Close() })
 	workdirStorage, err := adapters.NewFSRepository(worldsRoot, "workdir")
 	if err != nil {
 		panic(fmt.Sprintf("workdir storage: %v", err))
@@ -764,7 +773,10 @@ func (s *fakeServer) waitReady(t *testing.T) {
 	t.Helper()
 	select {
 	case s.stdin = <-s.ready:
-	case <-time.After(10 * time.Second):
+	case <-time.After(5 * time.Second):
+		// Connect is near-instant when fakerun works; a long wait means the
+		// helper binary failed to spawn (e.g. missing .exe on Windows). Fail
+		// fast rather than stalling every server test for 10s.
 		t.Fatal("timed out waiting for fakerun stdin to be connected")
 	}
 }
@@ -906,7 +918,7 @@ func (r *testRitual) startRitualWithFlakyPuller(t *testing.T, flaky *failOnceInt
 	worldsPath := filepath.Join(r.localDir, config.WorldsDir)
 	_ = os.MkdirAll(worldsPath, 0o755)
 	scanner := adapters.NewFullScanner(os.DirFS(worldsPath))
-	realPuller, applier, headResolver := r.buildPullingVerbs(worldsPath, scanner)
+	realPuller, applier, headResolver := r.buildPullingVerbs(t, worldsPath, scanner)
 	flaky.inner = realPuller
 	committer, pusher, commitTargets := r.buildCommittingVerbs(t, worldsPath, scanner)
 

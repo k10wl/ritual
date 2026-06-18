@@ -63,6 +63,7 @@ func TestServerCmdBuilder_Build(t *testing.T) {
 
 	b, err := NewServerCmdBuilder(tempDir, startScript, stubRuntime(25565, 1024))
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = b.Close() }) // release workRoot before t.TempDir cleanup (Windows)
 
 	cmd, err := b.Build(context.Background(), nil, nil)
 
@@ -103,6 +104,7 @@ func TestServerCmdBuilder_Build_NoServerDir(t *testing.T) {
 func TestServerCmdBuilder_Build_ScriptNotFound(t *testing.T) {
 	b, err := NewServerCmdBuilder(t.TempDir(), "nonexistent.bat", stubRuntime(25565, 1024))
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = b.Close() }) // release workRoot before t.TempDir cleanup (Windows)
 
 	cmd, err := b.Build(context.Background(), nil, nil)
 
@@ -132,6 +134,7 @@ func TestServerCmdBuilder_Build_EmptyScript(t *testing.T) {
 
 	b, err := NewServerCmdBuilder(tempDir, ".ritual_run", stubRuntime(25565, 1024))
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = b.Close() }) // release workRoot before t.TempDir cleanup (Windows)
 
 	cmd, err := b.Build(context.Background(), nil, nil)
 
@@ -146,6 +149,7 @@ func TestServerCmdBuilder_Build_ContextWired(t *testing.T) {
 
 	b, err := NewServerCmdBuilder(tempDir, "run.bat", stubRuntime(25565, 1024))
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = b.Close() }) // release workRoot before t.TempDir cleanup (Windows)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
