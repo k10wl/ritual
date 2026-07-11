@@ -280,13 +280,16 @@ func TestProjection_TickInPullingStage_PopulatesSpeedMbps(t *testing.T) {
 	assert.InDelta(t, 12.3, final.SpeedMbps, 0.001, "SpeedMbps must read Down.Average — 5-second rolling wire rate (curl --progress-bar convention, design-log/001 §Refinement). Frontend uses this for the speed line under the dial.")
 }
 
-func TestProjection_TickInPushingStage_DrivesBytesDoneFromUpData(t *testing.T) {
+func TestProjection_TickInPushingStage_NoPlanInfo_FallsBackToUpData(t *testing.T) {
+	// When FilesTotal is zero (no PlanInfo published yet), push falls back to
+	// s.Data so the bar is never stuck at 0. Normal sessions publish PlanInfo
+	// before the first tick; this guards the degenerate path.
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
 		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 700, Average: 8.0}}})
 	})
 	final := last(vms)
-	assert.Equal(t, int64(700), final.BytesDone, "during Pushing the arc must consume Up.Data so it reflects bytes leaving toward remote, not bytes that streamed in earlier")
+	assert.Equal(t, int64(700), final.BytesDone, "fallback: no FilesTotal yet → BytesDone reads Up.Data so the bar is never frozen at zero on the degenerate no-plan-info path")
 	assert.InDelta(t, 8.0, final.SpeedMbps, 0.001, "SpeedMbps during Pushing reads Up.Average — the user sees live upload speed under the dial")
 }
 
@@ -326,13 +329,13 @@ func TestProjection_ZeroRateTickMidPush_MarksStalled(t *testing.T) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
 		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 2})
 		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 700, Instant: 8.0, Average: 8.0}}})
-		// Heartbeat during an R2 stall: counters frozen, zero "now" rate, bytes
-		// still owed (700 < 1000).
+		// Heartbeat during an R2 stall: counters frozen, zero "now" rate, no ops
+		// confirmed yet — bytes still owed (0 ops × 500 avg = 0 < 1000).
 		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 700, Instant: 0, Average: 4.0}}})
 	})
 	final := last(vms)
 	assert.True(t, final.Stalled, "a heartbeat Tick with Up.Instant==0 mid-Pushing (bytes still owed) must set Stalled so the frontend renders 'Stalled — waiting on R2…' instead of a silently frozen dial — design-log/022 #2")
-	assert.Equal(t, int64(700), final.BytesDone, "a stall must not rewind BytesDone — the bar holds at the last real position while the link is quiet")
+	assert.Equal(t, int64(0), final.BytesDone, "BytesDone for push comes from Ops.Done × avg_blob_size (confirmed R2 deliveries); no ops have completed yet so BytesDone stays 0 while the link is stalled")
 }
 
 func TestProjection_BytesResumeAfterStall_ClearsStalled(t *testing.T) {
@@ -350,13 +353,15 @@ func TestProjection_FinalZeroDeltaAtCompletion_NotStalled(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
 		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 2})
-		// Transfer completes; the ticker's trailing zero-delta marker has
-		// Instant==0 but BytesDone has reached BytesTotal — this is "done", not
-		// a stall, and must NOT light the Stalled caption.
-		bus.Publish(progress.Tick{Remote: progress.Side{Up: progress.Stream{Data: 1000, Instant: 0, Average: 0}}})
+		// Transfer completes: all 2 ops confirmed by R2, Instant==0 (no more wire
+		// bytes). BytesDone = 2 ops × 500 avg = 1000 = BytesTotal → not a stall.
+		bus.Publish(progress.Tick{
+			Remote: progress.Side{Up: progress.Stream{Data: 1000, Instant: 0, Average: 0}},
+			Ops:    progress.OpsTally{Done: 2},
+		})
 	})
 	final := last(vms)
-	assert.False(t, final.Stalled, "a zero-rate Tick once BytesDone>=BytesTotal is the completion marker, not a stall — Stalled must stay false so the dial shows complete, not 'waiting on R2'")
+	assert.False(t, final.Stalled, "a zero-rate Tick once all ops are confirmed (BytesDone>=BytesTotal) is the completion marker, not a stall — Stalled must stay false so the dial shows complete, not 'waiting on R2'")
 }
 
 func TestProjection_StageChange_ClearsStalled(t *testing.T) {
@@ -404,31 +409,36 @@ func TestProjection_SecondTick_DerivesEtaFromBeatWideAverage(t *testing.T) {
 }
 
 func TestProjection_EtaNeverClimbsWithinABeat_MonotonicGuard(t *testing.T) {
+	// FilesTotal=10 so avg=100B: 5 ops = 500B, gives integer progress mid-transfer.
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
-		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 1})
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 10})
 		bus.Publish(progress.Tick{Elapsed: 1 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 0}}})
-		// Fast start: +1s, +500B → 500 B/s, 500 remaining → 1s.
-		bus.Publish(progress.Tick{Elapsed: 2 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 500}}})
-		// Link nearly dies: +10s, +10B → beat-wide rate collapses; the naive
-		// estimate would balloon to ~10s. The guard must hold it at the prior 1s.
-		bus.Publish(progress.Tick{Elapsed: 12 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 510}}})
+		// Fast start: 5 ops confirmed at 2s → BytesDone=500, rate=500 B/s, 500 remaining → 1s.
+		bus.Publish(progress.Tick{Elapsed: 2 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 500}}, Ops: progress.OpsTally{Done: 5}})
+		// Link nearly dies: no new ops by 12s → beat-wide rate collapses; the naive
+		// estimate would balloon to ~11s. The guard must hold it at the prior 1s.
+		bus.Publish(progress.Tick{Elapsed: 12 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 510}}, Ops: progress.OpsTally{Done: 5}})
 	})
 	assert.Equal(t, int64(1), vms[len(vms)-2].EtaSeconds, "after the fast first second the estimate is 1s")
 	assert.Equal(t, int64(1), last(vms).EtaSeconds, "a mid-beat slowdown must NOT push the estimate up — within a fixed plan EtaSeconds is monotone non-increasing so the countdown never reads as broken (design-log/028 §Q10)")
 }
 
 func TestProjection_PlanInfoReBaselinesEta_NotClampedByPriorBeat(t *testing.T) {
+	// FilesTotal=10/50 keeps avg=100B for both plans so ops → bytes is simple arithmetic.
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
-		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 1})
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 1000, FilesTotal: 10})
 		bus.Publish(progress.Tick{Elapsed: 1 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 0}}})
-		bus.Publish(progress.Tick{Elapsed: 2 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 500}}}) // eta now 1s
+		// 5 ops at 2s → BytesDone=500, rate=500 B/s, remaining=500 → ETA=1s.
+		bus.Publish(progress.Tick{Elapsed: 2 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 500}}, Ops: progress.OpsTally{Done: 5}}) // eta now 1s
 		// A new, larger plan arrives: there is literally more work, so the guard
 		// must release and the beat re-anchor rather than clamp to the old 1s.
-		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 5000, FilesTotal: 1})
-		bus.Publish(progress.Tick{Elapsed: 3 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 500}}}) // anchor
-		bus.Publish(progress.Tick{Elapsed: 4 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 600}}}) // +100B/s, 4400 left → 44s
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 5000, FilesTotal: 50})
+		// 5 ops at 3s → BytesDone=500, anchor for new beat.
+		bus.Publish(progress.Tick{Elapsed: 3 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 500}}, Ops: progress.OpsTally{Done: 5}}) // anchor
+		// 6 ops at 4s → BytesDone=600, dt=1s, flowed=100 B/s, remaining=4400 → 44s.
+		bus.Publish(progress.Tick{Elapsed: 4 * time.Second, Remote: progress.Side{Up: progress.Stream{Data: 600}}, Ops: progress.OpsTally{Done: 6}}) // +100B/s, 4400 left → 44s
 	})
 	final := last(vms)
 	assert.Equal(t, int64(44), final.EtaSeconds, "PlanInfo re-baselines the beat: 4400 remaining / 100 B/s = 44s. The monotonic guard must not clamp this to the prior beat's 1s — a bigger plan is genuinely more time (design-log/028 §Q4)")

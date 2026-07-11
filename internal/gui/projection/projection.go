@@ -272,7 +272,13 @@ func (p *Projection) etaFromSessionAvg(elapsed time.Duration, done int64) int64 
 // pipelineStage so a late Tick arriving after the pipeline moved on (e.g.
 // during Committing) does not freeze a stale BytesDone value.
 //
-// BytesDone reads from Stream.Data (logical, matches PlanInfo.BytesTotal).
+// BytesDone reads from Stream.Data (logical, matches PlanInfo.BytesTotal)
+// for pull. For push, BytesDone and ETA use Ops.Done × avg-blob-size instead:
+// Logical.BytesOut counts bytes as they enter the compressor (fast local SSD),
+// not when R2 confirms delivery, so s.Data bursts far ahead of actual R2
+// progress and the monotone guard locks ETA at an optimistic early estimate
+// for the remainder of the transfer. OpsComplete fires on PutStream return
+// (R2 confirmation), which is the correct completion signal.
 // SpeedMbps reads from Stream.Average — 5-second rolling wire rate, matches
 // curl's --progress-bar convention (design-log/001 §Refinement).
 // LogicalMbps reads from Stream.DataAverage — drives the chart's second
@@ -280,18 +286,32 @@ func (p *Projection) etaFromSessionAvg(elapsed time.Duration, done int64) int64 
 // beat-wide average (etaFromSessionAvg), not from any rolling rate above.
 func (p *Projection) onTick(t progress.Tick) bool {
 	var s progress.Stream
+	var done int64
 	switch p.pipelineStage {
 	case ritual.StagePulling:
 		s = t.Remote.Down
+		done = s.Data
 	case ritual.StagePushing:
 		s = t.Remote.Up
+		// Ops-based progress: confirmed R2 deliveries × average blob size.
+		// Falls back to s.Data when FilesTotal is zero (shouldn't happen after
+		// a PlanInfo, but avoids a divide-by-zero on unexpected paths).
+		if p.state.FilesTotal > 0 {
+			avg := p.state.BytesTotal / int64(p.state.FilesTotal)
+			done = t.Ops.Done * avg
+			if done > p.state.BytesTotal {
+				done = p.state.BytesTotal
+			}
+		} else {
+			done = s.Data
+		}
 	default:
 		return false
 	}
-	p.state.BytesDone = s.Data
+	p.state.BytesDone = done
 	p.state.SpeedMbps = s.Average
 	p.state.LogicalMbps = s.DataAverage
-	p.state.EtaSeconds = p.etaFromSessionAvg(t.Elapsed, s.Data)
+	p.state.EtaSeconds = p.etaFromSessionAvg(t.Elapsed, done)
 	// Stalled: a heartbeat tick (Instant==0) arriving while bytes are still
 	// owed (BytesDone < BytesTotal) means the transfer is mid-flight but the
 	// link has gone quiet — an R2 PutStream blocked on a TCP retransmit. The
