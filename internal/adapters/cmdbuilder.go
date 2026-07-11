@@ -130,6 +130,7 @@ func (b *ServerCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stdout
+	hideCmdWindow(cmd)
 
 	return cmd, nil
 }
