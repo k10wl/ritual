@@ -2,6 +2,7 @@ package projection
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"ritual/internal/adapters/observed"
@@ -36,6 +37,7 @@ type Projection struct {
 	ch            <-chan ports.Event
 	unsub         func()
 	emitter       Emitter
+	publish       func(ports.Event)
 	addresses     AddressProvider
 	state         ViewModel
 	pipelineStage string
@@ -70,6 +72,7 @@ func New(bus ports.EventBus, emitter Emitter, addresses AddressProvider) *Projec
 		ch:         ch,
 		unsub:      unsub,
 		emitter:    emitter,
+		publish:    bus.Publish,
 		addresses:  addresses,
 		state:      ViewModel{Stage: StageIdle, Phase: PhaseIdle},
 		activeFlow: ritual.FlowSession,
@@ -85,6 +88,7 @@ func (p *Projection) Snapshot() ViewModel { return p.state }
 func (p *Projection) Run(ctx context.Context) {
 	defer p.unsub()
 	p.emitter.Emit(p.state)
+	p.publish(Snap{p.state})
 	for {
 		select {
 		case <-ctx.Done():
@@ -95,6 +99,7 @@ func (p *Projection) Run(ctx context.Context) {
 			}
 			if p.fold(evt) {
 				p.emitter.Emit(p.state)
+				p.publish(Snap{p.state})
 			}
 		}
 	}
@@ -171,9 +176,6 @@ func (p *Projection) fold(evt ports.Event) bool {
 	return true
 }
 
-// updateFailedHint is the dial copy on a failed update (design-log/037 §Q5) —
-// the user-facing retry path, not the raw error (which the log carries).
-const updateFailedHint = "Couldn't update — restart, or try Advanced ▸ Check for update"
 
 // foldUpdate folds the observed.Update* stream into the gray Preflight dial
 // (design-log/037). Split out of fold so each stays under the complexity
@@ -183,16 +185,22 @@ func (p *Projection) foldUpdate(evt ports.Event) bool {
 	switch e := evt.(type) {
 	case observed.UpdateCheckStarted:
 		// Autoupdate probe begins (launch or manual re-check). The dial boots
-		// gray + inert — "Checking for updates···". Design-log/037 §Q2/Q3.
+		// gray + inert — "Checking for updates···". Fresh ViewModel clears any
+		// prior update-failure hint. Design-log/037 §Q2/Q3.
 		p.state = ViewModel{Stage: StagePreflight, Phase: PhasePreflight}
 	case observed.UpdateCheckInfo:
 		// Errors route through UpdateFailed (a distinct event); here we only
 		// act on the success verdict. Up-to-date → wake straight to IDLE (the
 		// common path). Outdated → remember the target; the Updating beat
 		// begins on UpdateApplyStarted. Design-log/037 §Q3/Q4.
+		// Context errors (deadline/cancel) mean the check was aborted — not a
+		// failure; wake to IDLE so the user can proceed. UpdateFailed is NOT
+		// published for these (see observed.Updater.Check).
 		switch {
-		case e.Err != nil:
+		case e.Err != nil && !errors.Is(e.Err, context.Canceled) && !errors.Is(e.Err, context.DeadlineExceeded):
 			return false
+		case e.Err != nil: // context timeout/cancel → treat as no update, proceed
+			p.state = ViewModel{Stage: StageIdle, Phase: PhaseIdle}
 		case e.Outdated:
 			p.state.TargetVersion = e.To
 		default:
@@ -206,13 +214,9 @@ func (p *Projection) foldUpdate(evt ports.Event) bool {
 		p.state.Phase = PhaseUpdating
 		p.state.TargetVersion = e.Version
 	case observed.UpdateFailed:
-		// Best-effort mandatory: a failed check/apply drops into 017's single
-		// failure pathway — glyph x, "Tap to dismiss" → usable IDLE. The dial
-		// shows the retry hint (restart / Advanced ▸ Check for update), not the
-		// raw error — the detail lives in the log via UpdateFailed. §Q5.
-		p.state.Stage = StageFailed
-		p.state.Phase = PhaseFailed
-		p.state.ErrorText = updateFailedHint
+		// Update errors (check or apply) are non-blocking: drop to idle so the
+		// user can keep using the app. Hint surfaces under the dial; detail in the log.
+		p.state = ViewModel{Stage: StageIdle, Phase: PhaseIdle, ErrorText: "Couldn't update — Advanced › Check for update"}
 	default:
 		return false
 	}

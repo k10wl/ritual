@@ -7,6 +7,7 @@ package observed
 
 import (
 	"context"
+	"errors"
 
 	"ritual/internal/core/ports"
 )
@@ -35,7 +36,11 @@ func (u *Updater) Check(ctx context.Context) (ports.Update, bool, error) {
 	u.publish(UpdateCheckStarted{})
 	up, outdated, err := u.inner.Check(ctx)
 	u.publish(UpdateCheckInfo{From: u.from, To: up.Version, Outdated: outdated, Candidates: up.Candidates, Err: err})
-	if err != nil {
+	// Context cancellation/deadline means the caller aborted the check (e.g.
+	// the 10s launch timeout) — not a user-visible failure. Let the projection
+	// wake to IDLE via UpdateCheckInfo. Real errors (network, R2) still route
+	// through UpdateFailed → PhaseFailed so the user sees the retry hint.
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		u.publish(UpdateFailed{Stage: "check", Err: err})
 	}
 	return up, outdated, err

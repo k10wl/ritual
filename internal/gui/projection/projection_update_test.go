@@ -50,14 +50,24 @@ func TestProjection_UpdateApplyStarted_ShowsUpdating(t *testing.T) {
 	assert.Equal(t, "2.1.0", got.TargetVersion)
 }
 
-func TestProjection_UpdateFailed_RoutesToFailed(t *testing.T) {
+func TestProjection_UpdateFailed_DropsToIdleWithHint(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(observed.UpdateCheckStarted{})
 		bus.Publish(observed.UpdateFailed{Stage: "apply", Err: errors.New("checksum mismatch")})
 	})
 	got := last(vms)
-	assert.Equal(t, projection.StageFailed, got.Stage, "best-effort mandatory: failure uses 017's single failed pathway")
-	assert.Equal(t, projection.PhaseFailed, got.Phase)
-	assert.Contains(t, got.ErrorText, "Check for update", "dial shows the retry hint, not the raw error (which the log carries)")
-	assert.NotContains(t, got.ErrorText, "checksum mismatch", "raw error stays out of the dial copy")
+	assert.Equal(t, projection.StageIdle, got.Stage, "update failures are non-blocking: drop to idle so the user can keep using the app")
+	assert.Equal(t, projection.PhaseIdle, got.Phase)
+	assert.NotEmpty(t, got.ErrorText, "hint text surfaces under the dial so the user knows to retry via Advanced")
+}
+
+func TestProjection_UpdateCheckStarted_ClearsPriorHint(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(observed.UpdateCheckStarted{})
+		bus.Publish(observed.UpdateFailed{Stage: "check", Err: errors.New("timeout")})
+		bus.Publish(observed.UpdateCheckStarted{}) // manual retry
+	})
+	got := last(vms)
+	assert.Equal(t, projection.StagePreflight, got.Stage)
+	assert.Empty(t, got.ErrorText, "starting a new check clears the prior failure hint")
 }

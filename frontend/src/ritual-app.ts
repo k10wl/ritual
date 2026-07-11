@@ -679,6 +679,12 @@ export class RitualApp extends LitElement {
                                         class="unpublished-cue"
                                         .text=${"Unpublished changes"}
                                     ></rune-decoder>`
+                                  : null}
+                              ${this.vm.errorText
+                                  ? html`<rune-decoder
+                                        class="update-hint"
+                                        .text=${this.vm.errorText}
+                                    ></rune-decoder>`
                                   : null}`
                         : null}
                     ${this.failedInSyncStage()
@@ -727,6 +733,16 @@ export class RitualApp extends LitElement {
         .unpublished-cue {
             align-self: center;
             color: var(--text-faint);
+            font-family: var(--font-mono);
+            font-size: var(--fs-caption);
+            letter-spacing: 0.08em;
+        }
+
+        /* Update failure hint — same quiet register, warm tint to signal the error. */
+        .update-hint {
+            align-self: center;
+            color: var(--state-fail, #e06c75);
+            opacity: 0.6;
             font-family: var(--font-mono);
             font-size: var(--fs-caption);
             letter-spacing: 0.08em;

@@ -289,9 +289,11 @@ func main() {
 // holds no UI logic — the projection folds the events into the gray dial and a
 // failure drops to a usable IDLE (design-log/037 §Q4/Q5).
 func runUpdateFlow(ctx context.Context, updater ports.UpdaterService) {
-	up, outdated, err := updater.Check(ctx)
+	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	up, outdated, err := updater.Check(checkCtx)
 	if err != nil || !outdated {
-		return // events already published: failed → PhaseFailed, or up-to-date → IDLE
+		return // events already published: timed-out/up-to-date → IDLE, real error → PhaseFailed
 	}
 	_ = updater.Apply(ctx, up) // success replaces the process; failure → UpdateFailed
 }
