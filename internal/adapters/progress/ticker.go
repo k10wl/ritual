@@ -5,11 +5,10 @@ package progress
 
 import (
 	"context"
-	"sync/atomic"
-	"time"
-
 	"ritual/internal/adapters"
 	"ritual/internal/core/ports"
+	"sync/atomic"
+	"time"
 )
 
 // Default smoothing constants. Both are public Ticker fields so callers can

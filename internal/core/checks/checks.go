@@ -13,7 +13,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
 )
 
 // Sentinel errors returned (wrapped with details) by the built-in checks.
@@ -28,46 +27,46 @@ var (
 // It returns nil on pass; non-nil on fail aborts the stage.
 type Check func(ctx context.Context) error
 
-// RAM returns a Check that fails when the host has less free RAM than min
+// RAM returns a Check that fails when the host has less free RAM than minMB
 // megabytes.
-func RAM(min int, hw SystemInfoProvider) Check {
+func RAM(minMB int, hw SystemInfoProvider) Check {
 	return func(_ context.Context) error {
 		free, err := hw.GetFreeRAMMB()
 		if err != nil {
 			return fmt.Errorf("read free RAM: %w", err)
 		}
-		if free < min {
-			return fmt.Errorf("%w: have %d MB, need %d MB", ErrInsufficientRAM, free, min)
+		if free < minMB {
+			return fmt.Errorf("%w: have %d MB, need %d MB", ErrInsufficientRAM, free, minMB)
 		}
 		return nil
 	}
 }
 
 // Disk returns a Check that fails when path's volume has less free space
-// than min megabytes.
-func Disk(min int, path string, hw DiskInfoProvider) Check {
+// than minMB megabytes.
+func Disk(minMB int, path string, hw DiskInfoProvider) Check {
 	return func(_ context.Context) error {
 		free, err := hw.GetFreeDiskMB(path)
 		if err != nil {
 			return fmt.Errorf("read free disk %q: %w", path, err)
 		}
-		if free < min {
-			return fmt.Errorf("%w on %s: have %d MB, need %d MB", ErrInsufficientDisk, path, free, min)
+		if free < minMB {
+			return fmt.Errorf("%w on %s: have %d MB, need %d MB", ErrInsufficientDisk, path, free, minMB)
 		}
 		return nil
 	}
 }
 
 // Java returns a Check that fails when the installed Java major version is
-// below min.
-func Java(min int, p JavaVersionProvider) Check {
+// below minVer.
+func Java(minVer int, p JavaVersionProvider) Check {
 	return func(_ context.Context) error {
 		version, err := p.GetJavaVersion()
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrJavaNotFound, err)
 		}
-		if version < min {
-			return fmt.Errorf("%w: have %d, need %d", ErrJavaVersionTooOld, version, min)
+		if version < minVer {
+			return fmt.Errorf("%w: have %d, need %d", ErrJavaVersionTooOld, version, minVer)
 		}
 		return nil
 	}

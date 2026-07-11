@@ -154,7 +154,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 // by the caller — registration must happen BEFORE Build returns to close
 // the race where an external observer sees the server as ready and
 // publishes StopRequested before this goroutine has wired its subscription.
-func coordinate(
+func coordinate( //nolint:gocyclo // server event loop — each branch handles a distinct lifecycle event
 	done <-chan struct{},
 	stdin io.Writer,
 	outCh <-chan string,

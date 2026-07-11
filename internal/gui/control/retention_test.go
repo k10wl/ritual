@@ -1,14 +1,13 @@
 package control_test
 
 import (
+	"ritual/internal/config"
+	"ritual/internal/core/domain"
+	"ritual/internal/gui/control"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/config"
-	"ritual/internal/core/domain"
-	"ritual/internal/gui/control"
 )
 
 func isolateSettings(t *testing.T) {

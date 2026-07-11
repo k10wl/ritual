@@ -6,13 +6,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
-	"time"
-
 	"ritual/internal/adapters"
 	"ritual/internal/config"
 	"ritual/internal/subsystems/remote"
+	"strings"
+	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,7 +80,6 @@ func TestBuild_ModeR2WithEnvVars_AttemptsR2BranchAndReportsAdapterFailureCleanly
 	bus := adapters.NewEventBus(8)
 
 	storage, err := remote.Build(t.Context(), remote.ModeR2, bus)
-
 	if err != nil {
 		assert.False(t, errors.Is(err, remote.ErrR2EnvIncomplete), "with all four env vars set the error must NOT be ErrR2EnvIncomplete — that sentinel is reserved for missing-cred misconfiguration, not adapter-side failures")
 		assert.Contains(t, err.Error(), "remote: R2", "Build must wrap R2-branch errors with the 'remote: R2:' prefix so callers can distinguish factory-level failures from downstream storage errors raised once the run starts")

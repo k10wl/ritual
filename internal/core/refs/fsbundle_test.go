@@ -8,13 +8,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
-	"sync"
-	"testing"
-
 	"ritual/internal/adapters"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"strings"
+	"sync"
+	"testing"
 
 	"github.com/stretchr/testify/require"
 )
@@ -233,4 +232,3 @@ func (c *keyCounter) List(ctx context.Context, prefix string) ([]string, error) 
 func (c *keyCounter) Copy(ctx context.Context, src, dst string) error {
 	return c.inner.Copy(ctx, src, dst)
 }
-

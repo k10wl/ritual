@@ -6,11 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
+	"strings"
 )
 
 // PlanFn observes the byte/file budget of a transfer batch before any
@@ -104,7 +103,7 @@ func (p *Puller) fetchRef(ctx context.Context, id domain.RefID) (*domain.Ref, []
 	if err != nil {
 		return nil, nil, fmt.Errorf("pull %s: fetch ref: %w", id, err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	raw, err := io.ReadAll(rc)
 	if err != nil {

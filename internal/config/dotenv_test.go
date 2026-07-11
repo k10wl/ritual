@@ -3,9 +3,8 @@ package config_test
 import (
 	"os"
 	"path/filepath"
-	"testing"
-
 	"ritual/internal/config"
+	"testing"
 )
 
 const (

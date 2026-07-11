@@ -2,8 +2,8 @@ package netinfo_test
 
 import (
 	"net"
-	"ritual/internal/gui/projection"
 	"ritual/internal/gui/netinfo"
+	"ritual/internal/gui/projection"
 	"testing"
 
 	"github.com/stretchr/testify/assert"

@@ -8,6 +8,10 @@ import (
 	"io"
 	"math/rand/v2"
 	"os"
+	"ritual/internal/adapters"
+	"ritual/internal/adapters/observed"
+	"ritual/internal/adapters/progress"
+	"ritual/internal/core/ports"
 	"sync"
 	"testing"
 	"time"
@@ -15,11 +19,6 @@ import (
 	"github.com/cespare/xxhash/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/adapters"
-	"ritual/internal/adapters/observed"
-	"ritual/internal/adapters/progress"
-	"ritual/internal/core/ports"
 )
 
 // singleSide wires the same counter pair as both Logical and Wire for one
@@ -77,11 +76,11 @@ func TestTicker_EmitsTicksAsCountersAdvance(t *testing.T) {
 	payload := bytes.Repeat([]byte("realistic-chunk-block-"), 512) // ~11 KB, compresses well
 
 	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
+	for w := range workers {
 		wg.Add(1)
 		go func(base int) {
 			defer wg.Done()
-			for i := 0; i < perWorker; i++ {
+			for i := range perWorker {
 				key := fmt.Sprintf("objects/%016x-%d-%d", xxhash.Sum64(payload), base, i)
 				_ = metered.PutStream(ctx, key, bytes.NewReader(payload))
 			}

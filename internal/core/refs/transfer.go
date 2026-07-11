@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-
 	"ritual/internal/core/ports"
 )
 

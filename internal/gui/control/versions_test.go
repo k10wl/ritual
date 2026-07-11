@@ -3,17 +3,16 @@ package control_test
 import (
 	"context"
 	"errors"
-	"testing"
-	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"ritual/internal/adapters"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/gui/control"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeScope builds a VersionScope from an in-memory set of refs keyed by id.
@@ -136,9 +135,9 @@ func TestVersionLister_SkipsNonRefKeys(t *testing.T) {
 		List: func(_ context.Context, _ string) ([]string, error) {
 			return []string{
 				"refs/2026-05-20T09-30-00.000Z.json", // valid
-				"refs/",                               // directory marker
-				"refs/notatimestamp.json",             // unparseable
-				"objects/deadbeef",                    // wrong keyspace
+				"refs/",                              // directory marker
+				"refs/notatimestamp.json",            // unparseable
+				"objects/deadbeef",                   // wrong keyspace
 			}, nil
 		},
 		ReadRef: func(_ context.Context, _ domain.RefID) (*domain.Ref, error) {

@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"time"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"time"
 )
 
 // Committer snapshots a workdir into a content-addressed
@@ -87,7 +87,7 @@ func (c *Committer) WithLocalGC(fn func(ctx context.Context) error) *Committer {
 // Returns the new RefID.
 func (c *Committer) Commit(ctx context.Context, opts ports.CommitOpts) (domain.RefID, error) {
 	if len(opts.Targets) == 0 {
-		return "", fmt.Errorf("refs.Committer.Commit: at least one target glob is required")
+		return "", errors.New("refs.Committer.Commit: at least one target glob is required")
 	}
 
 	matched, err := c.walkMatches(ctx, opts.Targets)
@@ -191,7 +191,7 @@ func (c *Committer) storeBlobs(ctx context.Context, matched map[string]domain.Fi
 	objects := make(map[string]domain.Object, len(matched))
 	items := make([]ports.BlobItem, 0, len(matched))
 	for path, entry := range matched {
-		objects[path] = domain.Object{Hash: entry.Hash, Size: entry.Size}
+		objects[path] = domain.Object(entry)
 		items = append(items, ports.BlobItem{Key: path, Weight: entry.Size})
 	}
 	err := c.runner.Run(ctx, items, func(ctx context.Context, path string) error {
@@ -239,7 +239,7 @@ func (c *Committer) resolveParent(ctx context.Context, opts ports.CommitOpts) (d
 	if err != nil {
 		return "", fmt.Errorf("refs.Committer.Commit: load amended draft %s: %w", opts.Amend, err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	old := &domain.Ref{}
 	if err := json.NewDecoder(rc).Decode(old); err != nil {
 		return "", fmt.Errorf("refs.Committer.Commit: parse amended draft %s: %w", opts.Amend, err)

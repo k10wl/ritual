@@ -1,3 +1,4 @@
+// Package mocks provides test doubles for the ports interfaces.
 package mocks
 
 import (

@@ -27,11 +27,10 @@ package refs_test
 import (
 	"context"
 	"encoding/json"
-	"testing"
-	"time"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/refs"
+	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -221,7 +220,7 @@ func TestApplier_IsIdempotentAcrossReruns(t *testing.T) {
 	require.NoError(t, applier.Apply(ctx, ref.Timestamp),
 		"first apply must succeed on a fully-hydrated blob store")
 
-	hitsBeforeRerun := blobs.getHits("objects/"+hashHex("AAAA"))
+	hitsBeforeRerun := blobs.getHits("objects/" + hashHex("AAAA"))
 	require.NoError(t, applier.Apply(ctx, ref.Timestamp),
 		"second apply on an already-materialised workdir must succeed — Apply is idempotent across replays")
 

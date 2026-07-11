@@ -2,11 +2,10 @@ package control
 
 import (
 	"context"
+	"ritual/internal/core/domain"
 	"sort"
 	"strings"
 	"time"
-
-	"ritual/internal/core/domain"
 )
 
 // versionsTimeout bounds ListVersions so a slow or offline remote can't hang

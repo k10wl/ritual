@@ -3,10 +3,9 @@ package pulling
 import (
 	"context"
 	"fmt"
-	"strings"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"strings"
 )
 
 // NewHeadResolver returns the lexicographically greatest refs/{id}.json key

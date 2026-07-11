@@ -2,17 +2,16 @@ package lifecycle_test
 
 import (
 	"context"
-	"testing"
-	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"ritual/internal/adapters"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/subsystems/lifecycle"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // recordStrategy terminates the chain immediately, recording that it ran.
@@ -29,6 +28,7 @@ func (s *recordStrategy) Run(_ context.Context, _ *ritual.RunState) (machine.Str
 	s.entered <- struct{}{}
 	return nil, nil
 }
+
 func (s *recordStrategy) ran() bool {
 	select {
 	case <-s.entered:

@@ -44,7 +44,6 @@ func TestObservedRetention_PublishesMarkedKeysPerSelect(t *testing.T) {
 
 	obs := observed.NewRetention(inner, bus, "refs-local")
 	got, err := obs.Select(ctx)
-
 	if err != nil {
 		t.Fatalf("decorator must forward Select err: %v", err)
 	}
@@ -95,7 +94,6 @@ func TestObservedRetention_NilBus_NoPanic(t *testing.T) {
 
 	obs := observed.NewRetention(inner, nil, "refs-local")
 	_, err := obs.Select(ctx)
-
 	if err != nil {
 		t.Errorf("nil bus must not alter behaviour; got %v", err)
 	}

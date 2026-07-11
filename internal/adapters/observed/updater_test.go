@@ -3,14 +3,13 @@ package observed_test
 import (
 	"context"
 	"errors"
+	"ritual/internal/adapters"
+	"ritual/internal/adapters/observed"
+	"ritual/internal/core/ports"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/adapters"
-	"ritual/internal/adapters/observed"
-	"ritual/internal/core/ports"
 )
 
 // fakeUpdater is a scriptable ports.UpdaterService inner for the decorator.

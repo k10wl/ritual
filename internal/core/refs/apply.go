@@ -1,3 +1,4 @@
+// Package refs implements the content-addressed ref store: commit, apply, pull, push, sweep.
 package refs
 
 import (
@@ -5,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 
@@ -88,7 +88,7 @@ func (a *Applier) loadRef(ctx context.Context, id domain.RefID) (*domain.Ref, er
 	if err != nil {
 		return nil, fmt.Errorf("apply %s: fetch ref: %w", id, err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	raw, err := io.ReadAll(rc)
 	if err != nil {
@@ -143,7 +143,7 @@ func (a *Applier) existingMatchesHash(ctx context.Context, filePath, expectedHas
 	if err != nil {
 		return false, fmt.Errorf("read existing: %w", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	hasher := xxhash.New()
 	_, err = io.Copy(hasher, rc)
 	if err != nil {

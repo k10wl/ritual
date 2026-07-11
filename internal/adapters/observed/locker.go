@@ -1,6 +1,7 @@
 // observed/locker.go wraps lock.Locker with bus-backed event publishing.
 // Follows the same decorator pattern as observedStorage: one event per
 // verb, Err mirrored from the inner call without altering control flow.
+
 package observed
 
 import (

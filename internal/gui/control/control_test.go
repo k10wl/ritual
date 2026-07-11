@@ -3,14 +3,13 @@ package control_test
 import (
 	"context"
 	"errors"
+	"ritual/internal/core/domain"
+	"ritual/internal/core/stages/pulling"
+	"ritual/internal/gui/control"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/core/domain"
-	"ritual/internal/core/stages/pulling"
-	"ritual/internal/gui/control"
 )
 
 func headReturning(id domain.RefID, err error) pulling.HeadResolver {

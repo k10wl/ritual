@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"path"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )

@@ -1,14 +1,13 @@
 package progress_test
 
 import (
+	"ritual/internal/adapters"
+	"ritual/internal/adapters/progress"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/adapters"
-	"ritual/internal/adapters/progress"
 )
 
 // 50 Mbps over 1s == 6_250_000 bytes.
@@ -127,7 +126,7 @@ func TestTicker_LocalAndRemoteCountersAdvanceIndependently(t *testing.T) {
 	step := int64(mbps * float64(mbpsBytesPerSec))
 
 	var ticks []progress.Tick
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		localCounters.BytesIn.Add(step) // simulate Apply reading from local objects/
 		ticks = append(ticks, ticker.Snapshot(base.Add(time.Duration(i)*time.Second)))
 	}
@@ -162,7 +161,7 @@ func TestTicker_DataAverageTracksLogicalIndependentlyOfWire(t *testing.T) {
 	logicalStep := int64(logicalMbps * float64(mbpsBytesPerSec))
 
 	var ticks []progress.Tick
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		wire.BytesOut.Add(wireStep)
 		logical.BytesOut.Add(logicalStep)
 		ticks = append(ticks, ticker.Snapshot(base.Add(time.Duration(i)*time.Second)))

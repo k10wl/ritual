@@ -2,9 +2,8 @@ package selfupdate
 
 import (
 	"path"
-	"strings"
-
 	"ritual/internal/core/ports"
+	"strings"
 )
 
 // PrefixFor builds the per-platform listing prefix, e.g.

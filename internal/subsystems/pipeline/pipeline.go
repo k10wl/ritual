@@ -29,11 +29,11 @@ import (
 // chain order (Checking → Pulling → … → Unlocking) so the call site
 // reads top-to-bottom.
 type Deps struct {
-	Bus               ports.EventBus
-	Checks            []checks.Check
-	Puller            ports.Puller
-	Applier           ports.Applier
-	HeadResolver      pulling.HeadResolver
+	Bus          ports.EventBus
+	Checks       []checks.Check
+	Puller       ports.Puller
+	Applier      ports.Applier
+	HeadResolver pulling.HeadResolver
 	// LocalHeadResolver resolves the local-store HEAD. Publish (BuildUpload,
 	// design-log/035) probes this instead of the remote so a new ref parents
 	// on where the operator stands (local HEAD), making a rolled-back state

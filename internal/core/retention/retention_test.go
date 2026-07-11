@@ -62,7 +62,6 @@ func TestRefsRetention_Select_ListsRefsAndReturnsMarkedDrops(t *testing.T) {
 
 	r := retention.NewRefsRetention(storage, retention.ScopeLocal)
 	got, err := r.Select(ctx)
-
 	if err != nil {
 		t.Fatalf("healthy list must not error: %v", err)
 	}
@@ -155,7 +154,6 @@ func TestRefsRetention_Select_EmptyList_NoDrops(t *testing.T) {
 
 	r := retention.NewRefsRetention(storage, retention.ScopeLocal)
 	got, err := r.Select(ctx)
-
 	if err != nil {
 		t.Fatalf("empty list must not error: %v", err)
 	}
@@ -183,7 +181,6 @@ func TestLogsRetention_Select_ListsLogsAndTrimsByKeepLast(t *testing.T) {
 
 	r := retention.NewLogsRetention(storage, domain.RetentionRules{KeepLast: 2})
 	got, err := r.Select(ctx)
-
 	if err != nil {
 		t.Fatalf("healthy list must not error: %v", err)
 	}
@@ -206,7 +203,6 @@ func TestLogsRetention_Select_UnknownFile_IsPreserved(t *testing.T) {
 
 	r := retention.NewLogsRetention(storage, domain.RetentionRules{KeepLast: 1})
 	got, err := r.Select(ctx)
-
 	if err != nil {
 		t.Fatalf("healthy list must not error: %v", err)
 	}

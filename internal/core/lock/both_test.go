@@ -3,21 +3,20 @@ package lock_test
 import (
 	"context"
 	"errors"
-	"testing"
-
 	"ritual/internal/core/lock"
+	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type fakeSide struct {
-	name        string
-	acquireSID  string
-	acquireErr  error
-	inspect     *lock.Holder
-	inspectErr  error
-	releaseErr  error
+	name         string
+	acquireSID   string
+	acquireErr   error
+	inspect      *lock.Holder
+	inspectErr   error
+	releaseErr   error
 	heartbeatErr error
 
 	acquireCalls   int

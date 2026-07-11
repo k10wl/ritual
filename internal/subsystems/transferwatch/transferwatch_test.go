@@ -2,18 +2,17 @@ package transferwatch_test
 
 import (
 	"context"
+	"ritual/internal/adapters"
+	"ritual/internal/core/ports"
+	"ritual/internal/core/ritual"
+	"ritual/internal/core/stages/pulling"
+	"ritual/internal/subsystems/transferwatch"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/adapters"
-	"ritual/internal/core/ports"
-	"ritual/internal/core/ritual"
-	"ritual/internal/core/stages/pulling"
-	"ritual/internal/subsystems/transferwatch"
 )
 
 type fakeGate struct {

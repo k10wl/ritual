@@ -9,13 +9,12 @@ package adapters_test
 import (
 	"context"
 	"errors"
+	"ritual/internal/adapters"
+	"ritual/internal/core/ports"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"ritual/internal/adapters"
-	"ritual/internal/core/ports"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

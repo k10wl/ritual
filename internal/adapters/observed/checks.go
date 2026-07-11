@@ -3,7 +3,6 @@ package observed
 import (
 	"context"
 	"fmt"
-
 	"ritual/internal/core/checks"
 	"ritual/internal/core/ports"
 )

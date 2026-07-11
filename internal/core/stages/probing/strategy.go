@@ -12,7 +12,6 @@ package probing
 import (
 	"context"
 	"errors"
-
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
@@ -51,7 +50,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 		rs.ParentRefID = "" // seeding: empty remote, local files become ref #1
 	case err != nil:
 		rs.Err = err
-		return s.onFail, nil
+		return s.onFail, nil //nolint:nilerr // error stored on RunState; onFail stage handles it
 	default:
 		rs.ParentRefID = id
 	}

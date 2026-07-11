@@ -3,15 +3,14 @@ package control_test
 import (
 	"context"
 	"errors"
+	"ritual/internal/core/domain"
+	"ritual/internal/core/stages/pulling"
+	"ritual/internal/gui/control"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/core/domain"
-	"ritual/internal/core/stages/pulling"
-	"ritual/internal/gui/control"
 )
 
 const dirtyValidHead = domain.RefID("2026-05-29T10-00-00.000Z")

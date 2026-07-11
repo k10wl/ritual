@@ -2,13 +2,12 @@ package projection_test
 
 import (
 	"errors"
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-
 	"ritual/internal/adapters/observed"
 	"ritual/internal/core/ports"
 	"ritual/internal/gui/projection"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestProjection_UpdateCheckStarted_GraysToPreflight(t *testing.T) {

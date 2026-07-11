@@ -44,7 +44,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 		}
 		if err := c(ctx); err != nil {
 			rs.Err = err
-			return s.onFail, nil
+			return s.onFail, nil //nolint:nilerr // error stored on RunState; onFail stage handles it
 		}
 	}
 	publish(rs.Bus, ritual.FinishInfo{Operation: "check"})

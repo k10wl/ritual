@@ -35,8 +35,8 @@ import (
 	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/subsystems/livesync"
 	"ritual/internal/subsystems/loadedref"
-	"ritual/internal/subsystems/notify"
 	"ritual/internal/subsystems/logging"
+	"ritual/internal/subsystems/notify"
 	"ritual/internal/subsystems/pipeline"
 	"ritual/internal/subsystems/remote"
 	"ritual/internal/subsystems/retention"
@@ -279,7 +279,7 @@ func main() {
 	go watchUpdateRequests(ctx, runtime.bus, updater)
 
 	if err := wailsApp.Run(); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 }
 
@@ -349,7 +349,7 @@ type guiRuntime struct {
 	localStatsFn control.StorageStatFn
 }
 
-func buildRuntime() (*guiRuntime, error) {
+func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root — high fanout is structural, not logical
 	if err := os.MkdirAll(config.RootPath, config.DirPermission); err != nil {
 		return nil, fmt.Errorf("create root: %w", err)
 	}
@@ -483,7 +483,7 @@ func buildRuntime() (*guiRuntime, error) {
 			if err != nil {
 				return nil, fmt.Errorf("read ref %s: %w", id, err)
 			}
-			defer rc.Close()
+			defer func() { _ = rc.Close() }()
 			raw, err := io.ReadAll(rc)
 			if err != nil {
 				return nil, fmt.Errorf("read ref %s body: %w", id, err)
@@ -670,22 +670,22 @@ func buildRuntime() (*guiRuntime, error) {
 	}
 
 	return &guiRuntime{
-		bus:                 bus,
-		pipelineDeps:        pipelineDeps,
-		projection:          proj,
-		logsink:             sink,
-		viewEmitter:         viewEmitter,
-		logEmitter:          logEmitter,
-		ticker:              remoteTicker,
-		stopLogFile:         stopLogFile,
-		committer:           committer,
-		pusher:              pusher,
-		commitTargets:       commitTargets,
-		syncProber:          syncProber,
-		dirtyProber:         dirtyProber,
-		versionLister:       versionLister,
-		remoteStorage:       remoteStorage,
-		consoleReader:       consoleReader,
+		bus:                  bus,
+		pipelineDeps:         pipelineDeps,
+		projection:           proj,
+		logsink:              sink,
+		viewEmitter:          viewEmitter,
+		logEmitter:           logEmitter,
+		ticker:               remoteTicker,
+		stopLogFile:          stopLogFile,
+		committer:            committer,
+		pusher:               pusher,
+		commitTargets:        commitTargets,
+		syncProber:           syncProber,
+		dirtyProber:          dirtyProber,
+		versionLister:        versionLister,
+		remoteStorage:        remoteStorage,
+		consoleReader:        consoleReader,
 		localVersionDeleter:  localDeleter,
 		remoteVersionDeleter: remoteDeleter,
 		loadedRefIDFn:        loadedRefIDFn,

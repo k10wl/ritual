@@ -8,37 +8,36 @@
 //
 // Host model (mirrors §On-disk Layout):
 //
-//   remote  — shared side; holds refs/{id}.json + objects/{hash}
-//   local   — local blob cache; holds refs/{id}.json + objects/{hash}
-//   workdir — instance tree; holds root-relative paths like `worlds/level.dat`
+//	remote  — shared side; holds refs/{id}.json + objects/{hash}
+//	local   — local blob cache; holds refs/{id}.json + objects/{hash}
+//	workdir — instance tree; holds root-relative paths like `worlds/level.dat`
 //
 // Wiring per verb:
 //
-//   Puller:     NewPuller(remote, local)                    — download ref + blobs
-//   Applier:    NewApplier(local, workdir, workdirScanner)  — materialise workdir
-//   Committer:  NewCommitter(workdirScanner, workdir, local) — snapshot workdir
-//   Pusher:     NewPusher(local, remote)                    — upload local ref + blobs
+//	Puller:     NewPuller(remote, local)                    — download ref + blobs
+//	Applier:    NewApplier(local, workdir, workdirScanner)  — materialise workdir
+//	Committer:  NewCommitter(workdirScanner, workdir, local) — snapshot workdir
+//	Pusher:     NewPusher(local, remote)                    — upload local ref + blobs
 //
 // Deferred flows (not translated — require subsystems not yet implemented):
 //
-//   F-5 Crash mid-push recovery — requires failure-injecting storage; the
-//       shape is covered by TestPusher_ResumesAfterBlobsUploadedButRefMissing
-//       + TestPusher_IsIdempotentAcrossReruns.
-//   F-6 Amend + failed push   — requires failure-injecting storage and a
-//       pushed-flag check that lives in the session-lock subsystem.
-//   F-7 Two-host race         — requires the session-lock port.
+//	F-5 Crash mid-push recovery — requires failure-injecting storage; the
+//	    shape is covered by TestPusher_ResumesAfterBlobsUploadedButRefMissing
+//	    + TestPusher_IsIdempotentAcrossReruns.
+//	F-6 Amend + failed push   — requires failure-injecting storage and a
+//	    pushed-flag check that lives in the session-lock subsystem.
+//	F-7 Two-host race         — requires the session-lock port.
 package refs_test
 
 import (
 	"context"
 	"encoding/json"
 	"io"
-	"testing"
-	"time"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/refs"
+	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

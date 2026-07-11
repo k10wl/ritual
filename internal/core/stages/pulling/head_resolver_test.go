@@ -26,16 +26,15 @@ import (
 	"context"
 	"errors"
 	"os"
+	"ritual/internal/adapters"
+	"ritual/internal/core/domain"
+	"ritual/internal/core/ports"
+	"ritual/internal/core/stages/pulling"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/adapters"
-	"ritual/internal/core/domain"
-	"ritual/internal/core/ports"
-	"ritual/internal/core/stages/pulling"
 )
 
 func TestHeadResolver_OnStorageWithNoRefs_ReturnsErrNoHead(t *testing.T) {

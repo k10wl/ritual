@@ -4,9 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
-
 	"ritual/internal/core/domain"
+	"time"
 )
 
 // deleteTimeout bounds the local refs/+GC delete so a slow disk can't hang the

@@ -3,9 +3,8 @@ package control_test
 import (
 	"context"
 	"errors"
-	"testing"
-
 	"ritual/internal/gui/control"
+	"testing"
 )
 
 type fakeWindow struct {

@@ -63,13 +63,13 @@ func TestFullScanner_ContextCancellation(t *testing.T) {
 
 func TestFullScanner_FiltersByTargets(t *testing.T) {
 	fsys := fstest.MapFS{
-		"worlds/world/level.dat":         &fstest.MapFile{Data: []byte("level")},
-		"worlds/world/region/r.0.0.mca":  &fstest.MapFile{Data: []byte("region")},
-		"server/mods/create.jar":         &fstest.MapFile{Data: []byte("mod")},
-		"server/server.jar":              &fstest.MapFile{Data: []byte("server")},
-		"server/libraries/foo.jar":       &fstest.MapFile{Data: []byte("lib")},
-		"server/logs/latest.log":         &fstest.MapFile{Data: []byte("log")},
-		"README.md":                      &fstest.MapFile{Data: []byte("readme")},
+		"worlds/world/level.dat":        &fstest.MapFile{Data: []byte("level")},
+		"worlds/world/region/r.0.0.mca": &fstest.MapFile{Data: []byte("region")},
+		"server/mods/create.jar":        &fstest.MapFile{Data: []byte("mod")},
+		"server/server.jar":             &fstest.MapFile{Data: []byte("server")},
+		"server/libraries/foo.jar":      &fstest.MapFile{Data: []byte("lib")},
+		"server/logs/latest.log":        &fstest.MapFile{Data: []byte("log")},
+		"README.md":                     &fstest.MapFile{Data: []byte("readme")},
 	}
 	targets := []string{"worlds/**", "server/mods/**", "server/server.jar"}
 	scanner := adapters.NewFullScanner(fsys)

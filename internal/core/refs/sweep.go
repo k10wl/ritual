@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 )
@@ -49,7 +48,7 @@ func readRefAt(ctx context.Context, store ports.StorageRepository, key string) (
 	if err != nil {
 		return nil, err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	ref := &domain.Ref{}
 	if err := json.NewDecoder(rc).Decode(ref); err != nil {
 		return nil, err

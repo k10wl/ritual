@@ -71,6 +71,8 @@ func Attach(ctx context.Context, bus ports.EventBus, n Notifier) func() {
 						}
 					case lifecycle.Failed:
 						send(n, "failed", runSeq, "Run failed", failBody(ev.Err))
+					default:
+						// Idle, Running, Dismissed don't trigger notifications.
 					}
 				}
 			}

@@ -3,17 +3,16 @@ package probing_test
 import (
 	"context"
 	"errors"
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"ritual/internal/adapters"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/probing"
 	"ritual/internal/core/stages/pulling"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type sentinelStrategy struct {

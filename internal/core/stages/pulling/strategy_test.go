@@ -3,18 +3,17 @@ package pulling_test
 import (
 	"context"
 	"errors"
-	"testing"
-	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"ritual/internal/adapters"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pulling"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type sentinelStrategy struct {
@@ -258,7 +257,7 @@ func TestPulling_PublishesBatchLifecycleEventsOnTheBus(t *testing.T) {
 
 	deadline := time.After(time.Second)
 	var sawStart, sawFinish bool
-	for !(sawStart && sawFinish) {
+	for !sawStart || !sawFinish {
 		select {
 		case <-deadline:
 			t.Fatalf("timed out waiting for batch lifecycle events: start=%v finish=%v", sawStart, sawFinish)
@@ -374,6 +373,8 @@ func TestPulling_FromHeadAdapter_IgnoresRunStateTarget(t *testing.T) {
 		"FromHead must ignore rs.TargetRefID and pull the storage HEAD — Session/Download are unchanged by the 038 resolver generalisation")
 }
 
-var _ ports.Puller = (*recordingPuller)(nil)
-var _ ports.Applier = (*recordingApplier)(nil)
-var _ ports.Puller = (*blockingPuller)(nil)
+var (
+	_ ports.Puller  = (*recordingPuller)(nil)
+	_ ports.Applier = (*recordingApplier)(nil)
+	_ ports.Puller  = (*blockingPuller)(nil)
+)

@@ -8,7 +8,6 @@ package committing
 
 import (
 	"context"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
@@ -76,7 +75,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 	id, err := s.committer.Commit(ctx, opts)
 	if err != nil {
 		rs.Err = err
-		return s.onFail, nil
+		return s.onFail, nil //nolint:nilerr // error stored on RunState; onFail stage handles it
 	}
 	rs.RefID = id
 	publish(rs.Bus, CommittedInfo{RefID: id})

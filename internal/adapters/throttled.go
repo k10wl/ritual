@@ -38,10 +38,12 @@ func (t *ThrottledStorage) String() string {
 	return fmt.Sprintf("throttled::%s", t.inner)
 }
 
+// PutStream writes body under key through the rate limiter.
 func (t *ThrottledStorage) PutStream(ctx context.Context, key string, body io.Reader) error {
 	return t.inner.PutStream(ctx, key, &throttledReader{r: body, lim: t.limiter, ctx: ctx})
 }
 
+// GetStream returns a rate-limited read stream for key.
 func (t *ThrottledStorage) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
 	rc, err := t.inner.GetStream(ctx, key)
 	if err != nil {
@@ -50,22 +52,27 @@ func (t *ThrottledStorage) GetStream(ctx context.Context, key string) (io.ReadCl
 	return &throttledReadCloser{ReadCloser: rc, lim: t.limiter, ctx: ctx}, nil
 }
 
+// Exists reports whether key is present (passes through, no throttling needed).
 func (t *ThrottledStorage) Exists(ctx context.Context, key string) (bool, error) {
 	return t.inner.Exists(ctx, key)
 }
 
+// Delete removes key (passes through, no throttling needed).
 func (t *ThrottledStorage) Delete(ctx context.Context, key string) error {
 	return t.inner.Delete(ctx, key)
 }
 
+// DeleteBatch removes all keys (passes through, no throttling needed).
 func (t *ThrottledStorage) DeleteBatch(ctx context.Context, keys []string) error {
 	return t.inner.DeleteBatch(ctx, keys)
 }
 
+// List returns keys matching prefix (passes through, no throttling needed).
 func (t *ThrottledStorage) List(ctx context.Context, prefix string) ([]string, error) {
 	return t.inner.List(ctx, prefix)
 }
 
+// Copy copies src to dst (passes through, no throttling needed).
 func (t *ThrottledStorage) Copy(ctx context.Context, sourceKey, destKey string) error {
 	return t.inner.Copy(ctx, sourceKey, destKey)
 }

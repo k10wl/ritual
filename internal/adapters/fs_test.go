@@ -125,7 +125,7 @@ func TestFSRepository_Delete(t *testing.T) {
 		key := "test/key"
 		data := []byte("test data")
 
-		err := putBytes(repo, ctx,key, data)
+		err := putBytes(repo, ctx, key, data)
 		assert.NoError(t, err)
 
 		err = repo.Delete(ctx, key)
@@ -143,11 +143,11 @@ func TestFSRepository_Delete(t *testing.T) {
 
 	t.Run("delete folder", func(t *testing.T) {
 		// Create folder with files
-		err := putBytes(repo, ctx,"folder/file1.txt", []byte("file1"))
+		err := putBytes(repo, ctx, "folder/file1.txt", []byte("file1"))
 		assert.NoError(t, err)
-		err = putBytes(repo, ctx,"folder/file2.txt", []byte("file2"))
+		err = putBytes(repo, ctx, "folder/file2.txt", []byte("file2"))
 		assert.NoError(t, err)
-		err = putBytes(repo, ctx,"folder/subfolder/file3.txt", []byte("file3"))
+		err = putBytes(repo, ctx, "folder/subfolder/file3.txt", []byte("file3"))
 		assert.NoError(t, err)
 
 		// Delete entire folder
@@ -155,11 +155,11 @@ func TestFSRepository_Delete(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Verify folder and all contents deleted
-		_, err = getBytes(repo, ctx,"folder/file1.txt")
+		_, err = getBytes(repo, ctx, "folder/file1.txt")
 		assert.Error(t, err, "Folder file1 should be deleted")
-		_, err = getBytes(repo, ctx,"folder/file2.txt")
+		_, err = getBytes(repo, ctx, "folder/file2.txt")
 		assert.Error(t, err, "Folder file2 should be deleted")
-		_, err = getBytes(repo, ctx,"folder/subfolder/file3.txt")
+		_, err = getBytes(repo, ctx, "folder/subfolder/file3.txt")
 		assert.Error(t, err, "Folder subfolder file3 should be deleted")
 	})
 }
@@ -181,7 +181,7 @@ func TestFSRepository_List(t *testing.T) {
 		}
 
 		for _, key := range keys {
-			err := putBytes(repo, ctx,key, []byte("data"))
+			err := putBytes(repo, ctx, key, []byte("data"))
 			assert.NoError(t, err)
 		}
 
@@ -232,17 +232,17 @@ func TestFSRepository_Copy(t *testing.T) {
 		destKey := "dest/copied.txt"
 		expectedData := []byte("test copy data")
 
-		err := putBytes(repo, ctx,sourceKey, expectedData)
+		err := putBytes(repo, ctx, sourceKey, expectedData)
 		assert.NoError(t, err)
 
 		err = repo.Copy(ctx, sourceKey, destKey)
 		assert.NoError(t, err)
 
-		copiedData, err := getBytes(repo, ctx,destKey)
+		copiedData, err := getBytes(repo, ctx, destKey)
 		assert.NoError(t, err)
 		assert.Equal(t, string(expectedData), string(copiedData))
 
-		originalData, err := getBytes(repo, ctx,sourceKey)
+		originalData, err := getBytes(repo, ctx, sourceKey)
 		assert.NoError(t, err)
 		assert.Equal(t, string(expectedData), string(originalData))
 	})
@@ -252,13 +252,13 @@ func TestFSRepository_Copy(t *testing.T) {
 		destKey := "deep/nested/path/copied.txt"
 		expectedData := []byte("nested copy data")
 
-		err := putBytes(repo, ctx,sourceKey, expectedData)
+		err := putBytes(repo, ctx, sourceKey, expectedData)
 		assert.NoError(t, err)
 
 		err = repo.Copy(ctx, sourceKey, destKey)
 		assert.NoError(t, err)
 
-		copiedData, err := getBytes(repo, ctx,destKey)
+		copiedData, err := getBytes(repo, ctx, destKey)
 		assert.NoError(t, err)
 		assert.Equal(t, string(expectedData), string(copiedData))
 	})
@@ -276,7 +276,7 @@ func TestFSRepository_Copy(t *testing.T) {
 	})
 
 	t.Run("copy with empty dest key", func(t *testing.T) {
-		err := putBytes(repo, ctx,"source.txt", []byte("data"))
+		err := putBytes(repo, ctx, "source.txt", []byte("data"))
 		assert.NoError(t, err)
 
 		err = repo.Copy(ctx, "source.txt", "")
@@ -293,11 +293,11 @@ func TestFSRepository_Copy(t *testing.T) {
 
 	t.Run("copy directory", func(t *testing.T) {
 		// Create source directory structure
-		err := putBytes(repo, ctx,"sourceDir/file1.txt", []byte("file1 content"))
+		err := putBytes(repo, ctx, "sourceDir/file1.txt", []byte("file1 content"))
 		assert.NoError(t, err)
-		err = putBytes(repo, ctx,"sourceDir/file2.txt", []byte("file2 content"))
+		err = putBytes(repo, ctx, "sourceDir/file2.txt", []byte("file2 content"))
 		assert.NoError(t, err)
-		err = putBytes(repo, ctx,"sourceDir/subdir/file3.txt", []byte("file3 content"))
+		err = putBytes(repo, ctx, "sourceDir/subdir/file3.txt", []byte("file3 content"))
 		assert.NoError(t, err)
 
 		// Copy directory
@@ -305,31 +305,31 @@ func TestFSRepository_Copy(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Verify copied files
-		data1, err := getBytes(repo, ctx,"destDir/file1.txt")
+		data1, err := getBytes(repo, ctx, "destDir/file1.txt")
 		assert.NoError(t, err)
 		assert.Equal(t, "file1 content", string(data1))
 
-		data2, err := getBytes(repo, ctx,"destDir/file2.txt")
+		data2, err := getBytes(repo, ctx, "destDir/file2.txt")
 		assert.NoError(t, err)
 		assert.Equal(t, "file2 content", string(data2))
 
-		data3, err := getBytes(repo, ctx,"destDir/subdir/file3.txt")
+		data3, err := getBytes(repo, ctx, "destDir/subdir/file3.txt")
 		assert.NoError(t, err)
 		assert.Equal(t, "file3 content", string(data3))
 
 		// Verify original files still exist
-		original1, err := getBytes(repo, ctx,"sourceDir/file1.txt")
+		original1, err := getBytes(repo, ctx, "sourceDir/file1.txt")
 		assert.NoError(t, err)
 		assert.Equal(t, "file1 content", string(original1))
 	})
 
 	t.Run("copy nested directory structure", func(t *testing.T) {
 		// Create complex directory structure
-		err := putBytes(repo, ctx,"complex/a/b/file1.txt", []byte("level1"))
+		err := putBytes(repo, ctx, "complex/a/b/file1.txt", []byte("level1"))
 		assert.NoError(t, err)
-		err = putBytes(repo, ctx,"complex/a/file2.txt", []byte("level2"))
+		err = putBytes(repo, ctx, "complex/a/file2.txt", []byte("level2"))
 		assert.NoError(t, err)
-		err = putBytes(repo, ctx,"complex/c/file3.txt", []byte("level3"))
+		err = putBytes(repo, ctx, "complex/c/file3.txt", []byte("level3"))
 		assert.NoError(t, err)
 
 		// Copy entire structure
@@ -337,15 +337,15 @@ func TestFSRepository_Copy(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Verify all files copied
-		data1, err := getBytes(repo, ctx,"backup/a/b/file1.txt")
+		data1, err := getBytes(repo, ctx, "backup/a/b/file1.txt")
 		assert.NoError(t, err)
 		assert.Equal(t, "level1", string(data1))
 
-		data2, err := getBytes(repo, ctx,"backup/a/file2.txt")
+		data2, err := getBytes(repo, ctx, "backup/a/file2.txt")
 		assert.NoError(t, err)
 		assert.Equal(t, "level2", string(data2))
 
-		data3, err := getBytes(repo, ctx,"backup/c/file3.txt")
+		data3, err := getBytes(repo, ctx, "backup/c/file3.txt")
 		assert.NoError(t, err)
 		assert.Equal(t, "level3", string(data3))
 	})
@@ -364,10 +364,10 @@ func TestFSRepository_ManifestOperations(t *testing.T) {
 		key := "manifests/test.json"
 		data := []byte(`{"version":"1.0.0","instance_id":"test-instance","updated_at":"2023-01-01T00:00:00Z"}`)
 
-		err := putBytes(repo, ctx,key, data)
+		err := putBytes(repo, ctx, key, data)
 		assert.NoError(t, err)
 
-		retrievedData, err := getBytes(repo, ctx,key)
+		retrievedData, err := getBytes(repo, ctx, key)
 		assert.NoError(t, err)
 		assert.Equal(t, string(data), string(retrievedData), "Manifest data mismatch")
 	})
@@ -403,17 +403,17 @@ func TestFSRepository_ErrorConditions(t *testing.T) {
 	})
 
 	t.Run("invalid empty key", func(t *testing.T) {
-		err := putBytes(repo, ctx,"", []byte("data"))
+		err := putBytes(repo, ctx, "", []byte("data"))
 		assert.Error(t, err, "Expected error for empty key")
 	})
 
 	t.Run("path traversal attempt", func(t *testing.T) {
-		err := putBytes(repo, ctx,"../outside", []byte("data"))
+		err := putBytes(repo, ctx, "../outside", []byte("data"))
 		assert.Error(t, err, "Expected error for path traversal attempt")
 	})
 
 	t.Run("null byte in key", func(t *testing.T) {
-		err := putBytes(repo, ctx,"test\x00key", []byte("data"))
+		err := putBytes(repo, ctx, "test\x00key", []byte("data"))
 		assert.Error(t, err, "Expected error for null byte in key")
 	})
 }
@@ -429,10 +429,10 @@ func TestFSRepository_BoundaryValues(t *testing.T) {
 
 	t.Run("empty data", func(t *testing.T) {
 		key := "empty"
-		err := putBytes(repo, ctx,key, []byte{})
+		err := putBytes(repo, ctx, key, []byte{})
 		assert.NoError(t, err)
 
-		data, err := getBytes(repo, ctx,key)
+		data, err := getBytes(repo, ctx, key)
 		assert.NoError(t, err)
 		assert.Len(t, data, 0, "Expected empty data")
 	})
@@ -440,10 +440,10 @@ func TestFSRepository_BoundaryValues(t *testing.T) {
 	t.Run("unicode key", func(t *testing.T) {
 		key := "测试/unicode/ключ"
 		data := []byte("unicode test")
-		err := putBytes(repo, ctx,key, data)
+		err := putBytes(repo, ctx, key, data)
 		assert.NoError(t, err)
 
-		retrievedData, err := getBytes(repo, ctx,key)
+		retrievedData, err := getBytes(repo, ctx, key)
 		assert.NoError(t, err)
 		assert.Equal(t, string(data), string(retrievedData), "Unicode key data mismatch")
 	})
@@ -452,10 +452,10 @@ func TestFSRepository_BoundaryValues(t *testing.T) {
 		longKey := "long/" + strings.Repeat("a", 200)
 
 		data := []byte("long key test")
-		err := putBytes(repo, context.Background(),longKey, data)
+		err := putBytes(repo, context.Background(), longKey, data)
 		assert.NoError(t, err)
 
-		retrievedData, err := getBytes(repo, context.Background(),longKey)
+		retrievedData, err := getBytes(repo, context.Background(), longKey)
 		assert.NoError(t, err)
 		assert.Equal(t, string(data), string(retrievedData), "Long key data mismatch")
 	})
@@ -473,7 +473,7 @@ func TestFSRepository_Concurrency(t *testing.T) {
 	t.Run("concurrent reads", func(t *testing.T) {
 		key := "concurrent"
 		data := []byte("concurrent test data")
-		err := putBytes(repo, ctx,key, data)
+		err := putBytes(repo, ctx, key, data)
 		assert.NoError(t, err)
 
 		var wg sync.WaitGroup
@@ -482,7 +482,7 @@ func TestFSRepository_Concurrency(t *testing.T) {
 
 		for range numGoroutines {
 			wg.Go(func() {
-				retrievedData, err := getBytes(repo, ctx,key)
+				retrievedData, err := getBytes(repo, ctx, key)
 				if err != nil {
 					errors <- err
 					return
@@ -510,7 +510,7 @@ func TestFSRepository_Concurrency(t *testing.T) {
 			wg.Go(func() {
 				key := fmt.Sprintf("concurrent-write-%d", i)
 				data := []byte(fmt.Sprintf("data-%d", i))
-				err := putBytes(repo, ctx,key, data)
+				err := putBytes(repo, ctx, key, data)
 				if err != nil {
 					errors <- err
 				}
@@ -528,7 +528,7 @@ func TestFSRepository_Concurrency(t *testing.T) {
 	t.Run("read write race", func(t *testing.T) {
 		key := "race"
 		initialData := []byte("initial")
-		err := putBytes(repo, ctx,key, initialData)
+		err := putBytes(repo, ctx, key, initialData)
 		assert.NoError(t, err)
 
 		var wg sync.WaitGroup
@@ -537,7 +537,7 @@ func TestFSRepository_Concurrency(t *testing.T) {
 		wg.Go(func() {
 			for i := range 100 {
 				data := []byte("race-data-" + string(rune(i)))
-				err := putBytes(repo, ctx,key, data)
+				err := putBytes(repo, ctx, key, data)
 				if err != nil {
 					errors <- err
 					return
@@ -547,7 +547,7 @@ func TestFSRepository_Concurrency(t *testing.T) {
 
 		wg.Go(func() {
 			for range 100 {
-				_, err := getBytes(repo, ctx,key)
+				_, err := getBytes(repo, ctx, key)
 				if err != nil {
 					errors <- err
 					return
@@ -582,7 +582,7 @@ func TestFSRepository_Security(t *testing.T) {
 		}
 
 		for _, key := range maliciousKeys {
-			err := putBytes(repo, ctx,key, []byte("malicious"))
+			err := putBytes(repo, ctx, key, []byte("malicious"))
 			assert.Error(t, err, "Path traversal not prevented for key: %s", key)
 		}
 	})
@@ -602,7 +602,7 @@ func TestFSRepository_Security(t *testing.T) {
 		}
 
 		for _, name := range reservedNames {
-			err := putBytes(repo, ctx,name, []byte("test"))
+			err := putBytes(repo, ctx, name, []byte("test"))
 			if err == nil {
 				t.Logf("Reserved name not prevented: %s", name)
 			}
@@ -622,10 +622,10 @@ func TestFSRepository_SpacesInDirectoryNames(t *testing.T) {
 		key := "directory with spaces/file with spaces.txt"
 		data := []byte("file with spaces content")
 
-		err := putBytes(repo, context.Background(),key, data)
+		err := putBytes(repo, context.Background(), key, data)
 		assert.NoError(t, err)
 
-		retrievedData, err := getBytes(repo, context.Background(),key)
+		retrievedData, err := getBytes(repo, context.Background(), key)
 		assert.NoError(t, err)
 		assert.Equal(t, string(data), string(retrievedData), "Spaces data mismatch")
 	})
@@ -634,10 +634,10 @@ func TestFSRepository_SpacesInDirectoryNames(t *testing.T) {
 		key := "multiple spaces/nested/file.txt"
 		data := []byte("multiple spaces content")
 
-		err := putBytes(repo, context.Background(),key, data)
+		err := putBytes(repo, context.Background(), key, data)
 		assert.NoError(t, err)
 
-		retrievedData, err := getBytes(repo, context.Background(),key)
+		retrievedData, err := getBytes(repo, context.Background(), key)
 		assert.NoError(t, err)
 		assert.Equal(t, string(data), string(retrievedData), "Multiple spaces data mismatch")
 	})
@@ -646,10 +646,10 @@ func TestFSRepository_SpacesInDirectoryNames(t *testing.T) {
 		key := " leading spaces/file.txt"
 		data := []byte("leading spaces content")
 
-		err := putBytes(repo, context.Background(),key, data)
+		err := putBytes(repo, context.Background(), key, data)
 		assert.NoError(t, err)
 
-		retrievedData, err := getBytes(repo, context.Background(),key)
+		retrievedData, err := getBytes(repo, context.Background(), key)
 		assert.NoError(t, err)
 		assert.Equal(t, string(data), string(retrievedData), "Leading spaces data mismatch")
 	})

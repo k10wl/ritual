@@ -3,9 +3,8 @@ package selfupdate_test
 import (
 	"os"
 	"path/filepath"
-	"testing"
-
 	"ritual/internal/subsystems/selfupdate"
+	"testing"
 
 	"github.com/stretchr/testify/require"
 )

@@ -6,13 +6,12 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"ritual/internal/core/ports/mocks"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/core/ports/mocks"
 )
 
 func TestSha256File(t *testing.T) {

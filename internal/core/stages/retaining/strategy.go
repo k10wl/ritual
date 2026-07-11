@@ -9,7 +9,6 @@ package retaining
 import (
 	"context"
 	"errors"
-
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
@@ -56,7 +55,7 @@ func (s *Strategy) Run(ctx context.Context, rs *ritual.RunState) (machine.Strate
 		return s.onFail, nil //nolint:nilerr // error stored on RunState; onFail stage handles it
 	}
 	if rs.Err != nil {
-		return s.onFail, nil //nolint:nilnil // rs.Err came from upstream stage; onFail routes it
+		return s.onFail, nil //nolint:nilerr,nilnil // rs.Err came from upstream stage; onFail routes it
 	}
 	return s.onOK, nil //nolint:nilnil // onOK==nil is intentional terminal signal for the last prune instance
 }

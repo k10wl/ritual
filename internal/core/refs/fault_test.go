@@ -3,10 +3,9 @@ package refs_test
 import (
 	"context"
 	"io"
-	"testing"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"testing"
 )
 
 // faultyStorage wraps a real fsBundle's storage with per-key PutStream /

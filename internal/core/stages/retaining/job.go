@@ -89,4 +89,3 @@ func NewLogsJob(label string, ret retention.Retention, storage ports.StorageRepo
 		},
 	}
 }
-

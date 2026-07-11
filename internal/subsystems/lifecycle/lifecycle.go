@@ -154,7 +154,7 @@ func Attach(parent context.Context, bus ports.EventBus, entries Entries, session
 // run is in flight.
 func (c *controller) startWith(ctx context.Context, entry machine.Strategy[ritual.RunState], flow ritual.Flow, runHooks bool, mutators ...func(*ritual.RunState)) {
 	if entry == nil {
-		c.bus.Publish(StatusChanged{Status: c.status, Err: fmt.Errorf("cannot start: gesture not configured")})
+		c.bus.Publish(StatusChanged{Status: c.status, Err: errors.New("cannot start: gesture not configured")})
 		return
 	}
 	if c.status == Running {
@@ -166,7 +166,7 @@ func (c *controller) startWith(ctx context.Context, entry machine.Strategy[ritua
 	// Announce which flow is in flight so the projection can render Download
 	// and Upload with honest, direction-specific dial beats (design-log/031).
 	c.bus.Publish(ritual.FlowStartedInfo{Flow: flow})
-	runCtx, cancel := context.WithCancel(ctx)
+	runCtx, cancel := context.WithCancel(ctx) //nolint:gosec // cancel stored in c.cancel, called by Stop/cancelRun
 	c.cancel = cancel
 
 	hostname, _ := os.Hostname()

@@ -3,15 +3,14 @@ package observed_test
 import (
 	"context"
 	"errors"
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"ritual/internal/adapters"
 	"ritual/internal/adapters/observed"
 	"ritual/internal/core/checks"
 	"ritual/internal/core/ports"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func collectEvents(bus ports.EventBus) func() []ports.Event {
@@ -31,7 +30,7 @@ func collectEvents(bus ports.EventBus) func() []ports.Event {
 	}
 }
 
-func okCheck() checks.Check  { return func(_ context.Context) error { return nil } }
+func okCheck() checks.Check { return func(_ context.Context) error { return nil } }
 func errCheck(err error) checks.Check {
 	return func(_ context.Context) error { return err }
 }

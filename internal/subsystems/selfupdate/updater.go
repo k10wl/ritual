@@ -5,10 +5,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"ritual/internal/core/ports"
 
 	"github.com/minio/selfupdate"
-
-	"ritual/internal/core/ports"
 )
 
 // Updater is the pure port impl of ports.UpdaterService (design-log/037). It

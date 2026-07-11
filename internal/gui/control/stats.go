@@ -36,10 +36,10 @@ type StorageStatFn func(ctx context.Context, prefix string) (bytes int64, count 
 // statsCache holds the last-good GetLocalStorageStats result and its
 // timestamp. Cheap mutex (sub-microsecond) on a one-shot read.
 type statsCache struct {
-	mu      sync.Mutex
-	val     LocalStorageStats
-	at      time.Time
-	hasVal  bool
+	mu     sync.Mutex
+	val    LocalStorageStats
+	at     time.Time
+	hasVal bool
 }
 
 // GetLocalStorageStats walks local objects/ and returns the total bytes +

@@ -11,8 +11,10 @@ import (
 // callers that need deterministic order rely on input order being preserved.
 type SerialRunner struct{}
 
+// NewSerialRunner returns a SerialRunner.
 func NewSerialRunner() SerialRunner { return SerialRunner{} }
 
+// Run processes items sequentially in input order, stopping at the first error.
 func (SerialRunner) Run(ctx context.Context, items []ports.BlobItem, fn func(context.Context, string) error) error {
 	for _, item := range items {
 		if err := ctx.Err(); err != nil {

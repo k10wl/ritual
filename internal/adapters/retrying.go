@@ -107,6 +107,7 @@ func (r *RetryingStorage) PutStream(ctx context.Context, key string, body io.Rea
 	})
 }
 
+// Exists reports whether key exists, retrying on transient errors.
 func (r *RetryingStorage) Exists(ctx context.Context, key string) (bool, error) {
 	var hit bool
 	err := r.runWithRetry(ctx, "exists:"+key, func() error {
@@ -117,14 +118,17 @@ func (r *RetryingStorage) Exists(ctx context.Context, key string) (bool, error) 
 	return hit, err
 }
 
+// Delete removes key, retrying on transient errors.
 func (r *RetryingStorage) Delete(ctx context.Context, key string) error {
 	return r.runWithRetry(ctx, "delete:"+key, func() error { return r.inner.Delete(ctx, key) })
 }
 
+// DeleteBatch removes all keys in one request, retrying on transient errors.
 func (r *RetryingStorage) DeleteBatch(ctx context.Context, keys []string) error {
 	return r.runWithRetry(ctx, "deletebatch", func() error { return r.inner.DeleteBatch(ctx, keys) })
 }
 
+// List returns keys matching prefix, retrying on transient errors.
 func (r *RetryingStorage) List(ctx context.Context, prefix string) ([]string, error) {
 	var keys []string
 	err := r.runWithRetry(ctx, "list:"+prefix, func() error {
@@ -135,6 +139,7 @@ func (r *RetryingStorage) List(ctx context.Context, prefix string) ([]string, er
 	return keys, err
 }
 
+// Copy copies src to dst, retrying on transient errors.
 func (r *RetryingStorage) Copy(ctx context.Context, src, dst string) error {
 	return r.runWithRetry(ctx, "copy:"+src+"->"+dst, func() error { return r.inner.Copy(ctx, src, dst) })
 }
@@ -144,7 +149,7 @@ func (r *RetryingStorage) Copy(ctx context.Context, src, dst string) error {
 // label identifies the operation in retry events for observability.
 func (r *RetryingStorage) runWithRetry(ctx context.Context, label string, op func() error) error {
 	var lastErr error
-	for attempt := 0; attempt < r.policy.MaxAttempts; attempt++ {
+	for attempt := range r.policy.MaxAttempts {
 		if attempt > 0 {
 			r.publishRetry(label, attempt, 0, lastErr)
 			if err := r.policy.Sleep(ctx, backoffFor(r.policy, attempt)); err != nil {

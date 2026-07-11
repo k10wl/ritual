@@ -1,3 +1,4 @@
+// Package running defines events published by the Running stage.
 package running
 
 import "fmt"

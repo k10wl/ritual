@@ -27,11 +27,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"ritual/internal/core/lock"
 	"sync"
 	"testing"
 	"time"
-
-	"ritual/internal/core/lock"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

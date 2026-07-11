@@ -48,6 +48,8 @@ linters:
     - whitespace       # leading/trailing in functions
 
   settings:
+    exhaustive:
+      default-signifies-exhaustive: true
     gocyclo:
       min-complexity: 15
     nestif:
@@ -100,6 +102,9 @@ linters:
           - gocyclo
           - nestif
           - revive
+          - unused    # test helpers may be defined ahead of their first test
+          - nilerr    # intentional nil-error sentinel pattern in test runners
+          - nilnil    # intentional (nil, nil) in test stubs
       # testhelpers ARE fixtures — same exemption.
       - path: internal/testhelpers/
         linters:

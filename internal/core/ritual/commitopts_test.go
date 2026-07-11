@@ -1,13 +1,12 @@
 package ritual_test
 
 import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewCommitOptsResolver_FreshCommitUsesParentRefIDAsParent(t *testing.T) {

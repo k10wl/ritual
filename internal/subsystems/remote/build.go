@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-
 	"ritual/internal/adapters"
 	"ritual/internal/config"
 	"ritual/internal/core/ports"
@@ -92,9 +91,10 @@ var bakedRemoteMode string
 const EnvRemoteMode = "RITUAL_REMOTE_MODE"
 
 // ResolveMode returns the Mode for this process. Precedence (design-log/048):
-//   1. RITUAL_REMOTE_MODE env, if set — "mock" → ModeMock, anything else → ModeR2.
-//   2. bakedRemoteMode ldflag, if "mock" → ModeMock.
-//   3. default ModeR2 — production posture per design-log/030.
+//  1. RITUAL_REMOTE_MODE env, if set — "mock" → ModeMock, anything else → ModeR2.
+//  2. bakedRemoteMode ldflag, if "mock" → ModeMock.
+//  3. default ModeR2 — production posture per design-log/030.
+//
 // Env wins over baked so an operator can override a baked-local binary back to
 // R2 (or vice-versa) without rebuilding, symmetric with the baked-creds rule.
 func ResolveMode() Mode {

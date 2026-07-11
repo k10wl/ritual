@@ -7,12 +7,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"testing"
-	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"ritual/internal/adapters"
 	"ritual/internal/adapters/observed"
 	"ritual/internal/config"
@@ -22,6 +16,11 @@ import (
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/subsystems/lifecycle"
 	"ritual/internal/subsystems/pipeline"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func (r *testRitual) attachSyncFlows(t *testing.T) {

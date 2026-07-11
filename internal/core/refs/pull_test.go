@@ -28,12 +28,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"testing"
-	"time"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/refs"
 	"ritual/internal/core/ritual"
+	"testing"
+	"time"
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/stretchr/testify/assert"
@@ -263,7 +262,7 @@ func TestPuller_IsIdempotentAcrossReruns(t *testing.T) {
 	require.NoError(t, puller.Pull(ctx, ref.Timestamp),
 		"first pull must succeed on complete remote state")
 
-	hitsBeforeRerun := remote.getHits("objects/"+hashHex("AAAA"))
+	hitsBeforeRerun := remote.getHits("objects/" + hashHex("AAAA"))
 	require.NoError(t, puller.Pull(ctx, ref.Timestamp),
 		"second pull on fully-local state must succeed — Pull is idempotent across replays")
 

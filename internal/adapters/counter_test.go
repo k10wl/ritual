@@ -137,11 +137,11 @@ func TestCounterStorage_Concurrent(t *testing.T) {
 	c := NewCounterStorage(inner, counters)
 
 	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
+	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < perWorker; i++ {
+			for range perWorker {
 				_ = c.PutStream(t.Context(), "k", bytes.NewReader(payload))
 			}
 		}()

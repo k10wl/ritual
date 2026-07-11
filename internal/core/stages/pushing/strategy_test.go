@@ -3,18 +3,17 @@ package pushing_test
 import (
 	"context"
 	"errors"
-	"testing"
-	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"ritual/internal/adapters"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pushing"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type sentinelStrategy struct {
@@ -207,7 +206,7 @@ func TestPushing_PublishesBatchLifecycleEventsOnTheBus(t *testing.T) {
 
 	deadline := time.After(time.Second)
 	var sawStart, sawFinish bool
-	for !(sawStart && sawFinish) {
+	for !sawStart || !sawFinish {
 		select {
 		case <-deadline:
 			t.Fatalf("timed out waiting for batch lifecycle events: start=%v finish=%v", sawStart, sawFinish)

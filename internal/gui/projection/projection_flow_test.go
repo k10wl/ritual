@@ -1,14 +1,13 @@
 package projection_test
 
 import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/gui/projection"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // Direction-aware dial (design-log/031 addendum): a Download is one honest

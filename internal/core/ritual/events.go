@@ -57,9 +57,13 @@ func (e ErrorInfo) String() string { return fmt.Sprintf("error %s: %v", e.Operat
 type Flow string
 
 const (
-	FlowSession      Flow = "session"
-	FlowDownload     Flow = "download"
-	FlowUpload       Flow = "upload"
+	// FlowSession is the full sync + server session flow.
+	FlowSession Flow = "session"
+	// FlowDownload pulls the latest ref into the local workdir without starting a server.
+	FlowDownload Flow = "download"
+	// FlowUpload commits and pushes the local workdir to the remote without a server session.
+	FlowUpload Flow = "upload"
+	// FlowLocalSession runs the server against the existing local workdir, skipping sync entirely.
 	FlowLocalSession Flow = "local-session"
 	// FlowRestore is the world-save rollback flow (design-log/038). It reuses
 	// the download dial beat (bytes flow in) — the projection only needs the

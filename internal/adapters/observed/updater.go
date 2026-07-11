@@ -3,12 +3,12 @@
 // bus-free and unit-testable; observability is a decorator concern. The
 // published Update* events are the single stream the dial and the on-disk log
 // both consume (design-log/037 §Q8).
+
 package observed
 
 import (
 	"context"
 	"errors"
-
 	"ritual/internal/core/ports"
 )
 

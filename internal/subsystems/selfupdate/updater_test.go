@@ -5,15 +5,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"ritual/internal/core/ports"
+	"ritual/internal/core/ports/mocks"
 	"strings"
 	"testing"
 
 	"github.com/minio/selfupdate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/core/ports"
-	"ritual/internal/core/ports/mocks"
 )
 
 func listing(keys []string, err error) *mocks.MockStorageRepository {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
@@ -112,7 +111,7 @@ func (p *Pusher) loadRef(ctx context.Context, id domain.RefID) ([]byte, *domain.
 	if err != nil {
 		return nil, nil, fmt.Errorf("push %s: load ref: %w", id, err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	raw, err := io.ReadAll(rc)
 	if err != nil {

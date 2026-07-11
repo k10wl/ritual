@@ -4,14 +4,13 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"sync"
-	"testing"
-	"time"
-
 	"ritual/internal/adapters"
 	"ritual/internal/adapters/stream"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/refs"
+	"sync"
+	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,11 +33,11 @@ func TestPuller_RecoversFromMidStreamBodyEOFOnSingleBlob(t *testing.T) {
 	flaky := []byte("FLAKY_PAYLOAD_LONG_ENOUGH_FOR_PARTIAL_READ")
 	ref := sampleRef("2026-04-22T10-00-00.000Z", map[string][]byte{
 		"worlds/level.dat": good,
-		"worlds/region/r": flaky,
+		"worlds/region/r":  flaky,
 	})
 	seedRemote(t, remote, ref, map[string][]byte{
 		"worlds/level.dat": good,
-		"worlds/region/r": flaky,
+		"worlds/region/r":  flaky,
 	})
 
 	flakyKey := "objects/" + hashHex(string(flaky))

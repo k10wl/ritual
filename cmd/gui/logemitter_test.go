@@ -66,7 +66,7 @@ func TestBatchingEmitter_CoalescesBurstInOrder(t *testing.T) {
 	go e.loop(ctx)
 
 	const n = 1000
-	for i := 0; i < n; i++ {
+	for i := range n {
 		e.Emit(line("L" + itoa(i)))
 	}
 
@@ -74,7 +74,7 @@ func TestBatchingEmitter_CoalescesBurstInOrder(t *testing.T) {
 		2*time.Second, 5*time.Millisecond, "all lines must drain")
 
 	got := sink.lines()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.Equal(t, "L"+itoa(i), got[i].Text, "order must be preserved across batches")
 	}
 	assert.Zero(t, sink.dropped(), "1000 lines is well under capacity — no drops expected")
@@ -104,7 +104,7 @@ func TestBatchingEmitter_IdleQuiescence(t *testing.T) {
 func TestBatchingEmitter_OverflowReportsDropped(t *testing.T) {
 	e := newBatchingLogEmitter() // no loop running ⇒ ring fills, nothing drains
 	const over = 1100            // capacity 1024
-	for i := 0; i < over; i++ {
+	for i := range over {
 		e.Emit(line("L" + itoa(i)))
 	}
 

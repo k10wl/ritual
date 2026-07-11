@@ -13,7 +13,6 @@ package draining
 
 import (
 	"context"
-
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"

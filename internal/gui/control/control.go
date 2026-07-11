@@ -157,7 +157,7 @@ func NewLocalDirtyProber(localHead pulling.HeadResolver, readRef RefReader, scan
 func objectsToEntries(objs map[string]domain.Object) map[string]domain.FileEntry {
 	out := make(map[string]domain.FileEntry, len(objs))
 	for path, o := range objs {
-		out[path] = domain.FileEntry{Hash: o.Hash, Size: o.Size}
+		out[path] = domain.FileEntry(o)
 	}
 	return out
 }

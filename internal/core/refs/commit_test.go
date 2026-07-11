@@ -32,13 +32,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"testing"
-	"time"
-
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/refs"
+	"testing"
+	"time"
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/stretchr/testify/assert"

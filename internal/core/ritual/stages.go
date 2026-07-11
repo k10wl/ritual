@@ -3,8 +3,8 @@ package ritual
 // Stage names used in events and logs. Kept as plain strings so they
 // survive JSON round-trip without type noise.
 const (
-	StageChecking   = "Checking"
-	StagePulling    = "Pulling"
+	StageChecking = "Checking"
+	StagePulling  = "Pulling"
 	// StageProbing is the head-only sibling of Pulling used by the Upload
 	// flow (design-log/031): it resolves the remote HEAD ref id object-free
 	// (no blob download, no workdir apply) so the fresh commit can parent on

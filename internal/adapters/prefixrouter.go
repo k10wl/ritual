@@ -38,22 +38,27 @@ func (r *PrefixRouter) pick(key string) ports.StorageRepository {
 	return r.fallback
 }
 
+// GetStream routes to the appropriate backend and returns the object stream.
 func (r *PrefixRouter) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
 	return r.pick(key).GetStream(ctx, key)
 }
 
+// PutStream routes to the appropriate backend and writes body under key.
 func (r *PrefixRouter) PutStream(ctx context.Context, key string, body io.Reader) error {
 	return r.pick(key).PutStream(ctx, key, body)
 }
 
+// Exists routes to the appropriate backend and reports whether key is present.
 func (r *PrefixRouter) Exists(ctx context.Context, key string) (bool, error) {
 	return r.pick(key).Exists(ctx, key)
 }
 
+// Delete routes to the appropriate backend and removes key.
 func (r *PrefixRouter) Delete(ctx context.Context, key string) error {
 	return r.pick(key).Delete(ctx, key)
 }
 
+// DeleteBatch splits keys by prefix, dispatching each subset to the correct backend.
 func (r *PrefixRouter) DeleteBatch(ctx context.Context, keys []string) error {
 	routed, fallback := splitByPrefix(keys, r.prefix)
 	if len(routed) > 0 {
@@ -69,6 +74,7 @@ func (r *PrefixRouter) DeleteBatch(ctx context.Context, keys []string) error {
 	return nil
 }
 
+// List returns keys matching prefix from whichever backend(s) cover it.
 func (r *PrefixRouter) List(ctx context.Context, prefix string) ([]string, error) {
 	if strings.HasPrefix(prefix, r.prefix) {
 		return r.routed.List(ctx, prefix)
@@ -87,6 +93,7 @@ func (r *PrefixRouter) List(ctx context.Context, prefix string) ([]string, error
 	return r.fallback.List(ctx, prefix)
 }
 
+// Copy copies an object, routing each key to its respective backend and streaming cross-backend if needed.
 func (r *PrefixRouter) Copy(ctx context.Context, sourceKey, destKey string) error {
 	src := r.pick(sourceKey)
 	dst := r.pick(destKey)

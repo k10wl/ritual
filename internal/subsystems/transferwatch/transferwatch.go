@@ -8,7 +8,6 @@ package transferwatch
 
 import (
 	"context"
-
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pulling"

@@ -2,7 +2,6 @@ package control
 
 import (
 	"fmt"
-
 	"ritual/internal/core/domain"
 )
 

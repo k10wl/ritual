@@ -97,7 +97,7 @@ func TestBlockingEventBus_DropsNothingUnderBackpressure(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for i := 0; i < n; i++ {
+		for range n {
 			bus.Publish(ritual.StartInfo{Operation: "x"})
 		}
 	}()
@@ -120,7 +120,7 @@ func TestEventBus_DropsEventsWhenSubscriberBufferFull(t *testing.T) {
 	_, cancel := bus.Subscribe()
 	defer cancel()
 
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		bus.Publish(ritual.StartInfo{Operation: "x"})
 	}
 }

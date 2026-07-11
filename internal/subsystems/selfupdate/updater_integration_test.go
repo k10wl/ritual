@@ -7,15 +7,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"ritual/internal/core/ports"
+	"ritual/internal/core/ports/mocks"
 	"strings"
 	"testing"
 
 	"github.com/minio/selfupdate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/core/ports"
-	"ritual/internal/core/ports/mocks"
 )
 
 // These exercise the REAL github.com/minio/selfupdate.Apply — atomic replace +

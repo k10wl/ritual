@@ -26,7 +26,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-
 	"ritual/internal/adapters"
 	"ritual/internal/config"
 	"ritual/internal/core/ports"

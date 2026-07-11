@@ -178,11 +178,11 @@ func TestCompressingStorage_Concurrent(t *testing.T) {
 
 	errs := make(chan error, len(payloads))
 	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
+	for w := range workers {
 		wg.Add(1)
 		go func(base int) {
 			defer wg.Done()
-			for k := 0; k < perWorker; k++ {
+			for k := range perWorker {
 				idx := base*perWorker + k
 				if err := dec.PutStream(t.Context(), keys[idx], bytes.NewReader(payloads[idx])); err != nil {
 					errs <- err
@@ -313,11 +313,11 @@ func TestCompressingStorage_ConcurrentPull(t *testing.T) {
 	const workers = 8
 	errs := make(chan error, blobs*workers)
 	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
+	for w := range workers {
 		wg.Add(1)
 		go func(base int) {
 			defer wg.Done()
-			for i := 0; i < blobs; i++ {
+			for i := range blobs {
 				idx := (base + i) % blobs
 				rc, err := dec.GetStream(t.Context(), keys[idx])
 				if err != nil {
@@ -365,11 +365,11 @@ func TestCompressingStorage_ConcurrentPushPull(t *testing.T) {
 	errs := make(chan error, (pushers+pullers)*perWorker)
 	var wg sync.WaitGroup
 
-	for w := 0; w < pushers; w++ {
+	for w := range pushers {
 		wg.Add(1)
 		go func(base int) {
 			defer wg.Done()
-			for i := 0; i < perWorker; i++ {
+			for i := range perWorker {
 				p := bytes.Repeat([]byte(fmt.Sprintf("push-%d-%d-", base, i)), 150)
 				k := keyFor(p)
 				if err := dec.PutStream(t.Context(), k, bytes.NewReader(p)); err != nil {
@@ -394,11 +394,11 @@ func TestCompressingStorage_ConcurrentPushPull(t *testing.T) {
 		}(w)
 	}
 
-	for w := 0; w < pullers; w++ {
+	for w := range pullers {
 		wg.Add(1)
 		go func(base int) {
 			defer wg.Done()
-			for i := 0; i < perWorker; i++ {
+			for i := range perWorker {
 				idx := (base*perWorker + i) % seed
 				rc, err := dec.GetStream(t.Context(), seededKeys[idx])
 				if err != nil {
@@ -448,7 +448,7 @@ func TestCompressingStorage_EncoderPoolNoSerialization(t *testing.T) {
 	start := time.Now()
 	errs := make(chan error, N)
 	var wg sync.WaitGroup
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

@@ -5,9 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
-
 	"ritual/internal/core/ports"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -124,7 +123,7 @@ func (l *Locker) Inspect(ctx context.Context) (*Holder, error) {
 		return nil, err
 	}
 	if !found {
-		return nil, nil
+		return nil, nil //nolint:nilnil // (nil, nil) is the documented "not held" sentinel for this method
 	}
 	return &Holder{
 		Owner:       current.Owner,
@@ -152,7 +151,7 @@ func (l *Locker) read(ctx context.Context) (*payload, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("lock: read: %w", err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	var p payload
 	if err := json.NewDecoder(body).Decode(&p); err != nil {
 		return nil, false, fmt.Errorf("lock: decode: %w", err)

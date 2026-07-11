@@ -3,14 +3,13 @@ package control_test
 import (
 	"context"
 	"errors"
+	"ritual/internal/adapters"
+	"ritual/internal/core/domain"
+	"ritual/internal/gui/control"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/adapters"
-	"ritual/internal/core/domain"
-	"ritual/internal/gui/control"
 )
 
 // Backend contract for the 045 post-ship remote-delete extension (user

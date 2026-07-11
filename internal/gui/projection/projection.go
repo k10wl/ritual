@@ -3,8 +3,6 @@ package projection
 import (
 	"context"
 	"errors"
-	"time"
-
 	"ritual/internal/adapters/observed"
 	"ritual/internal/adapters/progress"
 	"ritual/internal/core/ports"
@@ -13,6 +11,7 @@ import (
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/subsystems/lifecycle"
+	"time"
 )
 
 // Emitter receives a snapshot after every fold that changes the ViewModel.
@@ -175,7 +174,6 @@ func (p *Projection) fold(evt ports.Event) bool {
 	}
 	return true
 }
-
 
 // foldUpdate folds the observed.Update* stream into the gray Preflight dial
 // (design-log/037). Split out of fold so each stays under the complexity
@@ -370,6 +368,8 @@ func (p *Projection) onStateChanged(to string) {
 			p.state.Phase = PhasePreparing
 			return
 		}
+	case ritual.FlowSession, ritual.FlowRestore, ritual.FlowRevert, ritual.FlowRetentionApply:
+		// No flow-specific stage overrides; fall through to the stage-based switch below.
 	}
 	switch to {
 	case ritual.StageChecking, ritual.StagePulling:

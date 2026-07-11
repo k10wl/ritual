@@ -54,8 +54,8 @@ func TestSettingsValidate_AcceptsFullyPopulatedSettings(t *testing.T) {
 
 func TestSettingsValidate_RejectsInvalidPortAndMemory(t *testing.T) {
 	tests := []struct {
-		name     string
-		mutate   func(*Settings)
+		name   string
+		mutate func(*Settings)
 	}{
 		{"zero port", func(s *Settings) { s.Port = 0 }},
 		{"negative port", func(s *Settings) { s.Port = -1 }},

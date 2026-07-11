@@ -2,12 +2,11 @@ package checks_test
 
 import (
 	"errors"
+	"ritual/internal/core/checks"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"ritual/internal/core/checks"
 )
 
 type fakeSysInfo struct {

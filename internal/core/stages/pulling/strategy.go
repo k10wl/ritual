@@ -10,7 +10,6 @@ package pulling
 import (
 	"context"
 	"errors"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"

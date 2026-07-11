@@ -17,13 +17,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
-	"testing"
-	"time"
-
 	"ritual/internal/core/domain"
 	"ritual/internal/core/refs"
 	"ritual/internal/core/ritual"
+	"strings"
+	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -234,7 +233,7 @@ func TestPusher_IsIdempotentAcrossReruns(t *testing.T) {
 	require.NoError(t, pusher.Push(ctx, ref.Timestamp),
 		"first push on empty remote must succeed")
 
-	blobPutsAfterFirst := remote.putHits("objects/"+hashHex("AAAA"))
+	blobPutsAfterFirst := remote.putHits("objects/" + hashHex("AAAA"))
 	require.NoError(t, pusher.Push(ctx, ref.Timestamp),
 		"second push on fully-populated remote must succeed — §Push atomicity: idempotent stage replay")
 

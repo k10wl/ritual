@@ -34,6 +34,7 @@ func NewParallelRunner(limit int) *ParallelRunner {
 	return &ParallelRunner{limit: limit}
 }
 
+// Run dispatches fn over items in weight-descending order using a bounded goroutine pool.
 func (p *ParallelRunner) Run(ctx context.Context, items []ports.BlobItem, fn func(context.Context, string) error) error {
 	if len(items) == 0 {
 		return nil
