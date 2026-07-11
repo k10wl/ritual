@@ -156,9 +156,14 @@ tasks:
       - RITUAL_ENV=prod task gui:_package
 
   publish:dev:
+    desc: Alias for publish:dev:remote (R2 publish; back-compat).
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE= task _publish
+
+  publish:dev:remote:
     desc: Test + lint + build the dev-variant binary, then publish it to the dev R2 channel.
     cmds:
-      - RITUAL_ENV=dev task _publish
+      - RITUAL_ENV=dev REMOTE_MODE= task _publish
 
   publish:prod:
     desc: Test + lint + build the prod-variant binary, then publish it to the prod R2 channel.
@@ -227,7 +232,7 @@ tasks:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 
   _publish:
-    desc: "(private — use publish:dev, publish:prod, or publish:dev:local)"
+    desc: "(private — use publish:dev:remote, publish:dev:local, or publish:prod)"
     cmds:
       # Gate the deploy on green tests + lint — a failing step aborts before
       # cmd/publish runs, so nothing red ever reaches R2. Build runs last so the
