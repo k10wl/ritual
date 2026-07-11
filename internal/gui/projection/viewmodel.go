@@ -4,6 +4,8 @@
 // accumulator. The projection has no Wails dependency.
 package projection
 
+import "fmt"
+
 // Stage is the coarse UI bucket the dial colour reads from. Values map to
 // the four 007-defined dial colours (plus locked + failed overlays).
 //
@@ -131,4 +133,17 @@ type ViewModel struct {
 	// reads as live-but-waiting rather than a dead-frozen dial. False once bytes
 	// resume, at completion, and outside the transfer stages. Design-log/022 #2.
 	Stalled bool `json:"stalled"`
+}
+
+// Snap is published to the EventBus after every ViewModel change so
+// subscribers (e.g. the file logger) can record the computed GUI state —
+// EtaSeconds in particular is not visible in the raw progress.Tick events.
+type Snap struct{ ViewModel }
+
+func (s Snap) String() string {
+	vm := s.ViewModel
+	return fmt.Sprintf(
+		"[snap] stage=%s phase=%s eta=%ds done=%d/%d speed=%.2fMbps stalled=%v",
+		vm.Stage, vm.Phase, vm.EtaSeconds, vm.BytesDone, vm.BytesTotal, vm.SpeedMbps, vm.Stalled,
+	)
 }
