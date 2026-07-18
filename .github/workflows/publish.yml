@@ -40,10 +40,13 @@ jobs:
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74
 
       - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-          install-only: true
+        # go install, not golangci-lint-action: that action has no real
+        # "install only, don't run" input (a prior "install-only: true" here
+        # was silently ignored) and its "latest" resolved to a v1.x binary
+        # that can't parse this repo's .golangci.yml (config schema
+        # `version: "2"`) or its go 1.26.2 toolchain directive. `task lint`
+        # (inside `task publish:*`) is what actually runs lint.
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
       - name: Write .env.dev.local
         shell: pwsh
@@ -93,10 +96,13 @@ jobs:
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74
 
       - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-          install-only: true
+        # go install, not golangci-lint-action: that action has no real
+        # "install only, don't run" input (a prior "install-only: true" here
+        # was silently ignored) and its "latest" resolved to a v1.x binary
+        # that can't parse this repo's .golangci.yml (config schema
+        # `version: "2"`) or its go 1.26.2 toolchain directive. `task lint`
+        # (inside `task publish:*`) is what actually runs lint.
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
       - name: Write .env.prod.local
         shell: pwsh
