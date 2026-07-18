@@ -217,6 +217,29 @@ func TestProjection_StatusFailed_FlipsStageAndPhaseToFailedWithErrorText(t *test
 	assert.Equal(t, "remote storage exploded", final.ErrorText, "ErrorText must carry err.Error() verbatim — design-log/017 fail-copy lives entirely in the frontend, but the underlying error string is still useful for power-user log surfaces")
 }
 
+func TestProjection_StatusFailed_ResetsStaleTransferFields(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(ritual.PlanInfo{Operation: "pull", BytesTotal: 1_000_000, FilesTotal: 10})
+		bus.Publish(progress.Tick{Remote: progress.Side{Down: progress.Stream{Data: 999_000}}})
+		bus.Publish(lifecycle.StatusChanged{Status: lifecycle.Failed, Err: errors.New("connection reset")})
+	})
+	final := last(vms)
+	// A retry can fire straight from Failed without going through Dismissed
+	// (lifecycle.start only rejects a second Start while already Running),
+	// and StatusChanged{Running} folds to a no-op — so any of these left
+	// over from the failed attempt would otherwise haunt the next one until
+	// its own PlanInfo arrives, reading "Almost done" on a sync that just
+	// started.
+	assert.Zero(t, final.BytesDone, "Failed must zero BytesDone so a near-complete failed transfer doesn't haunt the next attempt as false progress")
+	assert.Zero(t, final.BytesTotal, "Failed must zero BytesTotal so the next attempt's own PlanInfo is the only source of the denominator")
+	assert.Zero(t, final.FilesDone, "Failed must zero FilesDone alongside BytesDone")
+	assert.Zero(t, final.FilesTotal, "Failed must zero FilesTotal alongside BytesTotal")
+	assert.Zero(t, final.Progress, "Failed must zero Progress so the dial doesn't render a stale percentage")
+	assert.Zero(t, final.EtaSeconds, "Failed must zero EtaSeconds so a stale near-zero estimate can't read as \"almost done\"")
+	assert.Equal(t, "connection reset", final.ErrorText, "ErrorText must still survive the reset — it's the whole point of Failed")
+}
+
 func TestProjection_StatusDone_ResetsToIdle(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StageRunning})

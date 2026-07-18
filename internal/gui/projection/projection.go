@@ -404,6 +404,14 @@ func (p *Projection) onStateChanged(to string) {
 // Done resets to a clean Idle. Lock-held state survives a subsequent Failed
 // because lifecycle resolves an acquisition-conflict as Failed even though
 // the UI must stay on the friendly "someone is playing" screen.
+//
+// Failed is terminal but NOT gated behind Dismissed before a fresh Start can
+// fire (lifecycle.start only rejects a second Start while already Running;
+// Running itself is a no-op here) — so BytesDone/BytesTotal/Progress/etc.
+// must be zeroed on Failed too, exactly like Idle/Done/Dismissed, or a retry
+// right after a failure inherits stale near-100% numbers and the dial reads
+// "Almost done" through the entire Checking/Probing/Acquiring/Committing
+// prefix of the new attempt, before its own PlanInfo ever arrives.
 func (p *Projection) onStatusChanged(e lifecycle.StatusChanged) {
 	switch e.Status {
 	case lifecycle.Idle, lifecycle.Done, lifecycle.Dismissed:
@@ -412,11 +420,20 @@ func (p *Projection) onStatusChanged(e lifecycle.StatusChanged) {
 		p.pipelineStage = ""
 		p.activeFlow = ritual.FlowSession
 	case lifecycle.Failed:
-		p.state.Stage = StageFailed
-		p.state.Phase = PhaseFailed
+		lockHolder := p.state.LockHolder
+		errText := ""
 		if e.Err != nil {
-			p.state.ErrorText = e.Err.Error()
+			errText = e.Err.Error()
 		}
+		p.state = ViewModel{
+			Stage:      StageFailed,
+			Phase:      PhaseFailed,
+			ErrorText:  errText,
+			LockHolder: lockHolder,
+		}
+		p.everReady = false
+		p.pipelineStage = ""
+		p.activeFlow = ritual.FlowSession
 	case lifecycle.Running:
 	}
 }
