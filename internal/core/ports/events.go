@@ -1,50 +1,22 @@
 package ports
 
-// Event is the sealed interface for all event types
-type Event interface {
-	sealed()
-}
+import "fmt"
 
-// StartEvent signals the beginning of an operation
-type StartEvent struct {
-	Operation string
-}
-
-// UpdateEvent provides progress or status information during an operation
-type UpdateEvent struct {
-	Operation string
-	Message   string
-	Data      map[string]any
-}
-
-// FinishEvent signals the successful completion of an operation
-type FinishEvent struct {
-	Operation string
-}
-
-// ErrorEvent signals an error during an operation
-type ErrorEvent struct {
-	Operation string
-	Err       error
-}
-
-// PromptEvent requests user input
-type PromptEvent struct {
-	ID           string
-	Prompt       string
-	DefaultValue string
-	ResponseChan chan<- any
-}
-
-func (StartEvent) sealed()  {}
-func (UpdateEvent) sealed() {}
-func (FinishEvent) sealed() {}
-func (ErrorEvent) sealed()  {}
-func (PromptEvent) sealed() {}
-
-// SendEvent safely sends an event to the channel if it's not nil
-func SendEvent(events chan<- Event, evt Event) {
-	if events != nil {
-		events <- evt
-	}
-}
+// Event is any fmt.Stringer. Open set, self-describing, compile-safe.
+//
+// Concrete event types live next to the package that emits them — e.g.
+// server lifecycle in core/stages/running, refs progress in adapters/observed,
+// lock/state in core/ritual, retry/readiness in adapters. See ports.EventBus
+// for subscription mechanics.
+//
+// Conventions:
+//   - Use ritual.UpdateInfo{Operation, Message, Data} for generic progress;
+//     only define a new type when you have unique structured fields.
+//   - Throttle high-frequency publishes at the call site — slow subscribers
+//     drop, and console floods are unfriendly.
+//   - Namespace event names if defined outside core (e.g. gui.ScreenChangedInfo).
+//   - Per-subscriber FIFO is preserved; cross-subscriber order is not.
+//   - Bus delivery is non-blocking and observability-grade. For durable record
+//     (audit, billing), attach a file-writing subscriber — out of scope here,
+//     trivial when needed.
+type Event = fmt.Stringer

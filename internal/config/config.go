@@ -1,16 +1,18 @@
+// Package config defines build-time and runtime configuration for the app.
 package config
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Version info (single source of truth)
 const (
-	VersionMajor = 1
-	VersionMinor = 3
-	VersionPatch = 5
+	VersionMajor = 2
+	VersionMinor = 0
+	VersionPatch = 1
 )
 
 // Application identity
@@ -20,39 +22,79 @@ const (
 	Description = "Ritual - Minecraft Server Manager"
 )
 
-// AppName is injected at build time via ldflags (ritualdev or ritual)
+// AppName identifies the build variant: "ritualdev" for the dev iteration
+// build, "ritual" for the production release. Set via -ldflags
+// -X ritual/internal/config.AppName=<name> by build/windows/Taskfile.yml
+// based on RITUAL_ENV. Drives RootPath (~/<GroupName>/<AppName>) so the two
+// variants never share on-disk state, and DisplayName() so the window title
+// telegraphs which variant is running.
 var AppName = "ritualdev"
 
+// AppVersion is the semver string derived from VersionMajor/Minor/Patch.
 var AppVersion string
+
+// DisplayName returns the user-visible product name. Dev builds get a " Dev"
+// suffix so the window title and OS taskbar entry are distinguishable from
+// the production release at a glance — mirrors the .syso ProductName written
+// by cmd/genversioninfo -dev.
+func DisplayName() string {
+	if AppName == "ritualdev" {
+		return ProductName + " Dev"
+	}
+	return ProductName
+}
 
 // Directory names
 const (
-	LocalBackups  = "world_backups"
-	RemoteBackups = "worlds"
-	InstanceDir   = "instance"
-	TmpDir        = "temp"
-	LogsDir       = "logs"
+	ServerDir = "server"
+	WorldsDir = "worlds"
+	TmpDir    = "temp"
+	LogsDir   = "logs"
 )
+
+// DefaultCommitTargets is the production allowlist of doublestar globs
+// passed to refs.Committer when the workdir is the project root. It scopes
+// what a commit captures and — via Apply — what a pull is allowed to
+// prune. Operational dirs (refs/, objects/, logs/, remote-mock/), the
+// settings file, and host-local server caches are deliberately absent so
+// they never enter the ref or get destroyed by a downstream Apply.
+//
+// Origin: docs/dev-session-2026-04-25-poc-setup.md audit fix #8 — pre-fix
+// targets=[]string{"**"} with workdir=worlds/ tracked nothing under
+// server/, so a fresh host could not pull-and-run.
+//
+// Editing this list is a behavioural change. Read the audit doc + run
+// the regression test in internal/core/refs/commit_test.go before
+// extending the scope.
+var DefaultCommitTargets = []string{
+	"worlds/**",
+	"server/server.jar",
+	"server/server.properties",
+	"server/eula.txt",
+	"server/start.bat",
+	"server/user_jvm_args.txt",
+	"server/libraries/**",
+	"server/mods/**",
+	"server/config/**",
+	"server/defaultconfigs/**",
+	"server/ops.json",
+	"server/whitelist.json",
+	"server/banned-*.json",
+}
 
 // File names and keys
 const (
-	ManifestFilename    = "manifest.json"
-	InstanceArchiveKey  = "instance.tar"
-	RemoteBinaryKey     = "ritual.exe"
-	ManualWorldFilename = "manual.tar"
-	ServerJarFilename   = "paper.jar"
-	ServerLogFilename   = "server.log"
+	ManifestFilename  = "manifest.json"
+	ServerJarFilename = "paper.jar"
+	ServerLogFilename = "server.log"
 )
 
 // Backup configuration
 const (
-	R2MaxBackups    = 2
-	LocalMaxBackups = 2
-	MaxFiles        = 1000
-	MaxLogFiles     = 10
+	MaxFiles    = 1000
+	MaxLogFiles = 10
 
 	TimestampFormat = "20060102150405"
-	BackupExtension = ".tar"
 	LogExtension    = ".log"
 )
 
@@ -63,32 +105,32 @@ const (
 	DefaultMinJavaVersion = 21
 )
 
-// Update process flags
+// Lease defaults — applied by Manifest.ApplyDefaults when absent on decode.
 const (
-	ReplaceFlag = "--replace-old"
-	CleanupFlag = "--cleanup-update"
+	DefaultHeartbeatInterval = 5 * time.Minute
+	DefaultLeaseTTL          = 21 * time.Minute
 )
 
-// Update process timing
+// Self-update lives in internal/subsystems/selfupdate now (design-log/037):
+// the old CLI-era --replace-old/--cleanup-update process dance + update_*.exe
+// temp files are gone, replaced by minio/selfupdate's in-process atomic
+// rename and the bin/<os-arch>/<version>/<sha> layout.
+
+// Sync staging patterns
 const (
-	UpdateProcessDelayMs = 500
+	TempRitualDir      = "ritual"
+	SyncStagingPattern = "sync_%d"
+	SyncStagingGlob    = "sync_*"
 )
 
-// Update file patterns
-const (
-	UpdateFilePattern = "ritual_update_%d.exe"
-	UpdateFileGlob    = "ritual_update_*.exe"
-)
+// TempRitualPath returns the OS temp directory joined with TempRitualDir.
+func TempRitualPath() string {
+	return filepath.Join(os.TempDir(), TempRitualDir)
+}
 
 // Lock ID format
 const (
 	LockIDSeparator = "::"
-)
-
-// S3/R2 configuration
-const (
-	S3PartSize    = 5 * 1024 * 1024 // 5 MB parts for multipart upload
-	S3Concurrency = 1               // Sequential upload to minimize memory
 )
 
 // R2 endpoint format
@@ -98,10 +140,11 @@ const (
 
 // File permissions
 const (
-	DirPermission  = 0755
-	FilePermission = 0644
+	DirPermission  = 0o755
+	FilePermission = 0o644
 )
 
+// RootPath is the absolute on-disk working root, computed at init from UserHomeDir.
 var RootPath string
 
 func init() {

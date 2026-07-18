@@ -1,0 +1,52 @@
+/* Minimal cross-engine reset. Adopted into every rune-* primitive's shadow
+   root via src/ui/primitives/_base.ts (Constructable stylesheet). Document
+   tokens flow through :host inheritance — no token import needed here.
+   Both standard + -webkit- properties carried for WKWebView (macOS/Linux
+   Wails). */
+
+@layer reset {
+    *, *::before, *::after { box-sizing: border-box; }
+    * { margin: 0; }
+
+    :host { display: block; }
+
+    button, input, select, textarea {
+        font: inherit;
+        color: inherit;
+        -webkit-appearance: none;
+        appearance: none;
+        background: none;
+        border: none;
+        padding: 0;
+    }
+
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+    input[type="number"] {
+        -moz-appearance: textfield;
+    }
+
+    * {
+        user-select: none;
+        -webkit-user-select: none;
+    }
+    input, textarea {
+        user-select: text;
+        -webkit-user-select: text;
+    }
+
+    :focus-visible {
+        outline: var(--focus-ring-width) solid var(--focus-ring);
+        outline-offset: var(--focus-ring-offset);
+    }
+    :focus:not(:focus-visible) { outline: none; }
+
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-thumb { background: var(--stone-edge); border-radius: var(--radius-sm); }
+    ::-webkit-scrollbar-thumb:hover { background: var(--rune-soft); }
+    ::-webkit-scrollbar-track { background: transparent; }
+    * { scrollbar-width: thin; scrollbar-color: var(--stone-edge) transparent; }
+}

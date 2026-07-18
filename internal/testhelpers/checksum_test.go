@@ -22,7 +22,7 @@ func TestHashDir(t *testing.T) {
 		tempDir := t.TempDir()
 		testFile := filepath.Join(tempDir, "test.txt")
 
-		err := os.WriteFile(testFile, []byte("hello world"), 0644)
+		err := os.WriteFile(testFile, []byte("hello world"), 0o644)
 		assert.NoError(t, err)
 
 		hash, err := testhelpers.HashDir(tempDir)
@@ -41,7 +41,7 @@ func TestHashDir(t *testing.T) {
 
 		for filename, content := range files {
 			filePath := filepath.Join(tempDir, filename)
-			err := os.WriteFile(filePath, []byte(content), 0644)
+			err := os.WriteFile(filePath, []byte(content), 0o644)
 			assert.NoError(t, err)
 		}
 
@@ -54,15 +54,15 @@ func TestHashDir(t *testing.T) {
 		tempDir := t.TempDir()
 
 		subDir := filepath.Join(tempDir, "subdir")
-		err := os.Mkdir(subDir, 0755)
+		err := os.Mkdir(subDir, 0o755)
 		assert.NoError(t, err)
 
 		nestedFile := filepath.Join(subDir, "nested.txt")
-		err = os.WriteFile(nestedFile, []byte("nested content"), 0644)
+		err = os.WriteFile(nestedFile, []byte("nested content"), 0o644)
 		assert.NoError(t, err)
 
 		rootFile := filepath.Join(tempDir, "root.txt")
-		err = os.WriteFile(rootFile, []byte("root content"), 0644)
+		err = os.WriteFile(rootFile, []byte("root content"), 0o644)
 		assert.NoError(t, err)
 
 		hash, err := testhelpers.HashDir(tempDir)
@@ -74,7 +74,7 @@ func TestHashDir(t *testing.T) {
 		tempDir := t.TempDir()
 		testFile := filepath.Join(tempDir, "test.txt")
 
-		err := os.WriteFile(testFile, []byte("same content"), 0644)
+		err := os.WriteFile(testFile, []byte("same content"), 0o644)
 		assert.NoError(t, err)
 
 		hash1, err := testhelpers.HashDir(tempDir)
@@ -90,10 +90,10 @@ func TestHashDir(t *testing.T) {
 		tempDir1 := t.TempDir()
 		tempDir2 := t.TempDir()
 
-		err := os.WriteFile(filepath.Join(tempDir1, "file.txt"), []byte("content1"), 0644)
+		err := os.WriteFile(filepath.Join(tempDir1, "file.txt"), []byte("content1"), 0o644)
 		assert.NoError(t, err)
 
-		err = os.WriteFile(filepath.Join(tempDir2, "file.txt"), []byte("content2"), 0644)
+		err = os.WriteFile(filepath.Join(tempDir2, "file.txt"), []byte("content2"), 0o644)
 		assert.NoError(t, err)
 
 		hash1, err := testhelpers.HashDir(tempDir1)
@@ -110,7 +110,7 @@ func TestHashDirs(t *testing.T) {
 	t.Run("single directory", func(t *testing.T) {
 		tempDir := t.TempDir()
 
-		err := os.WriteFile(filepath.Join(tempDir, "test.txt"), []byte("content"), 0644)
+		err := os.WriteFile(filepath.Join(tempDir, "test.txt"), []byte("content"), 0o644)
 		assert.NoError(t, err)
 
 		hash, err := testhelpers.HashDirs(tempDir)
@@ -122,10 +122,10 @@ func TestHashDirs(t *testing.T) {
 		tempDir1 := t.TempDir()
 		tempDir2 := t.TempDir()
 
-		err := os.WriteFile(filepath.Join(tempDir1, "file1.txt"), []byte("content1"), 0644)
+		err := os.WriteFile(filepath.Join(tempDir1, "file1.txt"), []byte("content1"), 0o644)
 		assert.NoError(t, err)
 
-		err = os.WriteFile(filepath.Join(tempDir2, "file2.txt"), []byte("content2"), 0644)
+		err = os.WriteFile(filepath.Join(tempDir2, "file2.txt"), []byte("content2"), 0o644)
 		assert.NoError(t, err)
 
 		hash, err := testhelpers.HashDirs(tempDir1, tempDir2)
@@ -137,10 +137,10 @@ func TestHashDirs(t *testing.T) {
 		tempDir1 := t.TempDir()
 		tempDir2 := t.TempDir()
 
-		err := os.WriteFile(filepath.Join(tempDir1, "file.txt"), []byte("content1"), 0644)
+		err := os.WriteFile(filepath.Join(tempDir1, "file.txt"), []byte("content1"), 0o644)
 		assert.NoError(t, err)
 
-		err = os.WriteFile(filepath.Join(tempDir2, "file.txt"), []byte("content2"), 0644)
+		err = os.WriteFile(filepath.Join(tempDir2, "file.txt"), []byte("content2"), 0o644)
 		assert.NoError(t, err)
 
 		hash1, err := testhelpers.HashDirs(tempDir1, tempDir2)
@@ -156,10 +156,10 @@ func TestHashDirs(t *testing.T) {
 		tempDir1 := t.TempDir()
 		tempDir2 := t.TempDir()
 
-		err := os.WriteFile(filepath.Join(tempDir1, "file.txt"), []byte("content1"), 0644)
+		err := os.WriteFile(filepath.Join(tempDir1, "file.txt"), []byte("content1"), 0o644)
 		assert.NoError(t, err)
 
-		err = os.WriteFile(filepath.Join(tempDir2, "file.txt"), []byte("content2"), 0644)
+		err = os.WriteFile(filepath.Join(tempDir2, "file.txt"), []byte("content2"), 0o644)
 		assert.NoError(t, err)
 
 		hash1, err := testhelpers.HashDirs(tempDir1, tempDir2)
@@ -183,9 +183,9 @@ func TestCheckDirs(t *testing.T) {
 		}
 
 		for filename, content := range files {
-			err := os.WriteFile(filepath.Join(tempDir1, filename), []byte(content), 0644)
+			err := os.WriteFile(filepath.Join(tempDir1, filename), []byte(content), 0o644)
 			assert.NoError(t, err)
-			err = os.WriteFile(filepath.Join(tempDir2, filename), []byte(content), 0644)
+			err = os.WriteFile(filepath.Join(tempDir2, filename), []byte(content), 0o644)
 			assert.NoError(t, err)
 		}
 
@@ -201,10 +201,10 @@ func TestCheckDirs(t *testing.T) {
 		tempDir1 := t.TempDir()
 		tempDir2 := t.TempDir()
 
-		err := os.WriteFile(filepath.Join(tempDir1, "file.txt"), []byte("content1"), 0644)
+		err := os.WriteFile(filepath.Join(tempDir1, "file.txt"), []byte("content1"), 0o644)
 		assert.NoError(t, err)
 
-		err = os.WriteFile(filepath.Join(tempDir2, "file.txt"), []byte("content2"), 0644)
+		err = os.WriteFile(filepath.Join(tempDir2, "file.txt"), []byte("content2"), 0o644)
 		assert.NoError(t, err)
 
 		match, err := testhelpers.CheckDirs(testhelpers.DirPair{
@@ -222,14 +222,14 @@ func TestCheckDirs(t *testing.T) {
 		tempDir2b := t.TempDir()
 
 		// Create identical content across pairs
-		err := os.WriteFile(filepath.Join(tempDir1a, "file.txt"), []byte("contentA"), 0644)
+		err := os.WriteFile(filepath.Join(tempDir1a, "file.txt"), []byte("contentA"), 0o644)
 		assert.NoError(t, err)
-		err = os.WriteFile(filepath.Join(tempDir2a, "file.txt"), []byte("contentA"), 0644)
+		err = os.WriteFile(filepath.Join(tempDir2a, "file.txt"), []byte("contentA"), 0o644)
 		assert.NoError(t, err)
 
-		err = os.WriteFile(filepath.Join(tempDir1b, "file.txt"), []byte("contentB"), 0644)
+		err = os.WriteFile(filepath.Join(tempDir1b, "file.txt"), []byte("contentB"), 0o644)
 		assert.NoError(t, err)
-		err = os.WriteFile(filepath.Join(tempDir2b, "file.txt"), []byte("contentB"), 0644)
+		err = os.WriteFile(filepath.Join(tempDir2b, "file.txt"), []byte("contentB"), 0o644)
 		assert.NoError(t, err)
 
 		match, err := testhelpers.CheckDirs(testhelpers.DirPair{
@@ -252,14 +252,14 @@ func TestCheckDirs(t *testing.T) {
 			localWorldDir := filepath.Join(localDir, worldDir)
 			remoteWorldDir := filepath.Join(remoteDir, worldDir)
 
-			err := os.Mkdir(localWorldDir, 0755)
+			err := os.Mkdir(localWorldDir, 0o755)
 			assert.NoError(t, err)
-			err = os.Mkdir(remoteWorldDir, 0755)
+			err = os.Mkdir(remoteWorldDir, 0o755)
 			assert.NoError(t, err)
 
-			err = os.WriteFile(filepath.Join(localWorldDir, "level.dat"), []byte("level data"), 0644)
+			err = os.WriteFile(filepath.Join(localWorldDir, "level.dat"), []byte("level data"), 0o644)
 			assert.NoError(t, err)
-			err = os.WriteFile(filepath.Join(remoteWorldDir, "level.dat"), []byte("level data"), 0644)
+			err = os.WriteFile(filepath.Join(remoteWorldDir, "level.dat"), []byte("level data"), 0o644)
 			assert.NoError(t, err)
 
 			localPaths = append(localPaths, localWorldDir)

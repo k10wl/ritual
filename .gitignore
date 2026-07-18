@@ -47,4 +47,33 @@ Thumbs.db
 *.syso
 cmd/cli/versioninfo.json
 
-nul
+nul.gocache/
+
+# Wails3 — generated artifacts
+.task
+bin
+frontend/node_modules
+frontend/bindings
+frontend/dist
+frontend/public/favicon.ico
+build/darwin/icons.icns
+build/windows/info.json
+build/linux/appimage/build
+build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+
+
+*.local.*
+
+
+# Build artifacts / session dumps
+/gui
+.playwright-mcp/
+
+# Build artifacts
+/cli
+
+# Local Claude rules (per-developer)
+.claude/rules/
+
+*storybook.log
+storybook-static

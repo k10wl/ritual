@@ -4,7 +4,7 @@ import (
 	"errors"
 	"os/exec"
 	"regexp"
-	"ritual/internal/core/services"
+	"ritual/internal/core/checks"
 	"strconv"
 )
 
@@ -12,7 +12,7 @@ import (
 type JavaInfo struct{}
 
 // Compile-time check to ensure JavaInfo implements the required interface
-var _ services.JavaVersionProvider = (*JavaInfo)(nil)
+var _ checks.JavaVersionProvider = (*JavaInfo)(nil)
 
 // NewJavaInfo creates a new JavaInfo instance
 func NewJavaInfo() *JavaInfo {

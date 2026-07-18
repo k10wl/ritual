@@ -66,38 +66,35 @@
 - [x] Add comprehensive test suite for PaperInstanceSetup
 - [x] Create version parameter support for paper.yml configuration
 
+### Sprint 5: Backup/Retention Redesign Completed
+- [x] Redesigned backup/retention architecture with pure functions and strategy pattern
+- [x] See spec: `docs/superpowers/specs/2026-04-14-backup-retention-design.md`
+- [x] See plan: `docs/superpowers/plans/2026-04-14-backup-retention.md`
+
+### Sprint 6: State Machine + EventBus Migration (Completed)
+- [x] Retry coverage prereq (P-B): inline retry in R2, r2_classify, decorator deleted, RetryAttemptInfo event
+- [x] Manifest-store prereq (P-A): ports.ManifestStore (2 methods, 2 instances), Manifest.UnmarshalJSON applies defaults on decode
+- [x] EventBus port + adapter (non-blocking Publish, multi-subscriber fan-out; filtering via subscriber-side type switch; Decorator extension point documented)
+- [x] Prompter port (RPC extracted from events)
+- [x] StateName + Handler interface (no hooks — brackets are state pairs)
+- [x] Machine.Run loop with StateChangedInfo emission
+- [x] StateFactory + Deps (ctor injection, no god-struct, no Builder)
+- [x] States: Preparing, Locking, Running, Exiting, Unlocking, Failed (all with per-state tests + factory smoke)
+- [x] Service migrations: r2, sync, retention_logs, settings — all use EventBus; SendEvent + PromptEvent removed
+- [x] cmd/cli cutover — Molfar removed; Librarian removed after consumer migration (SyncDownloadUpdater, SyncUploader, RitualUpdater, ManifestLockCondition)
+- [x] Docs: state-machine.md promoted, event-architecture.md rewritten, progress entry added
+- [x] Plans: `docs/superpowers/plans/2026-04-15-state-machine.md`, `2026-04-16-manifest-store.md`, `2026-04-16-retry-coverage.md`
+
 # >>> We are here
 
-### Sprint 5: Backupper Component Implementation (1 week)
-- [x] Implement `Backupper` domain entity with configuration parameters
-- [x] Add `BackupTarget` interface to ports layer
-- [x] Add `BackupperService` interface to ports layer
-- [x] Create `BackupperService` implementation with template method pattern
-- [x] Implement `validateArchive()` method with checksum validation
-- [x] Refactor to use `BackupTarget` abstraction instead of direct storage
-- [x] Implement backup orchestration with multiple targets
-- [x] Add `buildArchive` strategy injection
-- [x] Create comprehensive `BackupperService` unit tests with mocks
-- [x] Refactor tests to use pure unit testing without filesystem operations
-- [x] Update `MolfarService` to orchestrate backup operations
-- [x] Document Backupper architecture and design patterns
+### Sprint 7: Logging Integration (1 week)
 - [ ] Create centralized logging mechanism with structured logging
 - [ ] Implement log level configuration and filtering
 - [ ] Add log rotation and retention policies
 - [ ] Integrate logging across all services and adapters
 - [ ] Create comprehensive logging tests and validation
 
-### Sprint 6: Retention Policy Integration (1 week)
-- [ ] **ROLLBACK**: Remove current O(n²) bubble sort from `RemoveOldestWorlds`
-- [ ] **ROLLBACK**: Remove scattered retention logic from `manageWorldRetention`
-- [ ] **ROLLBACK**: Remove dual-criteria conflict from `ManageLocalBackupRetention`
-- [ ] **ROLLBACK**: Remove hardcoded retention limits and constants
-- [ ] Integrate retention policies with Backupper component
-- [ ] Replace current retention implementation with Backupper orchestration
-- [ ] Add comprehensive retention policy tests through Backupper
-- [ ] Update `MolfarService` to use Backupper for retention operations
-
-### Sprint 7: Integration Testing (1 week)
+### Sprint 8: Implementation & Testing (1 week)
 - [ ] Create end-to-end tests
 - [ ] Validate system flow
 - [ ] Update documentation
