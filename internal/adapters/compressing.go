@@ -10,6 +10,7 @@ import (
 	"ritual/internal/core/ports"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/klauspost/compress/zstd"
@@ -22,6 +23,26 @@ var errV1OnCompressing = errors.New("use V2 methods on CompressingStorage")
 // bufferSize is the scratch-buffer size used by io.CopyBuffer on both hot paths.
 const bufferSize = 64 * 1024
 
+// pools bundles the three sync.Pools backing one "generation" of encoder/
+// decoder reuse. Swapped out wholesale by release() rather than drained item
+// by item — sync.Pool has no enumerate/clear API, so the only way to make
+// pooled zstd encoders/decoders GC-eligible on demand is to stop referencing
+// the pool that holds them.
+type pools struct {
+	buf sync.Pool
+	enc sync.Pool
+	dec sync.Pool
+}
+
+func newPools() *pools {
+	p := &pools{}
+	p.buf.New = func() any {
+		b := make([]byte, bufferSize)
+		return &b
+	}
+	return p
+}
+
 // CompressingStorage decorates a StorageRepository with zstd-3 compression on
 // PutStream and zstd-decode + xxhash integrity check on GetStream. Designed
 // for the `objects/{hash}` keyspace: the key's basename is the expected xxhash.
@@ -29,24 +50,39 @@ const bufferSize = 64 * 1024
 // Resource reuse is symmetric across directions: a sync.Pool of encoders for
 // PutStream and a sync.Pool of decoders for GetStream. Each pooled instance is
 // Reset to its sink/source per call and returned on completion — parallel
-// pushes and pulls run without contention and without per-call 1 MB encoder
-// or decoder allocation.
+// pushes and pulls run without contention and without per-call encoder/
+// decoder allocation.
+//
+// Each pooled zstd encoder/decoder retains an 8 MB window+match-table buffer
+// (zstd's default WindowSize) for as long as it sits in the pool, and the
+// pool grows to the peak concurrent PutStream/GetStream count — up to
+// pullConcurrency workers on both encode and decode sides during a sync.
+// That's the right trade during a sync, but the buffers have no business
+// surviving after — call Release once the sync/push/pull that needed them
+// is done (composition root wires this to the sync-flow's terminal event)
+// to make them GC-eligible immediately instead of waiting on sync.Pool's own
+// eviction timing.
 type CompressingStorage struct {
-	inner   ports.StorageRepository
-	bufPool sync.Pool
-	encPool sync.Pool
-	decPool sync.Pool
+	inner ports.StorageRepository
+	pools atomic.Pointer[pools]
 }
 
 // NewCompressingStorage builds a V2 decorator around inner. Encoders and
 // decoders are created on demand and retained by their pools across calls.
 func NewCompressingStorage(inner ports.StorageRepository) (*CompressingStorage, error) {
 	c := &CompressingStorage{inner: inner}
-	c.bufPool.New = func() any {
-		b := make([]byte, bufferSize)
-		return &b
-	}
+	c.pools.Store(newPools())
 	return c, nil
+}
+
+// Release swaps in a fresh, empty pool set so every encoder/decoder retained
+// by the current one — and their 8 MB buffers — becomes garbage as soon as
+// any in-flight PutStream/GetStream holding a reference to the old set
+// finishes. Safe to call concurrently with in-flight operations: each one
+// captured its own pool-set pointer at acquire time and keeps operating on
+// it correctly; it just won't repopulate a pool anyone will read from again.
+func (c *CompressingStorage) Release() {
+	c.pools.Store(newPools())
 }
 
 // String composes label as "compressed::<inner>" so observability can tell the
@@ -101,6 +137,8 @@ func (c *CompressingStorage) Exists(ctx context.Context, key string) (bool, erro
 // works without a secondary buffer. The tempfile is removed on return
 // whether inner succeeds or fails.
 func (c *CompressingStorage) PutStream(ctx context.Context, key string, body io.Reader) error {
+	p := c.pools.Load()
+
 	tmp, err := os.CreateTemp("", "ritual-cmprs-*")
 	if err != nil {
 		return fmt.Errorf("failed to open compression spool for %s: %w", key, err)
@@ -110,15 +148,15 @@ func (c *CompressingStorage) PutStream(ctx context.Context, key string, body io.
 		_ = os.Remove(tmp.Name())
 	}()
 
-	enc, err := c.acquireEncoder(tmp)
+	enc, err := c.acquireEncoder(p, tmp)
 	if err != nil {
 		return fmt.Errorf("failed to acquire zstd encoder for %s: %w", key, err)
 	}
-	bufPtr := c.bufPool.Get().(*[]byte)
+	bufPtr := p.buf.Get().(*[]byte)
 	_, copyErr := io.CopyBuffer(enc, body, *bufPtr)
-	c.bufPool.Put(bufPtr)
+	p.buf.Put(bufPtr)
 	closeErr := enc.Close()
-	c.releaseEncoder(enc)
+	c.releaseEncoder(p, enc)
 	if copyErr != nil {
 		return fmt.Errorf("failed to compress %s: %w", key, copyErr)
 	}
@@ -147,7 +185,8 @@ func (c *CompressingStorage) GetStream(ctx context.Context, key string) (io.Read
 	if err != nil {
 		return nil, err
 	}
-	dec, err := c.acquireDecoder(body)
+	p := c.pools.Load()
+	dec, err := c.acquireDecoder(p, body)
 	if err != nil {
 		_ = body.Close()
 		return nil, fmt.Errorf("failed to build zstd decoder for %s: %w", key, err)
@@ -158,15 +197,16 @@ func (c *CompressingStorage) GetStream(ctx context.Context, key string) (io.Read
 		expected: expected,
 		key:      key,
 		hasher:   xxhash.New(),
-		release:  func() { c.releaseDecoder(dec) },
+		release:  func() { c.releaseDecoder(p, dec) },
 	}, nil
 }
 
 // acquireEncoder returns a ready-to-use zstd.Encoder bound to sink. Reuses a
 // pooled encoder when available; otherwise creates a fresh one. The pool grows
-// naturally up to the concurrent-PutStream high-water mark.
-func (c *CompressingStorage) acquireEncoder(sink io.Writer) (*zstd.Encoder, error) {
-	if v := c.encPool.Get(); v != nil {
+// naturally up to the concurrent-PutStream high-water mark within p's
+// generation and is discarded wholesale by Release once the sync is done.
+func (c *CompressingStorage) acquireEncoder(p *pools, sink io.Writer) (*zstd.Encoder, error) {
+	if v := p.enc.Get(); v != nil {
 		enc := v.(*zstd.Encoder)
 		enc.Reset(sink)
 		return enc, nil
@@ -174,20 +214,22 @@ func (c *CompressingStorage) acquireEncoder(sink io.Writer) (*zstd.Encoder, erro
 	return zstd.NewWriter(sink, zstd.WithEncoderLevel(zstd.SpeedDefault))
 }
 
-// releaseEncoder detaches the sink and returns the encoder to the pool.
-// Reset(io.Discard) keeps the internal window and match tables allocated while
-// breaking the reference to the caller-owned sink.
-func (c *CompressingStorage) releaseEncoder(enc *zstd.Encoder) {
+// releaseEncoder detaches the sink and returns the encoder to p's pool.
+// Reset(io.Discard) keeps the internal window and match tables allocated
+// while breaking the reference to the caller-owned sink — cheap reuse as
+// long as p is still the live generation; a no-op cost once Release has
+// moved on, since nothing will Get() from an orphaned p again.
+func (c *CompressingStorage) releaseEncoder(p *pools, enc *zstd.Encoder) {
 	enc.Reset(io.Discard)
-	c.encPool.Put(enc)
+	p.enc.Put(enc)
 }
 
 // acquireDecoder returns a ready-to-use zstd.Decoder bound to src. Reuses a
 // pooled decoder when available; otherwise creates a fresh one. Failure to
 // Reset a pooled decoder falls back to a fresh decoder so one bad instance
 // can't poison the pool.
-func (c *CompressingStorage) acquireDecoder(src io.Reader) (*zstd.Decoder, error) {
-	if v := c.decPool.Get(); v != nil {
+func (c *CompressingStorage) acquireDecoder(p *pools, src io.Reader) (*zstd.Decoder, error) {
+	if v := p.dec.Get(); v != nil {
 		dec := v.(*zstd.Decoder)
 		if err := dec.Reset(src); err == nil {
 			return dec, nil
@@ -197,14 +239,15 @@ func (c *CompressingStorage) acquireDecoder(src io.Reader) (*zstd.Decoder, error
 	return zstd.NewReader(src)
 }
 
-// releaseDecoder detaches the source and returns the decoder to the pool.
-// Reset(nil) keeps the ~1 MB internal window and match tables allocated.
-func (c *CompressingStorage) releaseDecoder(dec *zstd.Decoder) {
+// releaseDecoder detaches the source and returns the decoder to p's pool.
+// Reset(nil) keeps the 8 MB internal window and match tables allocated —
+// same caveat as releaseEncoder regarding an orphaned p.
+func (c *CompressingStorage) releaseDecoder(p *pools, dec *zstd.Decoder) {
 	if err := dec.Reset(nil); err != nil {
 		dec.Close()
 		return
 	}
-	c.decPool.Put(dec)
+	p.dec.Put(dec)
 }
 
 // expectedHashFromKey extracts the hash-tail of key (the final path segment).

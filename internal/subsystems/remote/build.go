@@ -33,18 +33,13 @@ type Mode int
 
 const (
 	// ModeMock points the remote stack at <root>/remote-mock under a
-	// throttled local-FS adapter. Alpha default; no credentials needed.
+	// plain local-FS adapter. Alpha default; no credentials needed.
 	ModeMock Mode = iota
 	// ModeR2 points the remote stack at Cloudflare R2 via the S3 API.
 	// Requires RITUAL_R2_{BUCKET,ACCOUNT_ID,ACCESS_KEY_ID,SECRET_ACCESS_KEY}
 	// in the environment of the process that launches the GUI.
 	ModeR2
 )
-
-// MockBytesPerSecond throttles the local-FS mock to ~100 Mbps so the
-// dev loop reflects realistic push/pull pacing instead of native disk
-// speed (audit fix #12).
-const MockBytesPerSecond = 12_500_000
 
 // Required env-var names for ModeR2. Surfaced here as constants so a
 // hand-off agent can grep for them without reading the wiring.
@@ -141,7 +136,7 @@ func buildMock() (ports.StorageRepository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("remote: mock FSRepository: %w", err)
 	}
-	return adapters.NewThrottledStorage(rawFS, MockBytesPerSecond), nil
+	return rawFS, nil
 }
 
 func buildR2FromEnv(ctx context.Context, bus ports.EventBus) (ports.StorageRepository, error) {

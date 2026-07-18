@@ -3,9 +3,9 @@
 // Composition root. The pipeline runs the real NeoForge launcher
 // (settings.StartScript, default "start.bat") via
 // adapters.NewServerCmdBuilder and probes 127.0.0.1:<settings.Port>
-// via adapters.NewTCPReadinessCheck. The "remote" backend is still a
-// local-filesystem mock (rate-limited via ThrottledStorage) until the
-// R2 wiring lands.
+// via adapters.NewTCPReadinessCheck. The "remote" backend can be a plain
+// local-filesystem mock (ModeMock, unthrottled — full disk speed for
+// fast dev iteration) or real Cloudflare R2 (ModeR2).
 package main
 
 import (
@@ -179,6 +179,14 @@ func main() {
 				}
 				if sc, ok := evt.(lifecycle.StatusChanged); ok {
 					lifecycleRunning.Store(sc.Status == lifecycle.Running)
+					if sc.Status == lifecycle.Done || sc.Status == lifecycle.Failed {
+						// Upload/Download/Session/etc. all resolve here exactly
+						// once per flow — the zstd worker pools created on
+						// demand during the flow have no reason to survive
+						// past it (see CompressingStorage.Release).
+						runtime.localCompressed.Release()
+						runtime.remoteCompressed.Release()
+					}
 				}
 			}
 		}
@@ -347,6 +355,12 @@ type guiRuntime struct {
 	clearLoadedRefID     control.SettingsClearer
 	// design-log/045 §E — local on-disk stats walker.
 	localStatsFn control.StorageStatFn
+	// localCompressed/remoteCompressed back onto localStorage/remoteStorage's
+	// zstd encoder/decoder pools. Released once a flow's StatusChanged reaches
+	// Done/Failed — workers are created lazily on next use, so there's no
+	// reason for their 8MB buffers to survive between syncs.
+	localCompressed  *adapters.CompressingStorage
+	remoteCompressed *adapters.CompressingStorage
 }
 
 func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root — high fanout is structural, not logical
@@ -691,6 +705,8 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 		loadedRefIDFn:        loadedRefIDFn,
 		clearLoadedRefID:     clearLoadedRefID,
 		localStatsFn:         localStatsFn,
+		localCompressed:      localCompressed,
+		remoteCompressed:     remoteCompressed,
 	}, nil
 }
 

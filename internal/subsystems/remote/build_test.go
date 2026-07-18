@@ -25,7 +25,7 @@ func requireFileExists(t *testing.T, path, msg string) {
 	require.NoErrorf(t, err, msg+" — stat error: %v", err)
 }
 
-func TestBuild_ModeMock_ReturnsThrottledMockBackedByRemoteMockDir(t *testing.T) {
+func TestBuild_ModeMock_ReturnsMockBackedByRemoteMockDir(t *testing.T) {
 	tempRoot := t.TempDir()
 	originalRoot := config.RootPath
 	config.RootPath = tempRoot

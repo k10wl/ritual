@@ -294,6 +294,42 @@ func TestCompressingStorage_DecoderPoolReuse(t *testing.T) {
 	t.Logf("GetStream steady-state allocs/call=%.1f (ceiling=%.0f)", avgAllocs, ceiling)
 }
 
+// TestCompressingStorage_ReleaseThenReuse pins that Release doesn't corrupt
+// in-flight or subsequent operations: a decoder/encoder acquired before
+// Release must still finish correctly, and the next call after Release must
+// still round-trip (it just can't reuse the discarded pool — it lazily
+// builds fresh instances, per NewCompressingStorage's doc).
+func TestCompressingStorage_ReleaseThenReuse(t *testing.T) {
+	cs, _ := newCompressingOnFS(t)
+	payload := bytes.Repeat([]byte("release-then-reuse-probe-"), 64)
+	key := keyFor(payload)
+	require.NoError(t, cs.PutStream(t.Context(), key, bytes.NewReader(payload)))
+
+	rc, err := cs.GetStream(t.Context(), key)
+	require.NoError(t, err)
+
+	// Release while rc is still open and unread — the in-flight decoder was
+	// acquired from the pool generation now being discarded; it must still
+	// finish this read correctly.
+	cs.Release()
+
+	got, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	require.NoError(t, rc.Close())
+	assert.Equal(t, payload, got)
+
+	// A subsequent call must still round-trip against the fresh generation.
+	payload2 := bytes.Repeat([]byte("post-release-probe-"), 64)
+	key2 := keyFor(payload2)
+	require.NoError(t, cs.PutStream(t.Context(), key2, bytes.NewReader(payload2)))
+	rc2, err := cs.GetStream(t.Context(), key2)
+	require.NoError(t, err)
+	got2, err := io.ReadAll(rc2)
+	require.NoError(t, err)
+	require.NoError(t, rc2.Close())
+	assert.Equal(t, payload2, got2)
+}
+
 func TestCompressingStorage_ConcurrentPull(t *testing.T) {
 	dec, _ := newCompressingOnFS(t)
 
