@@ -318,7 +318,7 @@ tasks:
     cmds:
       - cmd: go test -timeout {{.TEST_TIMEOUT}} $(go list ./... | grep -v /internal/testhelpers)
         platforms: [linux, darwin]
-      - cmd: powershell -NoProfile -Command "go test -timeout {{.TEST_TIMEOUT}} (go list ./... | Where-Object { $_ -notmatch '/internal/testhelpers' })"
+      - cmd: powershell -NoProfile -Command "go test -timeout {{.TEST_TIMEOUT}} (go list ./... | Where-Object { \$_ -notmatch '/internal/testhelpers' })"
         platforms: [windows]
     vars:
       TEST_TIMEOUT: '{{.TEST_TIMEOUT | default "60s"}}'
@@ -328,7 +328,7 @@ tasks:
     cmds:
       - cmd: go test -race -timeout {{.TEST_TIMEOUT}} $(go list ./... | grep -v /internal/testhelpers)
         platforms: [linux, darwin]
-      - cmd: powershell -NoProfile -Command "go test -race -timeout {{.TEST_TIMEOUT}} (go list ./... | Where-Object { $_ -notmatch '/internal/testhelpers' })"
+      - cmd: powershell -NoProfile -Command "go test -race -timeout {{.TEST_TIMEOUT}} (go list ./... | Where-Object { \$_ -notmatch '/internal/testhelpers' })"
         platforms: [windows]
     vars:
       TEST_TIMEOUT: '{{.TEST_TIMEOUT | default "120s"}}'

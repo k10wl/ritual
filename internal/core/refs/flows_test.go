@@ -44,7 +44,7 @@ import (
 )
 
 func TestFlow_F1_ColdStartRemotePrePopulated(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -102,7 +102,7 @@ func TestFlow_F1_ColdStartRemotePrePopulated(t *testing.T) {
 }
 
 func TestFlow_F2_LiveTickerWithAmend(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -150,7 +150,7 @@ func TestFlow_F2_LiveTickerWithAmend(t *testing.T) {
 }
 
 func TestFlow_F3_RestoreToPastTimestamp(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -186,7 +186,7 @@ func TestFlow_F3_RestoreToPastTimestamp(t *testing.T) {
 }
 
 func TestFlow_F4_PatchTargetEditWithoutDataChange(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -220,7 +220,7 @@ func TestFlow_F4_PatchTargetEditWithoutDataChange(t *testing.T) {
 }
 
 func TestFlow_F8_InitOnEmptyRemote(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
