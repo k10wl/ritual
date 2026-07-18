@@ -243,7 +243,20 @@ tasks:
       # REMOTE_MODE=mock (publish:dev:local) routes cmd/publish itself at the
       # local-FS store via RITUAL_REMOTE_MODE — scoped to this command only so
       # test/lint/build above stay backend-agnostic (design-log/048).
-      - '{{if eq .REMOTE_MODE "mock"}}RITUAL_REMOTE_MODE=mock {{end}}go run ./cmd/publish -artifact {{.BIN_DIR}}/{{.OUT_NAME}}{{.EXE}} -os {{OS}} -arch {{ARCH}}'
+      #
+      # The R2 branch passes credentials as explicit flags (Task's own
+      # {{.R2_BUCKET_NAME}} etc. template vars) instead of letting cmd/publish
+      # resolve RITUAL_R2_* from its OS environment. Reason: `task _publish`
+      # runs as a nested `task` subprocess of an outer, unprefixed
+      # `task publish:*` invocation; that outer process resolves RITUAL_ENV to
+      # its dev default and exports RITUAL_R2_BUCKET=ritual-dev (etc.) into
+      # its own environment via this file's `env:` block, and the nested
+      # process — despite correctly re-resolving RITUAL_ENV=prod for itself —
+      # inherits that already-set var from its parent and does not override
+      # it. A live "prod" publish landed in the "ritual-dev" bucket this way.
+      # Task's template vars are unaffected (fresh per-process dotenv load),
+      # so passing them straight through sidesteps the inheritance bug.
+      - '{{if eq .REMOTE_MODE "mock"}}RITUAL_REMOTE_MODE=mock go run ./cmd/publish -artifact {{.BIN_DIR}}/{{.OUT_NAME}}{{.EXE}} -os {{OS}} -arch {{ARCH}}{{else}}go run ./cmd/publish -artifact {{.BIN_DIR}}/{{.OUT_NAME}}{{.EXE}} -os {{OS}} -arch {{ARCH}} -bucket {{.R2_BUCKET_NAME}} -account {{.R2_ACCOUNT_ID}} -access-key {{.R2_ACCESS_KEY_ID}} -secret-key {{.R2_SECRET_ACCESS_KEY}}{{end}}'
     vars:
       EXE: '{{if eq OS "windows"}}.exe{{end}}'
       # Mirrors windows:build:native's OUT_NAME — keeps publish targeted at the
