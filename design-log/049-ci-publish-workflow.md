@@ -127,3 +127,20 @@ jobs:
 - **No separate "build-only, no publish" gate on PRs into `dev`/`main`** — `ci.yml` already covers PR-time `go test`; full `task test && task lint` only runs at publish time (post-merge). Accepted: keeps PR feedback fast, and a failing `task test`/`task lint` at publish time aborts before any R2 write (existing `_publish` gate) — worst case is a merged-but-unpublished commit, not a bad publish.
 - **Environment protection rule is a manual repo setting, not code** — GitHub Environments don't support declaring required-reviewers in the workflow YAML; it's a one-time Settings action the user must take after this merges.
 - **Two near-identical jobs instead of a matrix** — a `strategy: matrix` job could parametrize stage, but `environment:` (and thus which secrets/reviewer-gate apply) must be a static per-job value, not a matrix-computed one, so duplication is the straightforward option here.
+
+## Implementation Results
+
+Landed via `.github/workflows/publish.yml` and PR [#14](https://github.com/k10wl/ritual/pull/14) (`feat/delta-sync` → `dev`), following the design above with two adjustments discovered mid-implementation:
+
+**Both Environments locked, not just `production`.** Mid-implementation the user asked for the `development` Environment to carry the same required-reviewer gate as `production` (revises Q2/Q3's original "prod gated, dev open" split). Implemented identically for both: `k10wl` as required reviewer, `deployment_branch_policy` custom-restricted (`development`→`dev`, `production`→`main`), via `gh api`.
+
+**Self-approval reality check on branch protection.** When asked to also gate PR merges into `main`/`dev` on "my approval," surfaced that GitHub disables the Approve button on your own PRs — a required-approving-review-count ≥ 1 would have permanently blocked the sole contributor from merging anything. Resolved (user decision) as: `required_pull_request_reviews.required_approving_review_count: 0` (PR required, no direct pushes, `enforce_admins: true`, no force-push/delete — but no formal approval count) + `required_status_checks: {strict: true, contexts: ["test"]}`. The already-built deployment-Environment reviewer gate is the actual approval checkpoint (it does support self-approval, being a deployment gate rather than a code-review gate).
+
+**`ci.yml` needed a real fix, not just a trigger add.** Extending `ci.yml`'s `push`/`pull_request` triggers to include `dev` (needed so the newly-required `test` status check can report on `dev`-branch PRs, per Q6) surfaced a pre-existing, unrelated gap: `ci.yml` ran bare `go test ./...` with no frontend build step. `assets.go`'s `//go:embed all:frontend/dist` (added early in `feat/delta-sync`, commit `e993bec`, unrelated to this design) makes the `ritual` and `ritual/cmd/gui` packages fail to even compile without a built `frontend/dist` — `pattern all:frontend/dist: no matching files found`. This never surfaced before because `ci.yml` had never run against a commit tree containing `assets.go` (only triggered on `main`, which `feat/delta-sync` was never merged into). Fixed by adding Node + Task + Wails3 CLI setup and a `task common:build:frontend` step before `go test ./...` in `ci.yml`, mirroring `publish.yml`'s toolchain. Verified locally first (`task common:build:frontend && go test ./...` — all packages pass) before pushing, to avoid blind CI iteration.
+
+**Setup executed via `gh api`/`gh secret set` (Bash tool, this session), not just documented:**
+- Environments `development` + `production` created, each secret pulled directly from local `.env.dev.local`/`.env.prod.local` via `gh secret set KEY --env <name> --body "$(grep ... | cut ...)"` — values never appeared in any visible command or output.
+- `dev` branch created by the user directly (matched `origin/main` tip exactly, no divergence).
+- Branch protection applied to both `main` and `dev` via `gh api --method PUT .../branches/<name>/protection`.
+
+Status: PR #14 open, `test` check running with the fix above; not yet merged, so `publish-dev`/`publish-prod` have not yet had a real run. Verification steps 4–5 from the Implementation Plan remain open.
