@@ -1,0 +1,128 @@
+name: Publish
+
+on:
+  push:
+    branches: [dev, main]
+
+jobs:
+  publish-dev:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: windows-latest
+    environment: development
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Add Go bin to PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value ((go env GOPATH) + "\bin")
+
+      - name: Install Task
+        run: go install github.com/go-task/task/v3/cmd/task@latest
+
+      - name: Install Wails3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74
+
+      - name: Install golangci-lint
+        # go install, not golangci-lint-action: that action has no real
+        # "install only, don't run" input (a prior "install-only: true" here
+        # was silently ignored) and its "latest" resolved to a v1.x binary
+        # that can't parse this repo's .golangci.yml (config schema
+        # `version: "2"`) or its go 1.26.2 toolchain directive. `task lint`
+        # (inside `task publish:*`) is what actually runs lint.
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+
+      - name: Build frontend
+        # _publish's internal task order runs `test` before `gui:_build`, so
+        # frontend/dist (embedded via assets.go's //go:embed all:frontend/dist)
+        # doesn't exist yet when `go test` needs it — same gap ci.yml had.
+        run: task common:build:frontend
+
+      - name: Write .env.dev.local
+        shell: pwsh
+        run: |
+          @"
+          R2_BUCKET_NAME=${{ secrets.R2_BUCKET_NAME }}
+          R2_ACCOUNT_ID=${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID=${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY=${{ secrets.R2_SECRET_ACCESS_KEY }}
+          "@ | Set-Content -Path .env.dev.local -Encoding utf8
+
+      - name: Publish (dev)
+        run: task publish:dev:remote
+
+  publish-prod:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    environment: production
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Add Go bin to PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value ((go env GOPATH) + "\bin")
+
+      - name: Install Task
+        run: go install github.com/go-task/task/v3/cmd/task@latest
+
+      - name: Install Wails3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74
+
+      - name: Install golangci-lint
+        # go install, not golangci-lint-action: that action has no real
+        # "install only, don't run" input (a prior "install-only: true" here
+        # was silently ignored) and its "latest" resolved to a v1.x binary
+        # that can't parse this repo's .golangci.yml (config schema
+        # `version: "2"`) or its go 1.26.2 toolchain directive. `task lint`
+        # (inside `task publish:*`) is what actually runs lint.
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+
+      - name: Build frontend
+        # _publish's internal task order runs `test` before `gui:_build`, so
+        # frontend/dist (embedded via assets.go's //go:embed all:frontend/dist)
+        # doesn't exist yet when `go test` needs it — same gap ci.yml had.
+        run: task common:build:frontend
+
+      - name: Write .env.prod.local
+        shell: pwsh
+        run: |
+          @"
+          R2_BUCKET_NAME=${{ secrets.R2_BUCKET_NAME }}
+          R2_ACCOUNT_ID=${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID=${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY=${{ secrets.R2_SECRET_ACCESS_KEY }}
+          "@ | Set-Content -Path .env.prod.local -Encoding utf8
+
+      - name: Publish (prod)
+        run: task publish:prod

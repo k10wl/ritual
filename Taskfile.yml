@@ -1,0 +1,377 @@
+# Ritual build orchestration.
+#
+# Target platform: Windows. macOS is a dev-iteration host only.
+#
+# Discovery:
+#   task --list           # user-facing tasks (every task has a desc:)
+#   task --list-all       # includes wails3 template internals
+#   task --summary <name> # full summary for a specific task
+#
+# Single sources of truth:
+#   - Version & product metadata: internal/config/config.go
+#       → emitted into build/windows/info.json by cmd/genversioninfo on each build
+#   - App icons: assets/baiki-{dev,prod}.ico
+#       → task gui:assets regenerates favicon + darwin .icns from baiki-dev.ico
+#       → wails3 generate syso bakes baiki-{dev,prod}.ico into the Windows .syso
+#   - R2 credentials: .env.{dev,prod}.local (gitignored)
+#       → injected at build time via ldflags; preconditions abort the build if missing
+#
+# All generated artefacts are gitignored (frontend/bindings, frontend/dist/*,
+# frontend/public/favicon.ico, bin/, *.syso, build/darwin/icons.icns,
+# build/windows/info.json).
+#
+# Known issues:
+#   - wails3 alpha.74 server mode (run:server / build:server) is broken on darwin
+#     (symbol redeclaration). Regular gui:dev works.
+#   - Binding generator only picks up services in non-main packages — services
+#     must live under internal/gui/services/.
+
+version: '3'
+
+includes:
+  common: ./build/Taskfile.yml
+  windows: ./build/windows/Taskfile.yml
+  darwin: ./build/darwin/Taskfile.yml
+  linux: ./build/linux/Taskfile.yml
+
+# Auto-load gitignored R2 credentials from .env.{dev,prod}.local and remap
+# Cloudflare-dashboard names (R2_*) to the runtime names the GUI reads
+# (RITUAL_R2_*, see internal/subsystems/remote/build.go).
+#
+# Default: dev. Override on the CLI:
+#   task gui:dev                   # uses .env.dev.local
+#   task gui:dev RITUAL_ENV=prod   # uses .env.prod.local
+#
+# Missing file is fatal at task time — Task aborts before launching the
+# GUI, naming the file it could not open. Missing keys inside an existing
+# file surface as remote.ErrR2EnvIncomplete at GUI boot.
+dotenv: ['.env.{{.RITUAL_ENV}}.local']
+env:
+  RITUAL_R2_BUCKET: '{{.R2_BUCKET_NAME}}'
+  RITUAL_R2_ACCOUNT_ID: '{{.R2_ACCOUNT_ID}}'
+  RITUAL_R2_ACCESS_KEY_ID: '{{.R2_ACCESS_KEY_ID}}'
+  RITUAL_R2_SECRET_ACCESS_KEY: '{{.R2_SECRET_ACCESS_KEY}}'
+
+vars:
+  RITUAL_ENV: '{{.RITUAL_ENV | default "dev"}}'
+  APP_NAME: "ritual"
+  BIN_DIR: "bin"
+  MAIN_PKG: "./cmd/gui"
+  VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+
+tasks:
+  # --- GUI (cmd/gui, real backend) ----------------------------------------
+  #
+  # NestJS-style :stage suffix — every script that cares about the env has
+  # symmetric `<task>:dev` and `<task>:prod` variants, and ONLY the suffixed
+  # form is callable from the CLI. No bare `gui:build` / `gui:run` /
+  # `gui:package` / `publish` exists: forcing the stage in the task name
+  # means a glance at the command line says what was built, run, or shipped.
+  #
+  #   task gui:build:dev   → bin/ritualdev.exe (dev R2, "Ritual Dev")
+  #   task gui:build:prod  → bin/ritual.exe    (prod R2, "Ritual")
+  #
+  # Implementation: each :stage variant subprocess-invokes a private
+  # underscore-prefixed impl (`gui:_build`, `gui:_run`, `gui:_package`,
+  # `_publish`) with RITUAL_ENV inlined POSIX-style. The subprocess gets a
+  # fresh Task instance that re-evaluates the file-level `dotenv:` against
+  # the right profile, so build creds, icon, name, and binary all match
+  # without any second-guessing about shell state. The underscore prefix is
+  # purely a "don't call me directly" signal — Task has no built-in privacy
+  # for tasks invoked via subprocess, and the wails3 dev workflow needs to
+  # reach them via the aliases at the bottom of the file.
+  #
+  # Two stage axes coexist:
+  #   - build/run/package/publish carry `:dev` / `:prod` — picks which
+  #     profile's creds & identity get baked into the binary.
+  #   - dev iteration carries `:local` / `:remote` — picks which storage
+  #     backend the *running* binary talks to (mock vs real R2). The binary
+  #     itself is always the dev variant; only the runtime backend differs.
+  #
+  # No bare CLI task here is env- or backend-aware: every such task carries
+  # its stage suffix in the name.
+  #
+  # DEV (build-mode flag for -gcflags / vite dev mode) is orthogonal to
+  # RITUAL_ENV (which profile's creds & identity get baked); the :dev
+  # variants forward DEV through so `wails3 build DEV=true` still produces
+  # a debug-flagged binary.
+
+  # The dev variant additionally carries the :local / :remote backend axis
+  # (design-log/048): :remote bakes dev R2 creds (bin/ritualdev.exe);
+  # :local bakes RITUAL_REMOTE_MODE=mock into the binary so it talks only to
+  # the local-FS store at <root>/remote-mock (bin/ritualdev-local.exe) — for
+  # testing the 037/038 self-update lifecycle fully offline, including an
+  # installed/double-clicked binary that has no shell env. config.AppName
+  # stays "ritualdev" for both, so they share RootPath (~/k10wl/ritualdev)
+  # and thus the same remote-mock that `go run ./cmd/publish` writes; only
+  # the filename differs so both can coexist in bin/. prod is remote-only.
+  gui:build:dev:
+    desc: Alias for gui:build:dev:remote (R2-backed dev build; back-compat).
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE= DEV={{.DEV}} task gui:_build
+
+  gui:build:dev:remote:
+    desc: Build GUI dev variant → bin/ritualdev.exe (dev R2 creds baked, "Ritual Dev" identity).
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE= DEV={{.DEV}} task gui:_build
+
+  gui:build:dev:local:
+    desc: Build GUI dev variant baked LOCAL-only → bin/ritualdev-local.exe (RITUAL_REMOTE_MODE=mock baked, no R2 hit).
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE=mock DEV={{.DEV}} task gui:_build
+
+  gui:build:prod:
+    desc: Build GUI prod variant → bin/ritual.exe (prod R2 creds baked, "Ritual" identity).
+    cmds:
+      - RITUAL_ENV=prod DEV={{.DEV}} task gui:_build
+
+  gui:run:dev:
+    desc: Alias for gui:run:dev:remote (runs bin/ritualdev.exe; back-compat).
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE= task gui:_run
+
+  gui:run:dev:remote:
+    desc: Run bin/ritualdev.exe (R2-backed dev build).
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE= task gui:_run
+
+  gui:run:dev:local:
+    desc: Run bin/ritualdev-local.exe (local-FS baked build, no R2 hit).
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE=mock task gui:_run
+
+  gui:run:prod:
+    desc: Run bin/ritual.exe.
+    cmds:
+      - RITUAL_ENV=prod task gui:_run
+
+  gui:package:dev:
+    desc: Package GUI dev variant for distribution.
+    cmds:
+      - RITUAL_ENV=dev task gui:_package
+
+  gui:package:prod:
+    desc: Package GUI prod variant for distribution.
+    cmds:
+      - RITUAL_ENV=prod task gui:_package
+
+  publish:dev:
+    desc: Alias for publish:dev:remote (R2 publish; back-compat).
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE= task _publish
+
+  publish:dev:remote:
+    desc: Test + lint + build the dev-variant binary, then publish it to the dev R2 channel.
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE= task _publish
+
+  publish:prod:
+    desc: Test + lint + build the prod-variant binary, then publish it to the prod R2 channel.
+    cmds:
+      - RITUAL_ENV=prod task _publish
+
+  publish:dev:local:
+    desc: Build the dev:local binary + publish it into <root>/remote-mock (offline, no R2) — seeds the local store for self-update testing.
+    cmds:
+      - RITUAL_ENV=dev REMOTE_MODE=mock task _publish
+
+  # --- GUI dev iteration (stage = which storage backend) -----------------
+  # The dev/iteration mode itself has two stages — :local routes the running
+  # binary to the local-FS mock backend (RITUAL_REMOTE_MODE=mock), :remote
+  # leaves it pointing at real R2. The build is always the dev-variant
+  # binary (via the wails3 alias `build:` → `gui:build:dev`); only the
+  # runtime backend differs.
+
+  gui:dev:local:
+    desc: Dev iteration against the local-FS mock backend (RITUAL_REMOTE_MODE=mock — offline, no R2 hit, <root>/remote-mock).
+    cmds:
+      - RITUAL_REMOTE_MODE=mock task gui:_dev
+
+  gui:dev:remote:
+    desc: Dev iteration against real R2 (dev profile creds baked into bin/ritualdev.exe).
+    cmds:
+      - RITUAL_REMOTE_MODE= task gui:_dev
+
+  # --- Stage-agnostic tasks (no env dependency, no :stage variant) --------
+  gui:bindings:
+    desc: Regenerate frontend/bindings/* from Go bound types.
+    cmds:
+      - wails3 generate bindings -ts -silent ./...
+
+  gui:storybook:
+    desc: Storybook UI dev — regenerate bindings, then serve.
+    deps: [gui:bindings]
+    dir: frontend
+    cmds:
+      - npm run storybook
+
+  # --- Private impls (called by :stage variants only; never run directly) -
+  # Underscore prefix = "do not invoke from CLI". Subprocess-only entry point
+  # for the :dev / :prod wrappers above.
+  gui:_build:
+    desc: "(private — use gui:build:dev or gui:build:prod)"
+    deps: [gui:assets]
+    cmds:
+      - task: "{{OS}}:build"
+
+  gui:_run:
+    desc: "(private — use gui:run:dev or gui:run:prod)"
+    cmds:
+      - task: "{{OS}}:run"
+
+  gui:_package:
+    desc: "(private — use gui:package:dev or gui:package:prod)"
+    deps: [gui:assets]
+    cmds:
+      - task: "{{OS}}:package"
+
+  gui:_dev:
+    desc: "(private — use gui:dev:local or gui:dev:remote)"
+    deps: [gui:assets]
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
+  _publish:
+    desc: "(private — use publish:dev:remote, publish:dev:local, or publish:prod)"
+    cmds:
+      # Gate the deploy on green tests + lint — a failing step aborts before
+      # cmd/publish runs, so nothing red ever reaches R2. Build runs last so the
+      # uploaded binary re-bakes the current config.AppVersion (anti-loop invariant).
+      - task: test
+      - task: lint
+      - task: gui:_build
+      # REMOTE_MODE=mock (publish:dev:local) routes cmd/publish itself at the
+      # local-FS store via RITUAL_REMOTE_MODE — scoped to this command only so
+      # test/lint/build above stay backend-agnostic (design-log/048).
+      #
+      # The R2 branch passes credentials as explicit flags (Task's own
+      # {{.R2_BUCKET_NAME}} etc. template vars) instead of letting cmd/publish
+      # resolve RITUAL_R2_* from its OS environment. Reason: `task _publish`
+      # runs as a nested `task` subprocess of an outer, unprefixed
+      # `task publish:*` invocation; that outer process resolves RITUAL_ENV to
+      # its dev default and exports RITUAL_R2_BUCKET=ritual-dev (etc.) into
+      # its own environment via this file's `env:` block, and the nested
+      # process — despite correctly re-resolving RITUAL_ENV=prod for itself —
+      # inherits that already-set var from its parent and does not override
+      # it. A live "prod" publish landed in the "ritual-dev" bucket this way.
+      # Task's template vars are unaffected (fresh per-process dotenv load),
+      # so passing them straight through sidesteps the inheritance bug.
+      - '{{if eq .REMOTE_MODE "mock"}}RITUAL_REMOTE_MODE=mock go run ./cmd/publish -artifact {{.BIN_DIR}}/{{.OUT_NAME}}{{.EXE}} -os {{OS}} -arch {{ARCH}}{{else}}go run ./cmd/publish -artifact {{.BIN_DIR}}/{{.OUT_NAME}}{{.EXE}} -os {{OS}} -arch {{ARCH}} -bucket {{.R2_BUCKET_NAME}} -account {{.R2_ACCOUNT_ID}} -access-key {{.R2_ACCESS_KEY_ID}} -secret-key {{.R2_SECRET_ACCESS_KEY}}{{end}}'
+    vars:
+      EXE: '{{if eq OS "windows"}}.exe{{end}}'
+      # Mirrors windows:build:native's OUT_NAME — keeps publish targeted at the
+      # variant the build actually produced (ritualdev.exe for dev, ritual.exe
+      # for prod, ritualdev-local.exe for dev:local). Same RITUAL_ENV/REMOTE_MODE
+      # switch end-to-end.
+      OUT_NAME: '{{if eq .RITUAL_ENV "prod"}}{{.APP_NAME}}{{else}}{{.APP_NAME}}dev{{if eq .REMOTE_MODE "mock"}}-local{{end}}{{end}}'
+
+  gui:assets:
+    desc: Regenerate GUI assets from assets/baiki-{{.ICON_ENV}}.ico (favicon, .icns). ICON_ENV follows RITUAL_ENV (default dev).
+    sources:
+      - assets/baiki-dev.ico
+      - assets/baiki-prod.ico
+    generates:
+      - frontend/public/favicon.ico
+      - build/darwin/icons.icns
+    vars:
+      ICON_ENV: '{{if eq .RITUAL_ENV "prod"}}prod{{else}}dev{{end}}'
+    cmds:
+      - cmd: cp assets/baiki-{{.ICON_ENV}}.ico frontend/public/favicon.ico
+        platforms: [linux, darwin]
+      - cmd: powershell -NoProfile -Command "Copy-Item assets\baiki-{{.ICON_ENV}}.ico frontend\public\favicon.ico -Force"
+        platforms: [windows]
+      - cmd: sips -s format icns assets/baiki-{{.ICON_ENV}}.ico --out build/darwin/icons.icns
+        platforms: [darwin]
+
+  # --- Lint ---------------------------------------------------------------
+  lint:
+    desc: Run golangci-lint over the whole module (config in .golangci.yml).
+    cmds:
+      - golangci-lint run ./...
+
+  lint:fix:
+    desc: Run golangci-lint with autofix where supported.
+    cmds:
+      - golangci-lint run --fix ./...
+
+  # --- Tests --------------------------------------------------------------
+  test:
+    desc: Run testhelpers first (critical fixtures), then the rest, then the frontend suite.
+    cmds:
+      - task: test:helpers
+      - task: test:unit
+      - task: common:test:frontend
+
+  # TEST_TIMEOUT is a HARD per-package guard (go test -timeout applies to each
+  # package binary). It exists so a hung/deadlocked test panics with a goroutine
+  # dump naming the stuck test instead of stalling the run on Go's 10-minute
+  # default. The slowest package is ~10s, so 60s is a wide safety margin, not a
+  # perf budget. Override for a tighter check: `task test TEST_TIMEOUT=20s`.
+  test:helpers:
+    desc: Run internal/testhelpers fixture tests.
+    cmds:
+      - go test -timeout {{.TEST_TIMEOUT}} ./internal/testhelpers/...
+    vars:
+      TEST_TIMEOUT: '{{.TEST_TIMEOUT | default "60s"}}'
+
+  test:unit:
+    desc: Run Go unit tests (excluding testhelpers).
+    cmds:
+      - cmd: go test -timeout {{.TEST_TIMEOUT}} $(go list ./... | grep -v /internal/testhelpers)
+        platforms: [linux, darwin]
+      - cmd: powershell -NoProfile -Command "go test -timeout {{.TEST_TIMEOUT}} (go list ./... | Where-Object { \$_ -notmatch '/internal/testhelpers' })"
+        platforms: [windows]
+    vars:
+      TEST_TIMEOUT: '{{.TEST_TIMEOUT | default "60s"}}'
+
+  test:race:
+    desc: Run unit tests with race detector.
+    cmds:
+      - cmd: go test -race -timeout {{.TEST_TIMEOUT}} $(go list ./... | grep -v /internal/testhelpers)
+        platforms: [linux, darwin]
+      - cmd: powershell -NoProfile -Command "go test -race -timeout {{.TEST_TIMEOUT}} (go list ./... | Where-Object { \$_ -notmatch '/internal/testhelpers' })"
+        platforms: [windows]
+    vars:
+      TEST_TIMEOUT: '{{.TEST_TIMEOUT | default "120s"}}'
+
+  # --- Aliases (wails3 template convention) -------------------------------
+  # These exist for the wails3 CLI's hard-coded task names — `wails3 build`,
+  # `wails3 task run`, and the executes in build/config.yml call them by
+  # bare name. Since wails3 is the dev-iteration toolchain, these aliases
+  # all route to the `:dev` variant. Humans should call gui:build:dev /
+  # gui:build:prod / etc. directly; these short names are only here so the
+  # wails3 internals keep working.
+  build:
+    desc: "wails3 internal — forwards DEV to gui:build:dev. Humans: use gui:build:dev or gui:build:prod."
+    cmds:
+      - task: gui:build:dev
+        vars: {DEV: '{{.DEV}}'}
+  run:
+    desc: "wails3 internal — forwards to gui:run:dev. Humans: use gui:run:dev or gui:run:prod."
+    cmds:
+      - task: gui:run:dev
+  package:
+    desc: "wails3 internal — forwards to gui:package:dev. Humans: use gui:package:dev or gui:package:prod."
+    cmds:
+      - task: gui:package:dev
+  storybook:
+    desc: Alias for gui:storybook.
+    cmds:
+      - task: gui:storybook
+
+  # --- Docker / server mode (wails3 template, broken on darwin alpha.74) --
+  build:server:
+    cmds:
+      - task: common:build:server
+  run:server:
+    cmds:
+      - task: common:run:server
+  build:docker:
+    cmds:
+      - task: common:build:docker
+  run:docker:
+    cmds:
+      - task: common:run:docker
+  setup:docker:
+    cmds:
+      - task: common:setup:docker

@@ -1,0 +1,119 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard
+  enable:
+    # Correctness
+    - errcheck         # unchecked errors
+    - govet            # std go vet
+    - ineffassign      # ineffective assignments
+    - staticcheck      # SA*/ST*/QF* — the big one
+    - unused           # dead code
+    - errorlint        # err == sentinel without errors.Is
+    - nilerr           # return nil after err != nil
+    - nilnil           # return (nil, nil)
+    - bodyclose        # http.Response.Body unclosed
+    - rowserrcheck     # rows.Err unchecked
+    - sqlclosecheck    # *sql.Rows / *sql.Stmt left open
+    - contextcheck     # ctx not propagated
+    - durationcheck    # mul of two time.Duration
+    - exhaustive       # type-switch / switch on enum exhaustiveness
+    - makezero         # make([]T, n) then append (silent over-allocation)
+    - asasalint        # any-slice passed to vararg as []any
+    - usestdlibvars    # http.MethodGet over "GET" etc.
+    - reassign         # global var reassigned
+    - bidichk          # unicode bidi attacks
+    - copyloopvar      # capture loop var (post-Go 1.22)
+    - intrange         # `for i := range N` style
+
+    # Security
+    - gosec
+
+    # Performance
+    - prealloc         # slice could be pre-allocated
+    - perfsprint       # Sprintf where Itoa/Append works
+
+    # Style
+    - revive           # broad style/idiom checker
+    - misspell         # typos
+    - unconvert        # redundant conversions
+    - gocritic         # opinionated lint rules
+    - dupl             # duplicate blocks
+    - gocyclo          # cyclomatic complexity
+    - nestif           # deeply-nested ifs (matches feedback_flat_code)
+    - whitespace       # leading/trailing in functions
+
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true
+    gocyclo:
+      min-complexity: 15
+    nestif:
+      min-complexity: 5
+    dupl:
+      threshold: 100
+    revive:
+      severity: warning
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+        - name: if-return
+        - name: increment-decrement
+        - name: var-declaration
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
+
+  exclusions:
+    paths:
+      - frontend/
+      - build/
+      - bin/
+      - cmd/genversioninfo/
+    rules:
+      # Tests get a softer hand on a few noisy linters.
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - prealloc
+          - dupl
+          - gocyclo
+          - nestif
+          - revive
+          - unused    # test helpers may be defined ahead of their first test
+          - nilerr    # intentional nil-error sentinel pattern in test runners
+          - nilnil    # intentional (nil, nil) in test stubs
+      # testhelpers ARE fixtures — same exemption.
+      - path: internal/testhelpers/
+        linters:
+          - errcheck
+          - gosec
+          - dupl
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+    - gofumpt

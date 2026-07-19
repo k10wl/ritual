@@ -1,0 +1,33 @@
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build:dev": "tsc && vite build --minify false --mode development",
+    "build": "tsc && vite build --mode production",
+    "preview": "vite preview",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "test": "web-test-runner"
+  },
+  "dependencies": {
+    "@lit/context": "^1.1.6",
+    "@wailsio/runtime": "latest",
+    "gsap": "^3.15.0",
+    "lit": "^3.1.0",
+    "lucide": "^1.16.0",
+    "svgpath": "^2.6.0"
+  },
+  "devDependencies": {
+    "@open-wc/testing": "^4.0.0",
+    "@storybook/addon-docs": "^10.4.0",
+    "@storybook/web-components-vite": "^10.4.0",
+    "@web/dev-server-esbuild": "^1.0.2",
+    "@web/test-runner": "^0.20.0",
+    "storybook": "^10.4.0",
+    "typescript": "^5.2.2",
+    "vite": "^5.0.0"
+  }
+}

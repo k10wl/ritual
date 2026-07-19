@@ -86,7 +86,7 @@ func TestPaperMinecraftWorldSetup(t *testing.T) {
 
 func TestPaperMinecraftWorldSetupWithCustomDir(t *testing.T) {
 	customDir := filepath.Join(t.TempDir(), "custom")
-	err := os.MkdirAll(customDir, 0755)
+	err := os.MkdirAll(customDir, 0o755)
 	require.NoError(t, err)
 
 	root, err := os.OpenRoot(customDir)
@@ -164,7 +164,7 @@ func TestPaperMinecraftWorldSetupComparison(t *testing.T) {
 
 	// Modify one file in the copy
 	modifiedFile := filepath.Join(copyDir, "world/level.dat")
-	err = os.WriteFile(modifiedFile, []byte("modified content"), 0644)
+	err = os.WriteFile(modifiedFile, []byte("modified content"), 0o644)
 	require.NoError(t, err)
 
 	// Test comparison with modified file (should fail)
@@ -185,12 +185,12 @@ func TestPaperMinecraftWorldSetupFailure(t *testing.T) {
 
 	// Only create one world directory
 	worldDir := filepath.Join(incompleteDir, "world")
-	err = os.MkdirAll(worldDir, 0755)
+	err = os.MkdirAll(worldDir, 0o755)
 	require.NoError(t, err)
 
 	// Create level.dat but not region file
 	levelDatPath := filepath.Join(worldDir, "level.dat")
-	err = os.WriteFile(levelDatPath, []byte("incomplete world"), 0644)
+	err = os.WriteFile(levelDatPath, []byte("incomplete world"), 0o644)
 	require.NoError(t, err)
 
 	// Test comparison should fail due to missing files
@@ -207,7 +207,7 @@ func TestPaperMinecraftWorldSetupFailure(t *testing.T) {
 
 	// Modify a file content
 	modifiedFile := filepath.Join(wrongContentDir, "world/level.dat")
-	err = os.WriteFile(modifiedFile, []byte("wrong content"), 0644)
+	err = os.WriteFile(modifiedFile, []byte("wrong content"), 0o644)
 	require.NoError(t, err)
 
 	// Test comparison should fail due to content mismatch
@@ -220,7 +220,7 @@ func TestGetFileHash(t *testing.T) {
 	// Create a temporary file with known content
 	tempFile := filepath.Join(t.TempDir(), "test.txt")
 	content := "test content"
-	err := os.WriteFile(tempFile, []byte(content), 0644)
+	err := os.WriteFile(tempFile, []byte(content), 0o644)
 	require.NoError(t, err)
 
 	// Test hash calculation
@@ -249,13 +249,13 @@ func TestPaperMinecraftWorldSetup_NegativeCases(t *testing.T) {
 	}
 	defer invalidRoot.Close()
 
-	_, _, _, err = PaperMinecraftWorldSetup(invalidRoot)
+	_, _, _, _ = PaperMinecraftWorldSetup(invalidRoot)
 	// May or may not fail depending on root creation
 
 	// Test with read-only directory (if possible on current OS)
 	tempDir := t.TempDir()
 	readOnlyDir := filepath.Join(tempDir, "readonly")
-	err = os.MkdirAll(readOnlyDir, 0444) // Read-only permissions
+	err = os.MkdirAll(readOnlyDir, 0o444) // Read-only permissions
 	require.NoError(t, err)
 
 	// On Windows, read-only directories may still allow file creation
@@ -292,11 +292,11 @@ func TestPaperMinecraftWorldSetup_ComparisonFunction_NegativeCases(t *testing.T)
 	// Test comparison with directory containing only some files
 	partialDir := t.TempDir()
 	worldDir := filepath.Join(partialDir, "world")
-	err = os.MkdirAll(worldDir, 0755)
+	err = os.MkdirAll(worldDir, 0o755)
 	require.NoError(t, err)
 
 	// Create only level.dat
-	err = os.WriteFile(filepath.Join(worldDir, "level.dat"), []byte("test"), 0644)
+	err = os.WriteFile(filepath.Join(worldDir, "level.dat"), []byte("test"), 0o644)
 	require.NoError(t, err)
 
 	err = compareFunc(partialDir)

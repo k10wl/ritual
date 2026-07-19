@@ -2,28 +2,71 @@ package domain
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-
 	"ritual/internal/config"
 )
 
+// SettingsFilename is the on-disk filename for the user settings file.
 const SettingsFilename = "settings.json"
 
-// Settings represents user-configurable server settings
+// Settings represents user-configurable server settings.
+// MinRAMMB / MinDiskMB / MinJavaVersion are the pre-flight thresholds used
+// by the Checking stage; defaults are the same constants the legacy
+// manifest fallbacks read from internal/config.
+//
+// LoadedRefID (design-log/044) records which ref the workdir last matched
+// — refreshed by the loadedref subsystem on successful Pulling/Committing.
+// Empty on a never-pulled install; the Versions UI then falls back to the
+// IsHead flag so the "current" badge is never silent on a clean store.
 type Settings struct {
-	IP     string `json:"ip"`
-	Port   int    `json:"port"`
-	Memory int    `json:"memory"`
+	Port            int            `json:"port"`
+	Memory          int            `json:"memory"`
+	StartScript     string         `json:"start_script"`
+	MinRAMMB        int            `json:"min_ram_mb"`
+	MinDiskMB       int            `json:"min_disk_mb"`
+	MinJavaVersion  int            `json:"min_java_version"`
+	LocalRetention  RetentionRules `json:"local_retention"`
+	RemoteRetention RetentionRules `json:"remote_retention"`
+	LoadedRefID     RefID          `json:"loaded_ref_id"`
 }
 
-// DefaultSettings returns default settings values
+// DefaultStartScript is the launcher filename when settings.start_script is
+// empty or missing. NeoForge ships start.bat as the canonical Windows entry,
+// so operators get a runnable command without configuring anything.
+const DefaultStartScript = "start.bat"
+
+// DefaultSettings returns default settings values.
 func DefaultSettings() *Settings {
 	return &Settings{
-		IP:     "0.0.0.0",
-		Port:   25565,
-		Memory: 4096,
+		Port:            25565,
+		Memory:          4096,
+		StartScript:     DefaultStartScript,
+		MinRAMMB:        config.DefaultMinRAMMB,
+		MinDiskMB:       config.DefaultMinDiskMB,
+		MinJavaVersion:  config.DefaultMinJavaVersion,
+		LocalRetention:  DefaultRetentionRules(),
+		RemoteRetention: DefaultRetentionRules(),
+	}
+}
+
+// applyDefaults backfills zero-value threshold fields. Called after
+// json.Unmarshal so a v1 settings.json (no min_* fields) loads without
+// failing Validate on a binary upgrade.
+func (s *Settings) applyDefaults() {
+	if s.MinRAMMB <= 0 {
+		s.MinRAMMB = config.DefaultMinRAMMB
+	}
+	if s.MinDiskMB <= 0 {
+		s.MinDiskMB = config.DefaultMinDiskMB
+	}
+	if s.MinJavaVersion <= 0 {
+		s.MinJavaVersion = config.DefaultMinJavaVersion
+	}
+	if s.StartScript == "" {
+		s.StartScript = DefaultStartScript
 	}
 }
 
@@ -37,7 +80,7 @@ func SettingsPath() string {
 func LoadSettings() (*Settings, error) {
 	path := SettingsPath()
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- project-scoped config path
 	if err != nil {
 		if os.IsNotExist(err) {
 			return DefaultSettings(), nil
@@ -49,6 +92,7 @@ func LoadSettings() (*Settings, error) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return nil, fmt.Errorf("failed to parse settings file: %w", err)
 	}
+	settings.applyDefaults()
 
 	return &settings, nil
 }
@@ -69,22 +113,27 @@ func (s *Settings) Save() error {
 	return nil
 }
 
-// ToServer creates a Server instance from settings
-func (s *Settings) ToServer() (*Server, error) {
-	address := fmt.Sprintf("%s:%d", s.IP, s.Port)
-	return NewServer(address, s.Memory)
+// ToServerRuntime creates a ServerRuntime instance from settings
+func (s *Settings) ToServerRuntime() (*ServerRuntime, error) {
+	return NewServerRuntime(s.Port, s.Memory)
 }
 
-// Validate checks if settings values are valid
+// Validate checks if settings values are valid.
 func (s *Settings) Validate() error {
-	if s.IP == "" {
-		return fmt.Errorf("IP cannot be empty")
-	}
 	if s.Port <= 0 || s.Port > 65535 {
-		return fmt.Errorf("port must be between 1 and 65535")
+		return errors.New("port must be between 1 and 65535")
 	}
 	if s.Memory <= 0 {
-		return fmt.Errorf("memory must be positive")
+		return errors.New("memory must be positive")
+	}
+	if s.MinRAMMB <= 0 {
+		return errors.New("min_ram_mb must be positive")
+	}
+	if s.MinDiskMB <= 0 {
+		return errors.New("min_disk_mb must be positive")
+	}
+	if s.MinJavaVersion <= 0 {
+		return errors.New("min_java_version must be positive")
 	}
 	return nil
 }

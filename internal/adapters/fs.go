@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"ritual/internal/core/ports"
 	"strings"
 )
 
+// ErrOpenRootDir is a printf template for failure to open a root directory.
 const (
 	ErrOpenRootDir = "failed to open root directory %s: %w"
 )
@@ -18,331 +20,225 @@ const (
 // FSRepository implements StorageRepository using local filesystem
 type FSRepository struct {
 	root *os.Root
+	name string
 }
 
-// NewFSRepository creates a new filesystem storage repository
-func NewFSRepository(root *os.Root) (*FSRepository, error) {
+// NewFSRepository creates a new filesystem storage repository.
+// Optional name is the human-readable initial path used in observability
+// events (e.g. "./worlds"). When omitted, label falls back to "fs::".
+func NewFSRepository(root *os.Root, name ...string) (*FSRepository, error) {
 	if root == nil {
 		return nil, errors.New("root cannot be nil")
 	}
 
+	n := ""
+	if len(name) > 0 {
+		n = name[0]
+	}
+
 	return &FSRepository{
 		root: root,
+		name: n,
 	}, nil
 }
 
-// Get retrieves data by key from filesystem
-func (f *FSRepository) Get(ctx context.Context, key string) ([]byte, error) {
+// String returns adapter label for observability events: "fs::<name>".
+func (f *FSRepository) String() string {
+	return "fs::" + f.name
+}
+
+// GetStream opens key for streaming read. Caller closes the returned ReadCloser.
+func (f *FSRepository) GetStream(_ context.Context, key string) (io.ReadCloser, error) {
 	key = filepath.FromSlash(key)
 	file, err := f.root.Open(key)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("key not found: %s", key)
 		}
-		return nil, fmt.Errorf("failed to read file %s: %w", key, err)
+		return nil, fmt.Errorf("failed to open %s: %w", key, err)
 	}
-	defer file.Close()
-
-	var data []byte
-	buf := make([]byte, 1024)
-	for {
-		n, err := file.Read(buf)
-		if n > 0 {
-			data = append(data, buf[:n]...)
-		}
-		if err != nil {
-			if err.Error() == "EOF" {
-				break
-			}
-			return nil, fmt.Errorf("failed to read file %s: %w", key, err)
-		}
-	}
-
-	return data, nil
+	return file, nil
 }
 
-// Put stores data with the given key to filesystem
-func (f *FSRepository) Put(ctx context.Context, key string, data []byte) error {
+// PutStream writes body under key, creating parent dirs as needed. Direct
+// write with O_TRUNC — content-addressed blobs and parse-validated refs
+// self-detect partial writes on the next read (see spec §No .ritual.tmp
+// for blob writes, lines 740–744), so no tmp+rename dance is needed here.
+func (f *FSRepository) PutStream(_ context.Context, key string, body io.Reader) error {
 	key = filepath.FromSlash(key)
 	dir := filepath.Dir(key)
 	if dir != "." {
-		if err := f.root.MkdirAll(dir, 0755); err != nil {
+		if err := f.root.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
-
-	file, err := f.root.Create(key)
+	file, err := f.root.OpenFile(key, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
-		return fmt.Errorf("failed to create file %s: %w", key, err)
+		return fmt.Errorf("failed to open file %s: %w", key, err)
 	}
-	defer file.Close()
-
-	if _, err := file.Write(data); err != nil {
-		return fmt.Errorf("failed to write file %s: %w", key, err)
+	_, copyErr := io.Copy(file, body)
+	closeErr := file.Close()
+	if copyErr != nil {
+		return fmt.Errorf("failed to write file %s: %w", key, copyErr)
 	}
-
+	if closeErr != nil {
+		return fmt.Errorf("failed to close file %s: %w", key, closeErr)
+	}
 	return nil
+}
+
+// Exists reports whether key is present on the filesystem.
+func (f *FSRepository) Exists(_ context.Context, key string) (bool, error) {
+	key = filepath.FromSlash(key)
+	if _, err := f.root.Stat(key); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to stat %s: %w", key, err)
+	}
+	return true, nil
 }
 
 // Delete removes data by key from filesystem
-func (f *FSRepository) Delete(ctx context.Context, key string) error {
+func (f *FSRepository) Delete(_ context.Context, key string) error {
 	key = filepath.FromSlash(key)
-	// Check if key is a directory by trying to open it
-	file, err := f.root.Open(key)
-	if err != nil {
+	if _, err := f.root.Stat(key); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("key not found: %s", key)
 		}
-		return fmt.Errorf("failed to open %s: %w", key, err)
-	}
-	defer file.Close()
-
-	// Check if it's a directory
-	stat, err := file.Stat()
-	if err != nil {
 		return fmt.Errorf("failed to stat %s: %w", key, err)
 	}
-
-	if stat.IsDir() {
-		// Recursively delete directory contents
-		return f.deleteDirectoryRecursive(ctx, key)
-	} else {
-		// For files, use the existing Remove method
-		if err := f.root.Remove(key); err != nil {
-			if os.IsNotExist(err) {
-				return fmt.Errorf("key not found: %s", key)
-			}
-			return fmt.Errorf("failed to delete file %s: %w", key, err)
-		}
+	if err := f.root.RemoveAll(key); err != nil {
+		return fmt.Errorf("failed to delete %s: %w", key, err)
 	}
-
 	return nil
 }
 
-// List returns all keys with the given prefix from filesystem
-func (f *FSRepository) List(ctx context.Context, prefix string) ([]string, error) {
-	var keys []string
-
-	if prefix == "" {
-		prefix = "."
-	} else {
-		prefix = filepath.FromSlash(prefix)
+// List returns the keys of every object under prefix, recursively, as full
+// slash-separated keys (e.g. "bin/windows-amd64/2.0.1/<sha>.exe"). This mirrors
+// S3/R2 ListObjectsV2 with no delimiter: a flat, recursive enumeration of
+// object keys with NO directory entries. Matching that contract is load-bearing
+// — the mock must list identically to R2 or deep-hierarchy consumers silently
+// break. Self-update's latest() expects "<version>/<sha>" keys two levels under
+// the platform prefix; the old one-directory-level List returned the version
+// dir instead, so the mock reported "no remote build" while R2 worked.
+func (f *FSRepository) List(_ context.Context, prefix string) ([]string, error) {
+	walkRoot := strings.Trim(strings.ReplaceAll(prefix, "\\", "/"), "/")
+	if walkRoot == "" {
+		walkRoot = "."
 	}
 
-	file, err := f.root.Open(prefix)
+	fsys := f.root.FS()
+	info, err := fs.Stat(fsys, walkRoot)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return []string{}, nil
 		}
-		return nil, fmt.Errorf("failed to open directory %s: %w", prefix, err)
+		return nil, fmt.Errorf("failed to stat %s: %w", walkRoot, err)
 	}
-	defer file.Close()
-
-	info, err := file.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("failed to stat directory %s: %w", prefix, err)
-	}
-
 	if !info.IsDir() {
-		return []string{prefix}, nil
+		return []string{walkRoot}, nil
 	}
 
-	entries, err := file.Readdir(0)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read directory %s: %w", prefix, err)
+	var keys []string
+	if err := fs.WalkDir(fsys, walkRoot, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		keys = append(keys, p)
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to walk %s: %w", walkRoot, err)
 	}
-
-	for _, entry := range entries {
-		entryPath := strings.ReplaceAll(filepath.Join(prefix, entry.Name()), "\\", "/")
-		keys = append(keys, entryPath)
-	}
-
 	return keys, nil
 }
 
 // Copy copies data from source key to destination key
 func (f *FSRepository) Copy(ctx context.Context, sourceKey string, destKey string) error {
 	if ctx == nil {
-		return fmt.Errorf("context cannot be nil")
+		return errors.New("context cannot be nil")
 	}
 	if f == nil {
-		return fmt.Errorf("filesystem repository cannot be nil")
+		return errors.New("filesystem repository cannot be nil")
 	}
 	if sourceKey == "" {
-		return fmt.Errorf("source key cannot be empty")
+		return errors.New("source key cannot be empty")
 	}
 	if destKey == "" {
-		return fmt.Errorf("destination key cannot be empty")
+		return errors.New("destination key cannot be empty")
 	}
 	if f.root == nil {
-		return fmt.Errorf("root filesystem cannot be nil")
+		return errors.New("root filesystem cannot be nil")
 	}
 
 	sourceKey = filepath.FromSlash(sourceKey)
 	destKey = filepath.FromSlash(destKey)
 
-	// Open source file/directory
-	sourceFile, err := f.root.Open(sourceKey)
+	info, err := f.root.Stat(sourceKey)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("source key not found: %s", sourceKey)
 		}
-		return fmt.Errorf("failed to open source %s: %w", sourceKey, err)
-	}
-	defer sourceFile.Close()
-
-	// Check if source is directory
-	info, err := sourceFile.Stat()
-	if err != nil {
 		return fmt.Errorf("failed to stat source %s: %w", sourceKey, err)
 	}
 
 	if info.IsDir() {
-		// Copy directory recursively
-		return f.copyDirectory(ctx, sourceKey, destKey)
+		return f.copyDir(ctx, sourceKey, destKey)
 	}
 
-	// Create destination directory if needed
+	data, err := f.root.ReadFile(sourceKey)
+	if err != nil {
+		return fmt.Errorf("failed to read source %s: %w", sourceKey, err)
+	}
+
 	destDir := filepath.Dir(destKey)
 	if destDir != "." {
-		if err := f.root.MkdirAll(destDir, 0755); err != nil {
+		if err := f.root.MkdirAll(destDir, 0o755); err != nil {
 			return fmt.Errorf("failed to create destination directory %s: %w", destDir, err)
 		}
 	}
 
-	// Create destination file
-	destFile, err := f.root.Create(destKey)
-	if err != nil {
-		return fmt.Errorf("failed to create destination file %s: %w", destKey, err)
-	}
-	defer destFile.Close()
-
-	// Copy file content
-	buf := make([]byte, 1024)
-	for {
-		n, err := sourceFile.Read(buf)
-		if n > 0 {
-			if _, writeErr := destFile.Write(buf[:n]); writeErr != nil {
-				return fmt.Errorf("failed to write to destination file %s: %w", destKey, writeErr)
-			}
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return fmt.Errorf("failed to read from source file %s: %w", sourceKey, err)
-		}
-	}
-
-	return nil
+	return f.root.WriteFile(destKey, data, 0o644)
 }
 
-// deleteDirectoryRecursive recursively deletes a directory and its contents
-func (f *FSRepository) deleteDirectoryRecursive(ctx context.Context, dir string) error {
-	// Open directory
-	dirFile, err := f.root.Open(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("key not found: %s", dir)
-		}
-		return fmt.Errorf("failed to open directory %s: %w", dir, err)
-	}
-	defer dirFile.Close()
-
-	// Read directory entries
-	entries, err := dirFile.Readdir(0)
-	if err != nil {
-		return fmt.Errorf("failed to read directory %s: %w", dir, err)
-	}
-
-	// Delete all entries
-	for _, entry := range entries {
-		entryPath := filepath.Join(dir, entry.Name())
-		if entry.IsDir() {
-			// Recursively delete subdirectory
-			if err := f.deleteDirectoryRecursive(ctx, entryPath); err != nil {
-				return err
-			}
-		} else {
-			// Delete file
-			if err := f.root.Remove(entryPath); err != nil {
-				return fmt.Errorf("failed to delete file %s: %w", entryPath, err)
-			}
-		}
-	}
-
-	// Remove the directory itself
-	if err := f.root.Remove(dir); err != nil {
-		return fmt.Errorf("failed to delete directory %s: %w", dir, err)
-	}
-
-	return nil
-}
-
-// copyDirectory recursively copies a directory and its contents
-func (f *FSRepository) copyDirectory(ctx context.Context, sourceDir string, destDir string) error {
-	// Defensive precondition checks
-	if ctx == nil {
-		return fmt.Errorf("context cannot be nil")
-	}
-	if f == nil {
-		return fmt.Errorf("filesystem repository receiver cannot be nil")
-	}
-	if f.root == nil {
-		return fmt.Errorf("filesystem root cannot be nil")
-	}
-	if sourceDir == "" {
-		return fmt.Errorf("source directory path cannot be empty")
-	}
-	if destDir == "" {
-		return fmt.Errorf("destination directory path cannot be empty")
-	}
-
-	// Verify source directory exists and is a directory
-	sourceInfo, err := f.root.Stat(sourceDir)
-	if err != nil {
-		return fmt.Errorf("failed to stat source directory %s: %w", sourceDir, err)
-	}
-	if !sourceInfo.IsDir() {
-		return fmt.Errorf("source path %s is not a directory", sourceDir)
-	}
-
-	// Create destination directory (ignore if already exists)
-	if err := f.root.MkdirAll(destDir, 0755); err != nil {
+// copyDir recursively copies a directory
+func (f *FSRepository) copyDir(ctx context.Context, sourceDir string, destDir string) error {
+	if err := f.root.MkdirAll(destDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create destination directory %s: %w", destDir, err)
 	}
 
-	// Open source directory
-	sourceFile, err := f.root.Open(sourceDir)
+	dir, err := f.root.Open(sourceDir)
 	if err != nil {
 		return fmt.Errorf("failed to open source directory %s: %w", sourceDir, err)
 	}
-	defer sourceFile.Close()
+	defer func() { _ = dir.Close() }()
 
-	// Read directory entries
-	entries, err := sourceFile.Readdir(0)
+	entries, err := dir.Readdir(0)
 	if err != nil {
 		return fmt.Errorf("failed to read source directory %s: %w", sourceDir, err)
 	}
 
-	// Copy each entry
 	for _, entry := range entries {
-		sourcePath := filepath.Join(sourceDir, entry.Name())
-		destPath := filepath.Join(destDir, entry.Name())
-
-		if entry.IsDir() {
-			// Recursively copy subdirectory
-			if err := f.copyDirectory(ctx, sourcePath, destPath); err != nil {
-				return err
-			}
-		} else {
-			// Copy file
-			if err := f.Copy(ctx, sourcePath, destPath); err != nil {
-				return err
-			}
+		srcPath := filepath.Join(sourceDir, entry.Name())
+		dstPath := filepath.Join(destDir, entry.Name())
+		if err := f.Copy(ctx, srcPath, dstPath); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+// DeleteBatch removes multiple keys in a single operation
+func (f *FSRepository) DeleteBatch(ctx context.Context, keys []string) error {
+	for _, key := range keys {
+		if err := f.Delete(ctx, key); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
