@@ -3,7 +3,6 @@ import { customElement, property } from "lit/decorators.js";
 import { gsap } from "gsap";
 import "./primitives/stable-num";
 import "./primitives/decoder";
-import { formatSize, formatSpeed } from "./telemetry-format";
 
 const NUMERIC_PLACEHOLDER = "·····";
 const ROW_ENTER_S = 0.36;
@@ -34,9 +33,19 @@ function jitterStone(text: string, fast: boolean): TemplateResult {
 
 @customElement("dial-telemetry")
 export class DialTelemetry extends LitElement {
-    @property({ type: Number }) speedBps = 0;
-    @property({ type: Number }) bytesDone = 0;
+    // Ready-to-render text, computed Go-side (design-log/050) — bound
+    // directly, no unit conversion here.
+    @property() sizeDoneText = "";
+    @property() sizeTotalText = "";
+    @property() sizeUnit = "";
+    @property() speedText = "";
+    @property() speedUnit = "";
+    // Raw numbers, kept only for the "is there real data yet, or should this
+    // cell show the decoder placeholder" threshold reads below — simple
+    // comparisons against backend-authoritative fields, not computation of
+    // new data.
     @property({ type: Number }) bytesTotal = 0;
+    @property({ type: Number }) logicalMbps = 0;
 
     // Entrance fires the first time real data arrives, not on bare mount —
     // otherwise rows animate against the "·····" placeholder and the real
@@ -45,8 +54,8 @@ export class DialTelemetry extends LitElement {
 
     updated(changed: PropertyValues) {
         if (this._entered) return;
-        if (!changed.has("bytesTotal") && !changed.has("speedBps") && !changed.has("bytesDone")) return;
-        if (this.bytesTotal <= 0 && this.speedBps <= 0 && this.bytesDone <= 0) return;
+        if (!changed.has("bytesTotal") && !changed.has("logicalMbps")) return;
+        if (this.bytesTotal <= 0 && this.logicalMbps <= 0) return;
         this._entered = true;
         this.playEnter();
     }
@@ -92,24 +101,22 @@ export class DialTelemetry extends LitElement {
         // logicalMbps happened to be zero. Pre-PlanInfo (bytesTotal <= 0)
         // we use the placeholder for done too — that's the "no plan yet"
         // beat, not "no rate yet".
-        const rushing = this.speedBps <= 0;
+        const rushing = this.logicalMbps <= 0;
         const planned = this.bytesTotal > 0;
-        const sp = formatSpeed(this.speedBps);
-        const sz = formatSize(this.bytesDone, this.bytesTotal);
-        const speedValue = rushing ? jitterStone(NUMERIC_PLACEHOLDER, true) : sp.value;
-        const doneValue = planned ? sz.done : jitterStone(NUMERIC_PLACEHOLDER, true);
+        const speedValue = rushing ? jitterStone(NUMERIC_PLACEHOLDER, true) : this.speedText;
+        const doneValue = planned ? this.sizeDoneText : jitterStone(NUMERIC_PLACEHOLDER, true);
         return html`
             <div class="row">
                 <stable-num chars="6" align="right">${speedValue}</stable-num>
-                <span class="unit">${jitterStone(sp.unit, false)}</span>
+                <span class="unit">${jitterStone(this.speedUnit, false)}</span>
             </div>
             <div class="row">
                 <stable-num chars="6" align="right">${doneValue}</stable-num>
-                <span class="unit">${jitterStone(sz.unit, false)}</span>
-                ${sz.total ? html`
+                <span class="unit">${jitterStone(this.sizeUnit, false)}</span>
+                ${this.sizeTotalText ? html`
                     <span class="sep">${jitterStone("/", false)}</span>
-                    <span>${sz.total}</span>
-                    <span class="unit">${jitterStone(sz.unit, false)}</span>
+                    <span>${this.sizeTotalText}</span>
+                    <span class="unit">${jitterStone(this.sizeUnit, false)}</span>
                 ` : null}
             </div>
         `;

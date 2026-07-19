@@ -296,10 +296,11 @@ tasks:
 
   # --- Tests --------------------------------------------------------------
   test:
-    desc: Run testhelpers first (critical fixtures), then the rest.
+    desc: Run testhelpers first (critical fixtures), then the rest, then the frontend suite.
     cmds:
       - task: test:helpers
       - task: test:unit
+      - task: common:test:frontend
 
   # TEST_TIMEOUT is a HARD per-package guard (go test -timeout applies to each
   # package binary). It exists so a hung/deadlocked test panics with a goroutine

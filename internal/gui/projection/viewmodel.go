@@ -97,6 +97,14 @@ type JoinAddress struct {
 // string: the dial reads `Phase` and looks up its copy locally. Stage-level
 // strings like "Snapshotting…" were dev/log copy and never reached the user.
 type ViewModel struct {
+	// Seq is a strictly increasing sequence number stamped once per emit by
+	// Projection.emit (design-log/051 Q11). The Wails/WebView2 delivery of
+	// each emit to the frontend is fire-and-forget and does not guarantee
+	// execution order matches submission order under load; the frontend
+	// compares Seq against the last-applied value and drops anything not
+	// strictly greater, so a stale duplicate that finishes executing late
+	// can never overwrite a newer snapshot already applied.
+	Seq         int64   `json:"seq"`
 	Stage       Stage   `json:"stage"`
 	Phase       Phase   `json:"phase"`
 	Progress    int     `json:"progress"`
@@ -121,6 +129,15 @@ type ViewModel struct {
 	LockHolder string        `json:"lockHolder"`
 	Addresses  []JoinAddress `json:"addresses"`
 
+	// UptimeSeconds is elapsed time since PhasePlaying began, re-emitted once
+	// a second by a dedicated ticker in Projection.Run (independent of the
+	// progress.Ticker) so the frontend never runs its own clock — the value
+	// only changes because the backend pushed a new one. 0 outside
+	// PhasePlaying. The frontend formats it with the same formatEta() it
+	// already uses for EtaSeconds: the backend drives *when* this changes,
+	// the frontend still decides *how* to render it. Design-log/050.
+	UptimeSeconds int64 `json:"uptimeSeconds"`
+
 	// TargetVersion is the semver the autoupdate is moving to during
 	// PhasePreflight/PhaseUpdating — the dial renders "Updating → v{TargetVersion}".
 	// Empty outside the update flow. Design-log/037.
@@ -133,6 +150,26 @@ type ViewModel struct {
 	// reads as live-but-waiting rather than a dead-frozen dial. False once bytes
 	// resume, at completion, and outside the transfer stages. Design-log/022 #2.
 	Stalled bool `json:"stalled"`
+
+	// SizeDoneText/SizeTotalText/SizeUnit are formatSize's output — Go's
+	// single source of truth for converting BytesDone/BytesTotal into a
+	// displayable magnitude ("58.8", "1.19", "GB"). Empty strings mean "no
+	// plan yet"; the frontend's own bytesTotal>0 check decides whether to
+	// show these or its decoder-placeholder animation — that threshold read
+	// and the ring-fill ratio (bytesDone/bytesTotal) stay frontend concerns.
+	// Design-log/050.
+	SizeDoneText  string `json:"sizeDoneText"`
+	SizeTotalText string `json:"sizeTotalText"`
+	SizeUnit      string `json:"sizeUnit"`
+
+	// SpeedText/SpeedUnit are formatSpeed's output, computed from
+	// LogicalMbps (the decompress/install rate — matches what the dial has
+	// always displayed, design-log/018) converted to bytes/s. "0"/"B/s"
+	// while no rate is available yet; the frontend's own logicalMbps<=0
+	// check (not this text) decides whether to show it or a placeholder.
+	// Design-log/050.
+	SpeedText string `json:"speedText"`
+	SpeedUnit string `json:"speedUnit"`
 }
 
 // Snap is published to the EventBus after every ViewModel change so

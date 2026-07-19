@@ -45,6 +45,8 @@ tasks:
         vars:
           ARCH: '{{.ARCH}}'
       - go build {{.BUILD_FLAGS}} {{.LINK_FLAGS}} -o "{{.BIN_DIR}}/{{.OUT_NAME}}.exe" {{.MAIN_PKG}}
+      - cmd: powershell -NoProfile -ExecutionPolicy Bypass -File build/windows/check-icon.ps1 -ExePath "{{.BIN_DIR}}/{{.OUT_NAME}}.exe"
+        platforms: [windows]
       - cmd: powershell Remove-item cmd/gui/*.syso
         platforms: [windows]
       - cmd: rm -f cmd/gui/*.syso

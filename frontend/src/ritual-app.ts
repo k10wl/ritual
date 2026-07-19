@@ -26,6 +26,7 @@ import {
     ViewModel,
     JoinAddress,
 } from "./wails-api";
+import { isNewerSnapshot } from "./vm-seq";
 import "./ui/primitives/decoder";
 import type { DialGlyph, DialState } from "./ui/ritual-dial";
 import { formatEta } from "./ui/telemetry-format";
@@ -59,7 +60,6 @@ const toBindingRules = (m: RetentionModelRules): RetentionRules =>
     });
 import type { PrepSettings, PrepSettingsChangeDetail } from "./ui/prep-settings";
 
-const MBPS_TO_BPS = 1_000_000 / 8;
 const FALLBACK_PREP: PrepSettings = { port: 25565, memoryMB: 4096 };
 
 type UnderSlot = "telemetry" | "addresses" | null;
@@ -74,18 +74,15 @@ interface DialView {
 }
 
 interface AppCtx {
-    uptimeSub: string;
     lastProgressArc: number;
     lastNonFailPhase: Phase;
-    // Effective bytes-per-second for the current transfer beat. Single source
-    // of truth shared between the under-slot speed cell and the ETA — they
-    // can never disagree. Derivation lives in applyVm() (see computeSpeedBps)
-    // and lands on @state speedBps so render is a pure function of reactive
-    // state — design-log/020 §Class B.
-    effectiveSpeedBps: number;
 }
 
-const FALLBACK_VM: ViewModel = new ViewModel({ phase: Phase.PhaseIdle });
+// seq: -1 (backend Seq starts at 0 as a Go zero-value before Run's first
+// emit, then 1, 2, ...) guarantees any real snapshot — even one read via
+// GetSnapshot() in the narrow window before Run's first emit — is strictly
+// newer than this placeholder and passes applyVm's seq guard.
+const FALLBACK_VM: ViewModel = new ViewModel({ phase: Phase.PhaseIdle, seq: -1 });
 
 // Failure attribution noun map: when a run fails, the dial shows "Couldn't
 // finish {noun}" where noun reflects the last user-meaningful phase the run
@@ -99,10 +96,6 @@ function nounFor(phase: Phase): string {
         case Phase.PhaseSaving:      return "saving";
         default:                     return "the run";
     }
-}
-
-function isTransferPhase(phase: Phase): boolean {
-    return phase === Phase.PhaseDownloading || phase === Phase.PhaseSaving;
 }
 
 function arcFromBytes(vm: ViewModel): number {
@@ -167,7 +160,10 @@ const PHASE_VIEW: Record<Phase, DialView> = {
     [Phase.PhasePlaying]: {
         state: "run", glyph: "stop", label: "Live", underSlot: "addresses",
         arc: () => 1,
-        sub: (_vm, ctx) => ctx.uptimeSub || formatEta(0),
+        // uptimeSeconds is re-emitted once a second by a backend ticker
+        // (design-log/050) — the frontend runs no clock of its own; it just
+        // formats whatever the backend last pushed.
+        sub: (vm) => formatEta(vm.uptimeSeconds),
     },
     [Phase.PhaseWrapping]: {
         state: "final", glyph: "unplug", label: "Spinning down", underSlot: null,
@@ -209,7 +205,11 @@ const PHASE_VIEW: Record<Phase, DialView> = {
 interface Derived {
     dial: { state: DialState; arc: number; glyph: DialGlyph; label: string; sub: string };
     underSlot: UnderSlot;
-    telemetry: { speedBps: number; bytesDone: number; bytesTotal: number };
+    telemetry: {
+        sizeDoneText: string; sizeTotalText: string; sizeUnit: string;
+        speedText: string; speedUnit: string;
+        bytesTotal: number; logicalMbps: number;
+    };
     addresses: JoinAddress[];
 }
 
@@ -218,7 +218,6 @@ export class RitualApp extends LitElement {
     @state() private vm: ViewModel = FALLBACK_VM;
     @state() private lastProgressArc = 0;
     @state() private lastNonFailPhase: Phase = Phase.PhaseIdle;
-    @state() private uptimeSub = "";
     @state() private prep: PrepSettings = FALLBACK_PREP;
     // Passive IDLE cue (design-log/035 §Q6 + OQ1): true when local work isn't
     // safely canonical (dirty || unpushed). Folded from getSyncStatus on mount;
@@ -229,26 +228,8 @@ export class RitualApp extends LitElement {
     // §Q6). Read at Start time; not persisted. Tracked here because the live
     // form lives in a pushed pane and isn't query-able on the dial tap.
     @state() private skipSync = false;
-    // Snapshot of effective transfer rate, derived once in applyVm() so the
-    // under-slot speed and the ETA always see the same number. Keeping the
-    // derivation off the render path keeps render() a pure function of
-    // reactive state — design-log/020 §Class B.
-    @state() private speedBps = 0;
     @query("rune-stack") private _stack!: RuneStack | null;
-    private runStartedAt = 0;
-    private uptimeTimer = 0;
     private unsubscribe?: () => void;
-    // Transfer-rate fallback anchors. transferStartedAt = wall time the
-    // current Downloading/Saving beat began; transferStartBytes = the
-    // bytesDone value at that moment (non-zero on resume scenarios where
-    // the projection hasn't reset the counter). effectiveSpeedBps() takes
-    // (bytesDone - transferStartBytes) / (now - transferStartedAt) when
-    // vm.logicalMbps is 0 — keeps the speed cell + ETA honest under fast
-    // transfers or pre-Tick windows where the Go-side rolling average
-    // hasn't settled. Reset to 0 / 0 outside transfer phases so a stale
-    // start time can't bleed into a new beat.
-    private transferStartedAt = 0;
-    private transferStartBytes = 0;
 
     async connectedCallback() {
         super.connectedCallback();
@@ -270,93 +251,41 @@ export class RitualApp extends LitElement {
     disconnectedCallback() {
         super.disconnectedCallback();
         this.unsubscribe?.();
-        this.stopUptime();
     }
 
     private applyVm(vm: ViewModel) {
-        const wasPlaying = this.vm.phase === Phase.PhasePlaying;
-        const isPlaying = vm.phase === Phase.PhasePlaying;
+        if (!isNewerSnapshot(this.vm, vm)) {
+            console.warn(`[applyVm] dropped stale/out-of-order snapshot: incoming seq=${vm.seq} (${vm.stage}/${vm.phase}) <= applied seq=${this.vm.seq} (${this.vm.stage}/${this.vm.phase})`);
+            return;
+        }
         const wasIdle = this.vm.phase === Phase.PhaseIdle;
         const isIdle = vm.phase === Phase.PhaseIdle;
-        // Order matters (design-log/020 §Class C): refresh the transfer-beat
-        // anchors and the speed snapshot BEFORE the arc/ctx read so the arc
-        // is computed against the new beat, not the stale one.
-        this.trackTransferBeat(vm);
-        this.speedBps = this.computeSpeedBps(vm);
         if (vm.phase !== Phase.PhaseFailed) {
             this.lastNonFailPhase = vm.phase;
             this.lastProgressArc = PHASE_VIEW[vm.phase]?.arc(vm, this.ctx()) ?? 0;
         }
-        if (isPlaying && !wasPlaying) this.startUptime();
-        if (!isPlaying && wasPlaying) this.stopUptime();
         this.vm = vm;
         if (!wasIdle && isIdle) void this.refreshUnpublished();
     }
 
-    // trackTransferBeat snapshots wall time + bytesDone at the moment a
-    // Downloading or Saving beat begins, and clears the anchor on exit.
-    // Used by effectiveSpeedBps() to compute a fallback rate when the
-    // Go-side rolling DataAverage hasn't settled. Treats Downloading and
-    // Saving as separate beats (each gets its own start) so a save that
-    // follows a download doesn't inherit the download's elapsed time.
-    private trackTransferBeat(vm: ViewModel) {
-        const wasTransfer = isTransferPhase(this.vm.phase);
-        const isTransfer = isTransferPhase(vm.phase);
-        const beatChanged = wasTransfer && isTransfer && this.vm.phase !== vm.phase;
-        if (isTransfer && (!wasTransfer || beatChanged)) {
-            this.transferStartedAt = performance.now();
-            this.transferStartBytes = vm.bytesDone;
-        } else if (!isTransfer) {
-            this.transferStartedAt = 0;
-            this.transferStartBytes = 0;
-        }
-    }
-
-    // Pure function of (vm, transfer-beat anchors, performance.now()). Called
-    // from applyVm() so render never reads wall-clock — design-log/020 §B.
-    private computeSpeedBps(vm: ViewModel): number {
-        if (vm.logicalMbps > 0) return vm.logicalMbps * MBPS_TO_BPS;
-        if (this.transferStartedAt === 0) return 0;
-        const elapsedS = (performance.now() - this.transferStartedAt) / 1000;
-        // 100 ms floor: any shorter window and a single buffered Read can
-        // pin the divisor close to zero and produce nonsense MB/s spikes.
-        if (elapsedS <= 0.1) return 0;
-        const flowed = Math.max(0, vm.bytesDone - this.transferStartBytes);
-        if (flowed <= 0) return 0;
-        return flowed / elapsedS;
-    }
-
     private ctx(): AppCtx {
         return {
-            uptimeSub: this.uptimeSub,
             lastProgressArc: this.lastProgressArc,
             lastNonFailPhase: this.lastNonFailPhase,
-            effectiveSpeedBps: this.speedBps,
         };
-    }
-
-    private startUptime() {
-        this.runStartedAt = performance.now();
-        this.uptimeSub = formatEta(0);
-        this.uptimeTimer = window.setInterval(() => {
-            const elapsed = Math.floor((performance.now() - this.runStartedAt) / 1000);
-            this.uptimeSub = formatEta(elapsed);
-        }, 1000);
-    }
-
-    private stopUptime() {
-        if (!this.uptimeTimer) return;
-        clearInterval(this.uptimeTimer);
-        this.uptimeTimer = 0;
     }
 
     private derive(): Derived {
         const vm = this.vm;
         const ctx = this.ctx();
         const telemetry = {
-            speedBps: ctx.effectiveSpeedBps,
-            bytesDone: vm.bytesDone,
+            sizeDoneText: vm.sizeDoneText,
+            sizeTotalText: vm.sizeTotalText,
+            sizeUnit: vm.sizeUnit,
+            speedText: vm.speedText,
+            speedUnit: vm.speedUnit,
             bytesTotal: vm.bytesTotal,
+            logicalMbps: vm.logicalMbps,
         };
         const view = PHASE_VIEW[vm.phase] ?? PHASE_VIEW[Phase.PhaseIdle];
 
@@ -642,9 +571,13 @@ export class RitualApp extends LitElement {
         }
         if (d.underSlot === "telemetry") {
             return html`<dial-telemetry
-                .speedBps=${d.telemetry.speedBps}
-                .bytesDone=${d.telemetry.bytesDone}
+                .sizeDoneText=${d.telemetry.sizeDoneText}
+                .sizeTotalText=${d.telemetry.sizeTotalText}
+                .sizeUnit=${d.telemetry.sizeUnit}
+                .speedText=${d.telemetry.speedText}
+                .speedUnit=${d.telemetry.speedUnit}
                 .bytesTotal=${d.telemetry.bytesTotal}
+                .logicalMbps=${d.telemetry.logicalMbps}
             ></dial-telemetry>`;
         }
         return null;

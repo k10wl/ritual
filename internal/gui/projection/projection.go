@@ -11,6 +11,7 @@ import (
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/subsystems/lifecycle"
+	"sync"
 	"time"
 )
 
@@ -33,11 +34,17 @@ type AddressProvider interface {
 // everReady tracks whether the current run has reached ServerReady; gates
 // the Running-stage phase transitions (preparing → playing → wrapping).
 type Projection struct {
-	ch            <-chan ports.Event
-	unsub         func()
-	emitter       Emitter
-	publish       func(ports.Event)
-	addresses     AddressProvider
+	ch        <-chan ports.Event
+	unsub     func()
+	emitter   Emitter
+	publish   func(ports.Event)
+	addresses AddressProvider
+	// mu guards state (and nextSeq, always touched together with it) against
+	// the pre-existing cross-goroutine race between Run's single mutating
+	// goroutine and Snapshot, which ControlService.GetSnapshot calls from
+	// whatever goroutine services that RPC. Only Run ever mutates state — mu
+	// is single-writer/many-reader, not mutual exclusion between writers.
+	mu            sync.RWMutex
 	state         ViewModel
 	pipelineStage string
 	everReady     bool
@@ -59,6 +66,41 @@ type Projection struct {
 	etaBeatStarted bool
 	etaBeatElapsed time.Duration
 	etaBeatBytes   int64
+
+	// Per-flow baselines for BytesDone (design-log/050 §A). The underlying
+	// counters (progress.Tick.Remote.Down.Data / .Ops.Done) are process-
+	// lifetime cumulative atomics (internal/adapters/counter.go) — never
+	// reset between flows — while PlanInfo.BytesTotal is freshly scoped to
+	// just the current plan's delta. Without a baseline, a second pull/push
+	// inside one running process (chained dial restarts) opens with
+	// BytesDone already carrying every byte moved by the *previous* flow,
+	// which can exceed the new, smaller BytesTotal before anything has
+	// streamed. lastRemoteDown/lastRemoteOps are updated on every Tick
+	// regardless of pipelineStage (onTick's stage gate returns early
+	// otherwise) so a baseline is available the instant the stage flips —
+	// a Tick can arrive before that flow's own PlanInfo (see design-log/050
+	// §A Q5). pullBaseline/pushOpsBaseline are captured in onStateChanged on
+	// entry to StagePulling/StagePushing.
+	lastRemoteDown  int64
+	lastRemoteOps   int64
+	pullBaseline    int64
+	pushOpsBaseline int64
+
+	// playingStartedAt anchors the backend-driven uptime ticker (design-log/050):
+	// set on running.ServerReadyInfo, read by Run's 1Hz uptimeTicker while
+	// Phase stays PhasePlaying. The frontend runs no clock of its own — the
+	// displayed uptime only changes because the backend pushed a new value.
+	playingStartedAt time.Time
+
+	// nextSeq stamps a strictly increasing ViewModel.Seq on every emit
+	// (design-log/051 Q11). ExecuteScript(script, nil) — the Wails/WebView2
+	// call that delivers each emit to the frontend — is fire-and-forget and
+	// does not guarantee execution order matches submission order under load;
+	// a stale duplicate can finish executing after a later, correct snapshot
+	// and silently overwrite it. Seq lets the frontend detect and drop any
+	// snapshot older than what it already applied, without needing an
+	// acknowledgment/retry round-trip.
+	nextSeq int64
 }
 
 // New subscribes to bus immediately and returns a Projection ready for Run.
@@ -79,26 +121,69 @@ func New(bus ports.EventBus, emitter Emitter, addresses AddressProvider) *Projec
 }
 
 // Snapshot returns the current view model. Used by ControlService.GetSnapshot
-// so the frontend has a value to render before the first Emit arrives.
-func (p *Projection) Snapshot() ViewModel { return p.state }
+// so the frontend has a value to render before the first Emit arrives. Called
+// from whatever goroutine services that RPC — guarded by mu against Run's
+// concurrent mutation.
+func (p *Projection) Snapshot() ViewModel {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.state
+}
+
+// emit stamps the next sequence number onto p.state (design-log/051 Q11) and
+// dispatches it through both the Wails-facing emitter and the bus (for the
+// file logger). The single call site here is what guarantees Seq is unique
+// and strictly increasing — every place that used to call
+// `p.emitter.Emit(p.state); p.publish(Snap{p.state})` directly now goes
+// through this instead. Takes a copy under mu so Emit/publish (which may be
+// slow — Wails IPC, subscriber fan-out) never run while holding the lock.
+func (p *Projection) emit() {
+	p.mu.Lock()
+	p.nextSeq++
+	p.state.Seq = p.nextSeq
+	vm := p.state
+	p.mu.Unlock()
+	p.emitter.Emit(vm)
+	p.publish(Snap{vm})
+}
 
 // Run blocks until ctx is cancelled or the bus closes. Publishes an initial
 // snapshot immediately so consumers never see an empty view.
+//
+// uptimeTicker (design-log/050) is the ONLY reason a fresh ViewModel is ever
+// emitted without a bus event driving it: the "Live" uptime caption must
+// visibly advance once a second, and the frontend runs no clock of its own,
+// so the backend has to be the one ticking. It's a no-op outside
+// PhasePlaying — cheap to leave running unconditionally rather than starting
+// and stopping it per-run.
 func (p *Projection) Run(ctx context.Context) {
 	defer p.unsub()
-	p.emitter.Emit(p.state)
-	p.publish(Snap{p.state})
+	p.emit()
+
+	uptimeTicker := time.NewTicker(time.Second)
+	defer uptimeTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-uptimeTicker.C:
+			if p.state.Phase != PhasePlaying {
+				continue
+			}
+			p.mu.Lock()
+			p.state.UptimeSeconds = int64(time.Since(p.playingStartedAt).Seconds())
+			p.mu.Unlock()
+			p.emit()
 		case evt, ok := <-p.ch:
 			if !ok {
 				return
 			}
-			if p.fold(evt) {
-				p.emitter.Emit(p.state)
-				p.publish(Snap{p.state})
+			p.mu.Lock()
+			changed := p.fold(evt)
+			p.mu.Unlock()
+			if changed {
+				p.emit()
 			}
 		}
 	}
@@ -130,6 +215,10 @@ func (p *Projection) fold(evt ports.Event) bool {
 		p.everReady = true
 		p.state.Stage = StageRunning
 		p.state.Phase = PhasePlaying
+		// Anchor for the backend-driven uptime ticker (design-log/050) — Run's
+		// 1Hz uptimeTicker reads time.Since(playingStartedAt) on every tick
+		// while Phase stays PhasePlaying. No frontend clock of any kind.
+		p.playingStartedAt = time.Now()
 		if p.addresses != nil {
 			p.state.Addresses = p.addresses.Addresses()
 		}
@@ -139,6 +228,7 @@ func (p *Projection) fold(evt ports.Event) bool {
 		p.state.Stage = StageUploading
 		p.state.Phase = PhaseWrapping
 		p.state.Addresses = nil
+		p.state.UptimeSeconds = 0
 	case acquiring.LockHeldInfo:
 		// Lock-held merely records the holder; the actual UI transition fires
 		// when lifecycle reports Failed (the acquiring stage routes to failed
@@ -166,6 +256,10 @@ func (p *Projection) fold(evt ports.Event) bool {
 		} else {
 			p.state.Progress = 0
 		}
+		// BytesTotal can change here independent of any Tick — the very first
+		// render after a plan arrives, before the first Tick fires. Refresh so
+		// SizeTotalText isn't stale against the new plan (design-log/050).
+		p.refreshFormattedFields()
 	case lifecycle.StatusChanged:
 		p.onStatusChanged(e)
 	default:
@@ -268,6 +362,15 @@ func (p *Projection) etaFromSessionAvg(elapsed time.Duration, done int64) int64 
 	return next
 }
 
+// refreshFormattedFields recomputes SizeDoneText/SizeTotalText/SizeUnit and
+// SpeedText/SpeedUnit from the current BytesDone/BytesTotal/LogicalMbps
+// (design-log/050) — the frontend's former unit-conversion math, moved here
+// so it's computed exactly once. Called wherever those raw fields change.
+func (p *Projection) refreshFormattedFields() {
+	p.state.SizeDoneText, p.state.SizeTotalText, p.state.SizeUnit = formatSize(p.state.BytesDone, p.state.BytesTotal)
+	p.state.SpeedText, p.state.SpeedUnit = formatSpeed(mbpsToBps(p.state.LogicalMbps))
+}
+
 // onTick applies a network-progress snapshot to the ViewModel. Pure picker:
 // the ticker already derived everything, projection chooses which series
 // drives the visible state for the current pipeline stage. Gated on
@@ -287,20 +390,42 @@ func (p *Projection) etaFromSessionAvg(elapsed time.Duration, done int64) int64 
 // series (decompress/install rate). EtaSeconds is derived separately from the
 // beat-wide average (etaFromSessionAvg), not from any rolling rate above.
 func (p *Projection) onTick(t progress.Tick) bool {
+	// Unconditional raw-counter tracking (design-log/050 §A Q5): a Tick can
+	// arrive before the stage that will consume it has even started (a
+	// stray heartbeat during Checking), so onStateChanged needs the latest
+	// raw value ready the instant the stage flips into Pulling/Pushing —
+	// this must run before the pipelineStage gate below, which returns
+	// early for every other stage.
+	p.lastRemoteDown = t.Remote.Down.Data
+	p.lastRemoteOps = t.Ops.Done
+
 	var s progress.Stream
 	var done int64
 	switch p.pipelineStage {
 	case ritual.StagePulling:
 		s = t.Remote.Down
-		done = s.Data
+		// Baseline-subtract the process-lifetime cumulative counter down to
+		// this flow's own delta (design-log/050 §A) — pullBaseline is the
+		// counter's value at the moment this flow entered Pulling.
+		done = s.Data - p.pullBaseline
+		if done < 0 {
+			done = 0
+		}
 	case ritual.StagePushing:
 		s = t.Remote.Up
 		// Ops-based progress: confirmed R2 deliveries × average blob size.
 		// Falls back to s.Data when FilesTotal is zero (shouldn't happen after
 		// a PlanInfo, but avoids a divide-by-zero on unexpected paths).
+		// Ops.Done is baseline-subtracted the same way as the pull counter —
+		// it's one shared cumulative counter across both directions and
+		// every flow in the process (design-log/050 §A).
 		if p.state.FilesTotal > 0 {
 			avg := p.state.BytesTotal / int64(p.state.FilesTotal)
-			done = t.Ops.Done * avg
+			ops := t.Ops.Done - p.pushOpsBaseline
+			if ops < 0 {
+				ops = 0
+			}
+			done = ops * avg
 			if done > p.state.BytesTotal {
 				done = p.state.BytesTotal
 			}
@@ -321,7 +446,23 @@ func (p *Projection) onTick(t progress.Tick) bool {
 	// once BytesDone>=BytesTotal is the trailing completion marker, not a
 	// stall, so it must leave Stalled false. Design-log/022 #2.
 	p.state.Stalled = s.Instant == 0 && p.state.BytesTotal > 0 && p.state.BytesDone < p.state.BytesTotal
+	p.refreshFormattedFields()
 	return true
+}
+
+// baselineOnStageEntry captures the process-lifetime cumulative counters'
+// current value against their value at this flow's stage-entry
+// (design-log/050 §A) — onTick subtracts these so BytesDone starts at 0 for
+// this flow instead of carrying over bytes/ops a previous flow in the same
+// running process already moved. Split out of onStateChanged to keep that
+// function's cyclomatic complexity under the lint budget.
+func (p *Projection) baselineOnStageEntry(to string) {
+	switch to {
+	case ritual.StagePulling:
+		p.pullBaseline = p.lastRemoteDown
+	case ritual.StagePushing:
+		p.pushOpsBaseline = p.lastRemoteOps
+	}
 }
 
 // onStateChanged maps ritual stage transitions to (Stage, Phase) per the
@@ -330,6 +471,7 @@ func (p *Projection) onTick(t progress.Tick) bool {
 // within the Running and Pulling windows respectively.
 func (p *Projection) onStateChanged(to string) {
 	p.pipelineStage = to
+	p.baselineOnStageEntry(to)
 	// A stage transition is a fresh beat: clear any stall caption so it never
 	// bleeds from the transfer window into Apply/Unlocking/Retaining. onTick
 	// re-derives it from the next tick's rate if the new stage still transfers.
@@ -390,6 +532,7 @@ func (p *Projection) onStateChanged(to string) {
 		p.state.Phase = PhasePreparing
 		p.state.Progress, p.state.BytesDone, p.state.BytesTotal = 0, 0, 0
 		p.state.FilesDone, p.state.FilesTotal = 0, 0
+		p.refreshFormattedFields()
 	case ritual.StageCommitting:
 		p.state.Stage = StageUploading
 		p.state.Phase = PhaseWrapping

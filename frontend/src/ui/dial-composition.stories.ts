@@ -30,6 +30,35 @@ function snapEta(secs: number): number {
     return Math.round(secs / 60) * 60;
 }
 
+// Demo-only stand-in for the Go-side formatSize/formatSpeed (design-log/050)
+// — the story simulates what the backend would have sent so its controls
+// can still drive raw byte/speed numbers, while <dial-telemetry> itself only
+// ever receives ready text, matching production.
+const KB = 1024, MB = KB * 1024, GB = MB * 1024;
+function unitFor(n: number) {
+    if (n >= GB) return { div: GB, suffix: "GB", decimals: 2 };
+    if (n >= MB) return { div: MB, suffix: "MB", decimals: 1 };
+    if (n >= KB) return { div: KB, suffix: "KB", decimals: 1 };
+    return { div: 1, suffix: "B", decimals: 0 };
+}
+function demoFormatSize(done: number, total: number) {
+    if (total <= 0) {
+        const u = unitFor(done);
+        return { doneText: (done / u.div).toFixed(u.decimals), totalText: "", unit: u.suffix };
+    }
+    const u = unitFor(total);
+    return {
+        doneText: (done / u.div).toFixed(u.decimals),
+        totalText: (total / u.div).toFixed(u.decimals),
+        unit: u.suffix,
+    };
+}
+function demoFormatSpeed(bps: number) {
+    if (!Number.isFinite(bps) || bps <= 0) return { text: "0", unit: "B/s" };
+    const u = unitFor(bps);
+    return { text: (bps / u.div).toFixed(u.decimals), unit: `${u.suffix}/s` };
+}
+
 @customElement("dial-composition-cycle")
 export class DialCompositionCycle extends LitElement {
     @state() private state: DialState = "idle";
@@ -175,10 +204,16 @@ export class DialCompositionCycle extends LitElement {
             return html`<run-addresses .addresses=${RUN_ADDRESSES}></run-addresses>`;
         }
         if (this.showTelemetry) {
+            const sz = demoFormatSize(this.bytesDone, TOTAL_BYTES);
+            const sp = demoFormatSpeed(this.speedBps);
             return html`<dial-telemetry
-                .speedBps=${this.speedBps}
-                .bytesDone=${this.bytesDone}
+                .sizeDoneText=${sz.doneText}
+                .sizeTotalText=${sz.totalText}
+                .sizeUnit=${sz.unit}
+                .speedText=${sp.text}
+                .speedUnit=${sp.unit}
                 .bytesTotal=${TOTAL_BYTES}
+                .logicalMbps=${this.speedBps > 0 ? 1 : 0}
             ></dial-telemetry>`;
         }
         return null;
@@ -260,7 +295,10 @@ export default {
     },
 };
 
-export const Playground = (a: Args) => html`
+export const Playground = (a: Args) => {
+    const sz = demoFormatSize(a.bytesDone, a.bytesTotal);
+    const sp = demoFormatSpeed(a.speedBps);
+    return html`
     <div style="display:flex; flex-direction:column; align-items:center; gap:1.25rem; padding:1.5rem;">
         <ritual-dial
             .state=${a.state}
@@ -271,12 +309,17 @@ export const Playground = (a: Args) => html`
         ></ritual-dial>
         <dial-telemetry
             style=${a.showTelemetry ? "" : "visibility:hidden"}
-            .speedBps=${a.speedBps}
-            .bytesDone=${a.bytesDone}
+            .sizeDoneText=${sz.doneText}
+            .sizeTotalText=${sz.totalText}
+            .sizeUnit=${sz.unit}
+            .speedText=${sp.text}
+            .speedUnit=${sp.unit}
             .bytesTotal=${a.bytesTotal}
+            .logicalMbps=${a.speedBps > 0 ? 1 : 0}
         ></dial-telemetry>
     </div>
 `;
+};
 
 export const Cycle = () => html`<dial-composition-cycle></dial-composition-cycle>`;
 

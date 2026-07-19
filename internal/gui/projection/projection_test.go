@@ -447,6 +447,61 @@ func TestProjection_EtaNeverClimbsWithinABeat_MonotonicGuard(t *testing.T) {
 	assert.Equal(t, int64(1), last(vms).EtaSeconds, "a mid-beat slowdown must NOT push the estimate up — within a fixed plan EtaSeconds is monotone non-increasing so the countdown never reads as broken (design-log/028 §Q10)")
 }
 
+// --- design-log/050 §A: per-flow BytesDone baseline for chained sync sessions ---
+//
+// progress.Tick.Remote.Down.Data / .Ops.Done are process-lifetime cumulative
+// atomics (internal/adapters/counter.go's StorageCounters, wired once at app
+// startup, internal/adapters/progress/ticker.go's readCounters does a raw
+// .Load()) — never reset between flows. PlanInfo.BytesTotal is freshly
+// scoped to just the current flow's delta. A second pull/push inside one
+// running process (a chained dial restart) must not open with BytesDone
+// already carrying everything the *previous* flow moved. Numbers below are
+// taken directly from the session log that surfaced this bug
+// (20260718202843.log): a 1.19 GiB pull (1_280_889_536 bytes / 814 files)
+// followed by a chained ~58.8 MB pull (61_655_570 bytes / 25 files) — the
+// logged symptom was `done=1280889536/61655570`, 2078% of the new plan's
+// total, before any new bytes had moved.
+
+func TestProjection_ChainedPull_BytesDoneResetsPerFlow(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		// Flow 1: the full 1.19 GiB pull completes — the process's cumulative
+		// remote-down counter reaches 1_280_889_536.
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(ritual.PlanInfo{Operation: "pull", BytesTotal: 1_280_889_536, FilesTotal: 814})
+		bus.Publish(progress.Tick{Remote: progress.Side{Down: progress.Stream{Data: 1_280_889_536}}})
+
+		// Flow 2: a chained relaunch in the same process re-enters Pulling with
+		// a much smaller plan. No new bytes have streamed yet — the Tick still
+		// carries the SAME cumulative counter value flow 1 left behind.
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(ritual.PlanInfo{Operation: "pull", BytesTotal: 61_655_570, FilesTotal: 25})
+		bus.Publish(progress.Tick{Remote: progress.Side{Down: progress.Stream{Data: 1_280_889_536}}})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(0), final.BytesDone, "a chained pull must open at 0 — the counter is baseline-subtracted at Pulling stage-entry, not read raw off the process-lifetime cumulative value flow 1 left behind (design-log/050 §A)")
+	assert.LessOrEqual(t, final.BytesDone, final.BytesTotal, "BytesDone must never exceed the CURRENT flow's BytesTotal — the >100%% overflow from the source log")
+}
+
+func TestProjection_ChainedPush_BytesDoneResetsPerFlow(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		// Flow 1: the 27-file push completes — the shared Ops.Done counter
+		// (incremented by both GetStream and PutStream calls, see
+		// internal/adapters/progress/ticker.go readCounters) reaches 27.
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 62_066_935, FilesTotal: 27})
+		bus.Publish(progress.Tick{Ops: progress.OpsTally{Done: 27}})
+
+		// Flow 2: a chained relaunch re-enters Pushing with a larger plan. No
+		// new ops confirmed yet — the Tick still carries flow 1's ending
+		// Ops.Done.
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 167_052_748, FilesTotal: 109})
+		bus.Publish(progress.Tick{Ops: progress.OpsTally{Done: 27}})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(0), final.BytesDone, "a chained push must open at 0 — Ops.Done is baseline-subtracted at Pushing stage-entry, not read raw off flow 1's leftover confirmed-op count (design-log/050 §A)")
+}
+
 func TestProjection_PlanInfoReBaselinesEta_NotClampedByPriorBeat(t *testing.T) {
 	// FilesTotal=10/50 keeps avg=100B for both plans so ops → bytes is simple arithmetic.
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
@@ -476,4 +531,31 @@ func TestProjection_EmptyPlan_KeepsEtaZero(t *testing.T) {
 	})
 	final := last(vms)
 	assert.Equal(t, int64(0), final.EtaSeconds, "an empty delta (design-log/019) has no bytes to time; EtaSeconds stays 0 so the frontend shows no estimate instead of dividing by zero")
+}
+
+// TestProjection_Seq_StrictlyIncreasingAcrossEveryEmit guards design-log/051
+// Q11's fix: the frontend drops any snapshot whose Seq isn't strictly greater
+// than the last one it applied, which only defeats WebView2's out-of-order
+// script execution if the backend genuinely never repeats or reverses a Seq
+// value across the whole session — including duplicate-looking "unchanged
+// state" emits from consecutive StateChangedInfo transitions, not just the
+// visibly-different ones this file's other tests assert on.
+func TestProjection_Seq_StrictlyIncreasingAcrossEveryEmit(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 100, FilesTotal: 1})
+		bus.Publish(progress.Tick{Ops: progress.OpsTally{Done: 1}})
+		// Two back-to-back state changes with no visible field change in
+		// between (mirrors the real repro's Retaining → Unlocking → Done
+		// sequence) — exactly the shape that produced duplicate "saving"
+		// emits racing the terminal idle one.
+		bus.Publish(ritual.StateChangedInfo{To: "Retaining"})
+		bus.Publish(ritual.StateChangedInfo{To: "Unlocking"})
+		bus.Publish(lifecycle.StatusChanged{Status: lifecycle.Done})
+	})
+	require.GreaterOrEqual(t, len(vms), 2, "need at least two emits to check ordering")
+	for i := 1; i < len(vms); i++ {
+		assert.Greater(t, vms[i].Seq, vms[i-1].Seq,
+			"every emit must carry a strictly greater Seq than the previous one (index %d vs %d) — a repeat or reversal would let a stale snapshot pass the frontend's seq guard", i, i-1)
+	}
 }
