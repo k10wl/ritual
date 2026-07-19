@@ -532,3 +532,30 @@ func TestProjection_EmptyPlan_KeepsEtaZero(t *testing.T) {
 	final := last(vms)
 	assert.Equal(t, int64(0), final.EtaSeconds, "an empty delta (design-log/019) has no bytes to time; EtaSeconds stays 0 so the frontend shows no estimate instead of dividing by zero")
 }
+
+// TestProjection_Seq_StrictlyIncreasingAcrossEveryEmit guards design-log/051
+// Q11's fix: the frontend drops any snapshot whose Seq isn't strictly greater
+// than the last one it applied, which only defeats WebView2's out-of-order
+// script execution if the backend genuinely never repeats or reverses a Seq
+// value across the whole session — including duplicate-looking "unchanged
+// state" emits from consecutive StateChangedInfo transitions, not just the
+// visibly-different ones this file's other tests assert on.
+func TestProjection_Seq_StrictlyIncreasingAcrossEveryEmit(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePushing})
+		bus.Publish(ritual.PlanInfo{Operation: "push", BytesTotal: 100, FilesTotal: 1})
+		bus.Publish(progress.Tick{Ops: progress.OpsTally{Done: 1}})
+		// Two back-to-back state changes with no visible field change in
+		// between (mirrors the real repro's Retaining → Unlocking → Done
+		// sequence) — exactly the shape that produced duplicate "saving"
+		// emits racing the terminal idle one.
+		bus.Publish(ritual.StateChangedInfo{To: "Retaining"})
+		bus.Publish(ritual.StateChangedInfo{To: "Unlocking"})
+		bus.Publish(lifecycle.StatusChanged{Status: lifecycle.Done})
+	})
+	require.GreaterOrEqual(t, len(vms), 2, "need at least two emits to check ordering")
+	for i := 1; i < len(vms); i++ {
+		assert.Greater(t, vms[i].Seq, vms[i-1].Seq,
+			"every emit must carry a strictly greater Seq than the previous one (index %d vs %d) — a repeat or reversal would let a stale snapshot pass the frontend's seq guard", i, i-1)
+	}
+}

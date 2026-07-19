@@ -11,6 +11,7 @@ import (
 	"ritual/internal/core/stages/pulling"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/subsystems/lifecycle"
+	"sync"
 	"time"
 )
 
@@ -33,11 +34,17 @@ type AddressProvider interface {
 // everReady tracks whether the current run has reached ServerReady; gates
 // the Running-stage phase transitions (preparing → playing → wrapping).
 type Projection struct {
-	ch            <-chan ports.Event
-	unsub         func()
-	emitter       Emitter
-	publish       func(ports.Event)
-	addresses     AddressProvider
+	ch        <-chan ports.Event
+	unsub     func()
+	emitter   Emitter
+	publish   func(ports.Event)
+	addresses AddressProvider
+	// mu guards state (and nextSeq, always touched together with it) against
+	// the pre-existing cross-goroutine race between Run's single mutating
+	// goroutine and Snapshot, which ControlService.GetSnapshot calls from
+	// whatever goroutine services that RPC. Only Run ever mutates state — mu
+	// is single-writer/many-reader, not mutual exclusion between writers.
+	mu            sync.RWMutex
 	state         ViewModel
 	pipelineStage string
 	everReady     bool
@@ -84,6 +91,16 @@ type Projection struct {
 	// Phase stays PhasePlaying. The frontend runs no clock of its own — the
 	// displayed uptime only changes because the backend pushed a new value.
 	playingStartedAt time.Time
+
+	// nextSeq stamps a strictly increasing ViewModel.Seq on every emit
+	// (design-log/051 Q11). ExecuteScript(script, nil) — the Wails/WebView2
+	// call that delivers each emit to the frontend — is fire-and-forget and
+	// does not guarantee execution order matches submission order under load;
+	// a stale duplicate can finish executing after a later, correct snapshot
+	// and silently overwrite it. Seq lets the frontend detect and drop any
+	// snapshot older than what it already applied, without needing an
+	// acknowledgment/retry round-trip.
+	nextSeq int64
 }
 
 // New subscribes to bus immediately and returns a Projection ready for Run.
@@ -104,8 +121,31 @@ func New(bus ports.EventBus, emitter Emitter, addresses AddressProvider) *Projec
 }
 
 // Snapshot returns the current view model. Used by ControlService.GetSnapshot
-// so the frontend has a value to render before the first Emit arrives.
-func (p *Projection) Snapshot() ViewModel { return p.state }
+// so the frontend has a value to render before the first Emit arrives. Called
+// from whatever goroutine services that RPC — guarded by mu against Run's
+// concurrent mutation.
+func (p *Projection) Snapshot() ViewModel {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.state
+}
+
+// emit stamps the next sequence number onto p.state (design-log/051 Q11) and
+// dispatches it through both the Wails-facing emitter and the bus (for the
+// file logger). The single call site here is what guarantees Seq is unique
+// and strictly increasing — every place that used to call
+// `p.emitter.Emit(p.state); p.publish(Snap{p.state})` directly now goes
+// through this instead. Takes a copy under mu so Emit/publish (which may be
+// slow — Wails IPC, subscriber fan-out) never run while holding the lock.
+func (p *Projection) emit() {
+	p.mu.Lock()
+	p.nextSeq++
+	p.state.Seq = p.nextSeq
+	vm := p.state
+	p.mu.Unlock()
+	p.emitter.Emit(vm)
+	p.publish(Snap{vm})
+}
 
 // Run blocks until ctx is cancelled or the bus closes. Publishes an initial
 // snapshot immediately so consumers never see an empty view.
@@ -118,8 +158,7 @@ func (p *Projection) Snapshot() ViewModel { return p.state }
 // and stopping it per-run.
 func (p *Projection) Run(ctx context.Context) {
 	defer p.unsub()
-	p.emitter.Emit(p.state)
-	p.publish(Snap{p.state})
+	p.emit()
 
 	uptimeTicker := time.NewTicker(time.Second)
 	defer uptimeTicker.Stop()
@@ -132,16 +171,19 @@ func (p *Projection) Run(ctx context.Context) {
 			if p.state.Phase != PhasePlaying {
 				continue
 			}
+			p.mu.Lock()
 			p.state.UptimeSeconds = int64(time.Since(p.playingStartedAt).Seconds())
-			p.emitter.Emit(p.state)
-			p.publish(Snap{p.state})
+			p.mu.Unlock()
+			p.emit()
 		case evt, ok := <-p.ch:
 			if !ok {
 				return
 			}
-			if p.fold(evt) {
-				p.emitter.Emit(p.state)
-				p.publish(Snap{p.state})
+			p.mu.Lock()
+			changed := p.fold(evt)
+			p.mu.Unlock()
+			if changed {
+				p.emit()
 			}
 		}
 	}

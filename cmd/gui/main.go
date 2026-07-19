@@ -57,7 +57,7 @@ func init() {
 	application.RegisterEvent[logsink.ServerLogBatch]("server:logs")
 }
 
-func main() {
+func main() { //nolint:gocyclo // composition root — high fanout is structural, not logical (mirrors buildRuntime below)
 	config.LoadEnvFiles()
 
 	runtime, err := buildRuntime()
@@ -79,7 +79,7 @@ func main() {
 	// bus. No runtime permission on Windows.
 	notifSvc := notifications.New()
 
-	wailsApp := application.New(application.Options{
+	appOptions := application.Options{
 		Name:        config.DisplayName(),
 		Description: "Ritual — Minecraft server manager (POC)",
 		Services: []application.Service{
@@ -92,7 +92,17 @@ func main() {
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
-	})
+	}
+	if config.AppName == "ritualdev" {
+		// Chrome DevTools Protocol on WebView2 (design-log/053): dev builds only,
+		// lets an external CDP client (Playwright, etc.) attach to the real
+		// window for live inspection/reproduction of GUI bugs. CDP's own
+		// default binds loopback-only.
+		appOptions.Windows = application.WindowsOptions{
+			AdditionalBrowserArgs: []string{"--remote-debugging-port=9222"},
+		}
+	}
+	wailsApp := application.New(appOptions)
 
 	var shuttingDown atomic.Bool
 	// lifecycleRunning mirrors the latest lifecycle.StatusChanged so the

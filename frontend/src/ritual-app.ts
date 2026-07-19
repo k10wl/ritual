@@ -26,6 +26,7 @@ import {
     ViewModel,
     JoinAddress,
 } from "./wails-api";
+import { isNewerSnapshot } from "./vm-seq";
 import "./ui/primitives/decoder";
 import type { DialGlyph, DialState } from "./ui/ritual-dial";
 import { formatEta } from "./ui/telemetry-format";
@@ -77,7 +78,11 @@ interface AppCtx {
     lastNonFailPhase: Phase;
 }
 
-const FALLBACK_VM: ViewModel = new ViewModel({ phase: Phase.PhaseIdle });
+// seq: -1 (backend Seq starts at 0 as a Go zero-value before Run's first
+// emit, then 1, 2, ...) guarantees any real snapshot — even one read via
+// GetSnapshot() in the narrow window before Run's first emit — is strictly
+// newer than this placeholder and passes applyVm's seq guard.
+const FALLBACK_VM: ViewModel = new ViewModel({ phase: Phase.PhaseIdle, seq: -1 });
 
 // Failure attribution noun map: when a run fails, the dial shows "Couldn't
 // finish {noun}" where noun reflects the last user-meaningful phase the run
@@ -249,6 +254,10 @@ export class RitualApp extends LitElement {
     }
 
     private applyVm(vm: ViewModel) {
+        if (!isNewerSnapshot(this.vm, vm)) {
+            console.warn(`[applyVm] dropped stale/out-of-order snapshot: incoming seq=${vm.seq} (${vm.stage}/${vm.phase}) <= applied seq=${this.vm.seq} (${this.vm.stage}/${this.vm.phase})`);
+            return;
+        }
         const wasIdle = this.vm.phase === Phase.PhaseIdle;
         const isIdle = vm.phase === Phase.PhaseIdle;
         if (vm.phase !== Phase.PhaseFailed) {

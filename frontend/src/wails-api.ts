@@ -2,13 +2,66 @@
 // the frontend decoupled from the binding directory layout.
 
 import { Events } from "@wailsio/runtime";
-import * as Control from "../bindings/ritual/internal/gui/control/controlservice";
+import * as ControlRaw from "../bindings/ritual/internal/gui/control/controlservice";
 import { Prep, SyncStatus, Version, RetentionConfig, LocalStorageStats } from "../bindings/ritual/internal/gui/control/models";
 import { RetentionRules } from "../bindings/ritual/internal/core/domain/models";
 import { ViewModel, Stage, Phase, JoinAddress } from "../bindings/ritual/internal/gui/projection/models";
 import { ServerLog, ServerLogBatch, Level } from "../bindings/ritual/internal/gui/logsink/models";
 
 export { ViewModel, Stage, Phase, JoinAddress, ServerLog, ServerLogBatch, Level, Prep, SyncStatus, Version, RetentionConfig, RetentionRules, LocalStorageStats };
+
+// Wails IPC echo — permanent, always-on observability, both directions.
+//
+// IN: wraps window._wails.dispatchWailsEvent, the exact function native Go
+// code calls into the JS engine for every event on every window, before any
+// app-level listener (onView, onServerLogs, etc.) runs — so the devtools
+// console shows unconditionally whether a given event (e.g. a terminal
+// "ritual:view" snapshot) ever reached the JS engine at all. Importing
+// "@wailsio/runtime" above has already run events.js's top-level code, which
+// sets window._wails.dispatchWailsEvent — so it's safe to wrap here.
+if (typeof window !== "undefined") {
+    const w = window as unknown as { _wails?: { dispatchWailsEvent?: (event: { name: string; data: unknown }) => void } };
+    const original = w._wails?.dispatchWailsEvent;
+    if (typeof original === "function") {
+        w._wails!.dispatchWailsEvent = (event) => {
+            console.log(`[wails-event IN ${new Date().toISOString()}] ${event?.name}`, event?.data);
+            return original(event);
+        };
+    } else {
+        console.warn("[wails-event echo] window._wails.dispatchWailsEvent not found at wails-api.ts load time");
+    }
+}
+
+// OUT: a Proxy over the generated ControlService bindings logs every outgoing
+// call (method + args) and its eventual result/error as a passive .then()
+// subscription — the original return value (a CancellablePromise, incl. its
+// .cancel()) is handed back to the caller completely unmodified, only
+// observed. Every existing `Control.X(...)` call below transparently goes
+// through this — no per-method wiring, and any future binding is covered too.
+function echoCalls<T extends object>(target: T, label: string): T {
+    return new Proxy(target, {
+        get(obj, prop, receiver) {
+            const value = Reflect.get(obj, prop, receiver);
+            if (typeof value !== "function") return value;
+            return (...args: unknown[]) => {
+                const method = String(prop);
+                console.log(`[wails-call OUT ${new Date().toISOString()}] ${label}.${method}`, args);
+                const result = Reflect.apply(value, obj, args);
+                const maybePromise = result as { then?: (onFulfilled: (v: unknown) => void, onRejected: (e: unknown) => void) => void };
+                if (maybePromise && typeof maybePromise.then === "function") {
+                    maybePromise.then(
+                        (v) => console.log(`[wails-call RESULT ${new Date().toISOString()}] ${label}.${method}`, v),
+                        (e) => console.log(`[wails-call ERROR ${new Date().toISOString()}] ${label}.${method}`, e),
+                    );
+                } else {
+                    console.log(`[wails-call RESULT ${new Date().toISOString()}] ${label}.${method}`, result);
+                }
+                return result;
+            };
+        },
+    });
+}
+const Control = echoCalls(ControlRaw, "Control");
 
 /** Version-history scope for ListVersions (design-log/038). */
 export type VersionScope = "local" | "remote";

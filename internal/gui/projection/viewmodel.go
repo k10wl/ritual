@@ -97,6 +97,14 @@ type JoinAddress struct {
 // string: the dial reads `Phase` and looks up its copy locally. Stage-level
 // strings like "Snapshotting…" were dev/log copy and never reached the user.
 type ViewModel struct {
+	// Seq is a strictly increasing sequence number stamped once per emit by
+	// Projection.emit (design-log/051 Q11). The Wails/WebView2 delivery of
+	// each emit to the frontend is fire-and-forget and does not guarantee
+	// execution order matches submission order under load; the frontend
+	// compares Seq against the last-applied value and drops anything not
+	// strictly greater, so a stale duplicate that finishes executing late
+	// can never overwrite a newer snapshot already applied.
+	Seq         int64   `json:"seq"`
 	Stage       Stage   `json:"stage"`
 	Phase       Phase   `json:"phase"`
 	Progress    int     `json:"progress"`
