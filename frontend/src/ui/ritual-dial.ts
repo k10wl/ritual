@@ -2,15 +2,14 @@ import { LitElement, css, html, PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { gsap } from "gsap";
 import { MorphSVGPlugin } from "gsap/MorphSVGPlugin";
-import { Play, Square, X as XIcon, Download, Upload, BrainCog, Unplug } from "lucide";
-import svgpath from "svgpath";
+import { dFor, type DialGlyph } from "./dial-glyphs";
 import "./primitives/decoder";
 import "./primitives/stable-num";
 
 gsap.registerPlugin(MorphSVGPlugin);
 
 export type DialState = "idle" | "prep" | "run" | "final" | "fail" | "preflight";
-export type DialGlyph = "play" | "stop" | "x" | "download" | "upload" | "brain-cog" | "unplug" | null;
+export type { DialGlyph };
 
 const RADIUS = 100;
 const CIRC = 2 * Math.PI * RADIUS;
@@ -22,42 +21,6 @@ const ZOOM_IDLE = 1.35;
 const ZOOM_ACTIVE = 1.0;
 
 const SPLASH_ROUNDS = [3, 5] as const;
-
-type LucideChild = readonly [string, Record<string, string>];
-type LucideIcon = ReadonlyArray<LucideChild>;
-
-const shapeToD = ([tag, a]: LucideChild): string => {
-    if (tag === "path") return a.d;
-    if (tag === "line") return `M${a.x1} ${a.y1}L${a.x2} ${a.y2}`;
-    if (tag === "circle") {
-        const cx = +a.cx, cy = +a.cy, r = +a.r;
-        return `M${cx - r} ${cy}A${r} ${r} 0 1 0 ${cx + r} ${cy}A${r} ${r} 0 1 0 ${cx - r} ${cy}Z`;
-    }
-    if (tag === "rect") {
-        const x = +a.x, y = +a.y, w = +a.width, h = +a.height;
-        const r = +(a.rx ?? a.ry ?? 0);
-        if (!r) return `M${x} ${y}h${w}v${h}h${-w}Z`;
-        return `M${x + r} ${y}H${x + w - r}A${r} ${r} 0 0 1 ${x + w} ${y + r}` +
-               `V${y + h - r}A${r} ${r} 0 0 1 ${x + w - r} ${y + h}` +
-               `H${x + r}A${r} ${r} 0 0 1 ${x} ${y + h - r}` +
-               `V${y + r}A${r} ${r} 0 0 1 ${x + r} ${y}Z`;
-    }
-    return "";
-};
-
-const compoundD = (icon: LucideIcon): string =>
-    icon.map(shapeToD).filter(Boolean).map((d) => svgpath(d).abs().toString()).join(" ");
-
-const GLYPHS: Record<Exclude<DialGlyph, null>, string> = {
-    play:        compoundD(Play as LucideIcon),
-    stop:        compoundD(Square as LucideIcon),
-    x:           compoundD(XIcon as LucideIcon),
-    download:    compoundD(Download as LucideIcon),
-    upload:      compoundD(Upload as LucideIcon),
-    "brain-cog": compoundD(BrainCog as LucideIcon),
-    unplug:      compoundD(Unplug as LucideIcon),
-};
-const dFor = (g: DialGlyph): string => (g ? GLYPHS[g] : "");
 
 const reducedMotion = (): boolean =>
     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;

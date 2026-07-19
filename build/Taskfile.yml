@@ -21,6 +21,14 @@ tasks:
     cmds:
       - npm install
 
+  test:frontend:
+    summary: Run frontend @web/test-runner suite (Lit component behavior tests).
+    dir: frontend
+    deps:
+      - task: install:frontend:deps
+    cmds:
+      - npm run test
+
   build:frontend:
     label: build:frontend (DEV={{.DEV}})
     summary: Build the frontend project
