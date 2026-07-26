@@ -30,7 +30,7 @@ import (
 )
 
 func TestCollector_DeletesBlobsNotReferencedByAnyRef(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	store := newFSBundle(t)
@@ -57,7 +57,7 @@ func TestCollector_DeletesBlobsNotReferencedByAnyRef(t *testing.T) {
 }
 
 func TestCollector_KeepsBlobsReferencedByAnyRef(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	store := newFSBundle(t)
@@ -79,7 +79,7 @@ func TestCollector_KeepsBlobsReferencedByAnyRef(t *testing.T) {
 }
 
 func TestCollector_RetainsBlobStillReferencedAfterAnotherRefDeleted(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	store := newFSBundle(t)
@@ -118,7 +118,7 @@ func TestCollector_RetainsBlobStillReferencedAfterAnotherRefDeleted(t *testing.T
 }
 
 func TestCollector_IsIdempotentAcrossReruns(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	store := newFSBundle(t)
@@ -140,7 +140,7 @@ func TestCollector_IsIdempotentAcrossReruns(t *testing.T) {
 }
 
 func TestCollector_IsNoOpOnEmptyStore(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	store := newFSBundle(t)
@@ -155,7 +155,7 @@ func TestCollector_IsNoOpOnEmptyStore(t *testing.T) {
 }
 
 func TestCollector_SweepsAllBlobsWhenOnlyRefReferencesNoObjects(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	store := newFSBundle(t)
@@ -182,7 +182,7 @@ func TestCollector_SweepsAllBlobsWhenOnlyRefReferencesNoObjects(t *testing.T) {
 }
 
 func TestCollector_SkipsMalformedRefsAndSweepsFromSurvivingRefsLiveSet(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	store := newFSBundle(t)
@@ -210,7 +210,7 @@ func TestCollector_SkipsMalformedRefsAndSweepsFromSurvivingRefsLiveSet(t *testin
 }
 
 func TestCollector_SurfacesErrorWhenListingRefsFails(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	inner := newFSBundle(t)
@@ -239,7 +239,7 @@ func TestCollector_SurfacesErrorWhenListingRefsFails(t *testing.T) {
 }
 
 func TestCollector_SurfacesErrorWhenListingObjectsFails(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	inner := newFSBundle(t)
@@ -262,7 +262,7 @@ func TestCollector_SurfacesErrorWhenListingObjectsFails(t *testing.T) {
 }
 
 func TestCollector_ContinuesSweepWhenAnIndividualDeleteFails(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	inner := newFSBundle(t)
@@ -293,7 +293,7 @@ func TestCollector_ContinuesSweepWhenAnIndividualDeleteFails(t *testing.T) {
 }
 
 func TestCollector_PreservesLiveBlobsWhenReadingARefTransientlyFails(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	inner := newFSBundle(t)

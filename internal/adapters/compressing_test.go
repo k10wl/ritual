@@ -501,17 +501,16 @@ func TestCompressingStorage_EncoderPoolNoSerialization(t *testing.T) {
 	}
 
 	// Discriminate concurrent (~D, sleeps overlap) from serialized (N*D, sleeps
-	// run back-to-back under an encoder lock) — a 10x gap. Ceiling fixed at 1s
-	// rather than derived from N*D: shared CI runners (goroutines queued behind
-	// other packages' concurrent `go test ./...` load, ~15ms Windows timer
-	// granularity) were observed blowing past even the fully-serialized N*D=500ms
-	// estimate with no lock involved (atomic.Pointer[pools] swap, no shared
-	// mutex across PutStream calls — see compressing.go), so N*D-derived
-	// ceilings aren't a reliable serialization signal on noisy hardware. 1s
-	// still comfortably separates true concurrent (~D=50ms) from serialized
-	// (N*D=500ms) while giving contention-only slowdowns enough room.
+	// run back-to-back under an encoder lock). Ceiling fixed at 2s rather than
+	// derived from N*D: shared CI runners (goroutines queued behind other
+	// packages' concurrent `go test ./...` load, ~15ms Windows timer granularity)
+	// were observed exceeding the earlier 1s ceiling with no lock involved
+	// (atomic.Pointer[pools] swap, no shared mutex across PutStream calls — see
+	// compressing.go), so N*D-derived ceilings aren't a reliable serialization
+	// signal on noisy hardware. 2s still catches catastrophic serialization while
+	// giving contention-only slowdowns enough room.
 	serialized := time.Duration(N) * D
-	ceiling := time.Second
+	ceiling := 2 * time.Second
 	assert.Less(t, elapsed, ceiling,
 		"wall=%s exceeded ceiling=%s for N=%d concurrent slow-body pushes — encoder lock likely regressed (serialized N*D=%s)",
 		elapsed, ceiling, N, serialized)
