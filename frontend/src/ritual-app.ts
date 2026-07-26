@@ -24,8 +24,9 @@ import {
     Phase,
     RetentionRules,
     ViewModel,
-    JoinAddress,
+    type JoinAddress,
 } from "./wails-api";
+import { subscribeBeforeHydrate } from "./view-subscription";
 import { isNewerSnapshot } from "./vm-seq";
 import "./ui/primitives/decoder";
 import type { DialGlyph, DialState } from "./ui/ritual-dial";
@@ -233,11 +234,13 @@ export class RitualApp extends LitElement {
 
     async connectedCallback() {
         super.connectedCallback();
-        try {
-            this.applyVm(await getSnapshot());
-        } catch {
-            // first render relies on FALLBACK_VM until the first Emit arrives
-        }
+        const view = subscribeBeforeHydrate(
+            onView,
+            (vm) => this.applyVm(vm),
+            getSnapshot,
+        );
+        this.unsubscribe = view.unsubscribe;
+        await view.hydrate;
         try {
             const p = await getPrep();
             this.prep = { port: p.port, memoryMB: p.memoryMB };
