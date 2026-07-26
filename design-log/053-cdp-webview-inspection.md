@@ -58,6 +58,16 @@ Not started — pending approval.
    - **OUT**: a `Proxy` (`echoCalls`) over the generated `ControlService` bindings namespace logs every outgoing call (`[wails-call OUT <ts>] Control.<Method>", args`) and its eventual result/error (`RESULT`/`ERROR`) as a passive `.then()` subscription — the original return value (a `CancellablePromise`, including `.cancel()`) is handed back to the caller completely unmodified; only observed, never replaced. Covers every existing `Control.X(...)` call transparently (no per-method wiring) and any future binding automatically.
    - Verified: `npx tsc --noEmit` clean; no caller anywhere in `frontend/src` relies on `.cancel()` (grepped), and the wrapper preserves it regardless since it returns the original object identity.
 
+## Implementation Results
+
+### 2026-07-26 — Proxy invariant fix for Wails OUT echo
+
+The original OUT echo proxied the generated `ControlService` ES module namespace directly. In the built WebView, exported bindings such as `Start` are read-only/non-configurable data properties, so the proxy `get` trap was not allowed to return a wrapper function. Real failure: clicking Start threw `TypeError: 'get' on proxy: property 'Start' is a read-only and non-configurable data property on the proxy target but the proxy did not return its actual value`.
+
+Fix: `echoCalls()` now proxies a shallow plain-object copy (`{ ...target }`) instead of the module namespace. The copied properties are ordinary configurable slots, so returning logging wrappers is legal while call sites keep using `Control.Start(...)` unchanged.
+
+Verification: `frontend/src/wails-api.ts` primary TypeScript LSP clean; `cd frontend && npx tsc --noEmit` clean; `cd frontend && npm test -- --run` passed 182/182; `cd frontend && npm run build:dev` passed.
+
 ## Verification
 
 - Attaching via CDP to a dev build and reading `document.querySelector('ritual-app').vm` returns the same live value a human would see in manual DevTools — proves the client can observe real state.

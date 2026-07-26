@@ -18,12 +18,14 @@ Same user-facing symptom as 026, now with hard evidence pinpointing the failure 
 
 **Q1.** What did the live repro show?
 **A.** Session `20260719122428.log` ran an Upload/Publish flow ending cleanly:
+
 ```
 [12:31:29] Unlocking → Done
 [12:31:29] status: done
 [12:31:29] [snap] stage=uploading phase=saving done=1172307415/1280884251 speed=1125.78Mbps   ← stale, re-fired on the Done state-change fold
 [12:31:29] [snap] stage=idle phase=idle done=0/0                                              ← correct terminal snap
 ```
+
 No further log activity for 26+ minutes. The GUI window, screenshotted live, still showed "Saving", 1.09 GB / 1.19 GB, 190.6 MB/s — numbers matching the *stale* pre-Done snap byte-for-byte.
 
 **Q2.** Is this a frontend rendering bug (026's original hypothesis C)?
@@ -46,6 +48,7 @@ No further log activity for 26+ minutes. The GUI window, screenshotted live, sti
 
 **Q8.** Second live repro, 2026-07-19, session `20260719161049.log` (via [[053-cdp-webview-inspection]], now working end to end). Is the freeze a general IPC/WebView2 stall, or specific to the push-event channel?
 **A.** **Specific to the push-event channel — confirmed directly, not just inferred.** Log shows the identical terminal race (`Unlocking → Done` → `status: done` → stale `[snap] phase=saving done=684501645/1280884251 speed=50.83Mbps` → correct `[snap] phase=idle`), silent since `16:12:10`. With the window still live and frozen, CDP confirmed two things in the same sitting:
+
   1. `document.querySelector('ritual-app').vm` read back the exact same stale numbers as the log's pre-Done snap — 4th instance of this exact byte-identical match (after the 12:31:29 repro's 3 matches).
   2. **New probe**: from the same frozen page, dynamically importing the real `wails-api.ts` module (as served by Vite dev, `http://wails.localhost:9245/src/wails-api.ts`) and calling the real `getSnapshot()` export — i.e. `Control.GetSnapshot()` over the Wails **Call/RPC** transport, a completely different code path from `wailsViewEmitter`'s **Event/push** transport — returned in **6ms** with the correct `{phase: "idle", ...}`.
   This rules out a general WebView2/IPC-bridge stall: the same native bridge, on the same frozen window, at the same moment, answers a request/response call instantly and correctly. Only the one-way push channel (`wailsViewEmitter.loop()` → `a.Event.Emit`) is dead. This narrows Q6 from "somewhere in the Wails/WebView2 boundary" to specifically **the `Event.Emit` push path**, not anything shared with `Call`/RPC — a fix can target that one call in isolation with high confidence it won't need to touch or account for the Call transport at all. **Correction in Q9: "proves the native bridge is healthy" overclaims — `GetSnapshot()` never touches the WebView2-bound UI thread at all, so it can't prove that thread is unstuck. Refined mechanism below.**
@@ -57,15 +60,17 @@ No further log activity for 26+ minutes. The GUI window, screenshotted live, sti
   **Floor of what source-reading can answer**: *why* one `ExecuteScript` submission into WebView2/COM can block forever is internal to the WebView2 runtime, not visible from Wails' Go source. Next step to get a real (not inferred) answer: `dlv attach <pid>` on a live frozen process next repro, to pull a full goroutine dump — would show definitively whether the dedicated UI thread is stuck inside the `ExecuteScript` call (confirms) or elsewhere (redirects the whole hypothesis). `dlv` v1.25.2 confirmed installed and available on this machine. Not yet attempted — needs a live repro to attach to.
 
 **Q10.** *Third live repro, 2026-07-19, via [[053]] + Delve.* Attached `dlv` headlessly (`--continue`, non-disruptive) to the live `ritualdev.exe` (PID 18464) **before** reproducing, so the freeze could be caught the instant it happened, exactly as it happens. On freeze: `halt` + `goroutines -t 15` dumped **all 26 goroutines** in the process. Result — **directly refutes the Q9 hypothesis**:
-  - Every single goroutine is idle/parked (GC housekeeping, or blocked in a channel `select`/`chanrecv` waiting for the *next* item). Critically, `main.(*wailsViewEmitter).loop` (goroutine 8) is back at its `for range e.wake` receive point — meaning its last call all the way through `Emit → ExecJS → InvokeSync → execJS → chromium.Eval → ExecuteScript(script, nil)` **already returned**. Nothing is hung. No goroutine anywhere is inside `ExecuteScript`, `InvokeSync`'s `wg.Wait()`, or any cgo call related to it.
-  - So the entire Go-side call chain completes normally every time — the wedge is not a Go deadlock at all.
-  - **Decisive follow-up test, same live freeze, before the app was closed**: manually invoked the *exact* function the native code calls — `window._wails.dispatchWailsEvent({name: "ritual:view", data: <fabricated idle vm>})` — directly via CDP `page.evaluate`, bypassing Go entirely. Result: **the frozen dial fixed itself instantly** (`vm` flipped from the stale saving snapshot to correct idle the moment the call ran). This proves the JS-side listener registration, `eventListeners` map, and Lit reactivity are all completely healthy — nothing wrong on that side either.
-  - **Conclusion**: the gap sits precisely between two independently-proven-healthy points. `ExecuteScript(script, nil)` (`go-webview2@v1.0.23/pkg/edge/chromium.go:277`) is a **fire-and-forget COM call** — WebView2 accepts the submission (Go sees no error, `Eval` returns normally) but the actual script silently never runs in the renderer, and *nothing anywhere is told* — not a Go error, not a JS error, not a log line. It's not a deadlock, not a timeout-shaped bug, not a frontend bug: it's a genuine reliability gap in an unconfirmed, unacknowledged, fire-and-forget delivery mechanism used for a critical state transition.
-  - **The gap is fixable, not just diagnosable**: the underlying WebView2 binding *does* support a real completion callback — `ICoreWebView2.ExecuteScript(javascript string, handler *iCoreWebView2ExecuteScriptCompletedHandler) error` (`go-webview2@v1.0.23/pkg/edge/corewebview2.go:295`) is a full COM completion-handler interface, generated vtable and all. `Chromium.Eval` simply hardcodes `nil` for it, discarding the one piece of information that would surface this exact failure. This isn't a WebView2 limitation; it's a wrapper-layer simplification that trades away delivery confirmation.
-  - Process exited cleanly (status 0, user-initiated) immediately after these two tests — both results were already captured beforehand; nothing lost.
+
+- Every single goroutine is idle/parked (GC housekeeping, or blocked in a channel `select`/`chanrecv` waiting for the *next* item). Critically, `main.(*wailsViewEmitter).loop` (goroutine 8) is back at its `for range e.wake` receive point — meaning its last call all the way through `Emit → ExecJS → InvokeSync → execJS → chromium.Eval → ExecuteScript(script, nil)` **already returned**. Nothing is hung. No goroutine anywhere is inside `ExecuteScript`, `InvokeSync`'s `wg.Wait()`, or any cgo call related to it.
+- So the entire Go-side call chain completes normally every time — the wedge is not a Go deadlock at all.
+- **Decisive follow-up test, same live freeze, before the app was closed**: manually invoked the *exact* function the native code calls — `window._wails.dispatchWailsEvent({name: "ritual:view", data: <fabricated idle vm>})` — directly via CDP `page.evaluate`, bypassing Go entirely. Result: **the frozen dial fixed itself instantly** (`vm` flipped from the stale saving snapshot to correct idle the moment the call ran). This proves the JS-side listener registration, `eventListeners` map, and Lit reactivity are all completely healthy — nothing wrong on that side either.
+- **Conclusion**: the gap sits precisely between two independently-proven-healthy points. `ExecuteScript(script, nil)` (`go-webview2@v1.0.23/pkg/edge/chromium.go:277`) is a **fire-and-forget COM call** — WebView2 accepts the submission (Go sees no error, `Eval` returns normally) but the actual script silently never runs in the renderer, and *nothing anywhere is told* — not a Go error, not a JS error, not a log line. It's not a deadlock, not a timeout-shaped bug, not a frontend bug: it's a genuine reliability gap in an unconfirmed, unacknowledged, fire-and-forget delivery mechanism used for a critical state transition.
+- **The gap is fixable, not just diagnosable**: the underlying WebView2 binding *does* support a real completion callback — `ICoreWebView2.ExecuteScript(javascript string, handler *iCoreWebView2ExecuteScriptCompletedHandler) error` (`go-webview2@v1.0.23/pkg/edge/corewebview2.go:295`) is a full COM completion-handler interface, generated vtable and all. `Chromium.Eval` simply hardcodes `nil` for it, discarding the one piece of information that would surface this exact failure. This isn't a WebView2 limitation; it's a wrapper-layer simplification that trades away delivery confirmation.
+- Process exited cleanly (status 0, user-initiated) immediately after these two tests — both results were already captured beforehand; nothing lost.
 
 **Q11.** *Fourth live repro, 2026-07-19, session `20260719173135.log` + a full browser-console capture from the permanent IN/OUT echo instrumentation ([[053]]).* With both a Go-side log (via the `FAILEDHERE` markers already wired into `wailsViewEmitter.loop`) and a browser-side console log of every event actually reaching the JS engine for the *same* session, the exact terminal sequence can be matched byte-for-byte on both sides. Does this confirm or refine Q10's "silently never runs" conclusion?
 **A.** **Refines it — the message is not silently lost, it's delivered out of order, and directly proven this time (not inferred).** Backend log, in strict submission order (all confirmed returned via `FAILEDHERE-after`):
+
 ```
 1. saving done=331103486  (17:32:38)
 2. saving done=331103486  (17:32:39, dup)
@@ -73,7 +78,9 @@ No further log activity for 26+ minutes. The GUI window, screenshotted live, sti
 4. saving done=331103486  (17:32:39, dup — Unlocking→Done state-change fold)
 5. idle                    (17:32:39 — submitted LAST)
 ```
+
 Browser console, same five events, same counts, different arrival order:
+
 ```
 1. saving done=331103486  (14:32:38.245Z)
 2. saving done=331103486  (14:32:39.192Z)
@@ -81,6 +88,7 @@ Browser console, same five events, same counts, different arrival order:
 4. idle                    (14:32:39.207Z)
 5. saving done=331103486  (14:32:39.213Z)   ← arrives AFTER idle, though Go submitted it BEFORE idle
 ```
+
 Emit #4 (a stale "saving" duplicate) was submitted to WebView2 *before* emit #5 (idle), but *executed* in the renderer *after* idle. `ritual-app.ts`'s `applyVm` does an unconditional `this.vm = vm` with no ordering guard, so whichever script *finishes executing* last wins the frontend's displayed state — regardless of which was *sent* last. That's why the dial froze on stale "saving" data: not because idle vanished, but because a stale duplicate raced it and won.
 This means `ExecuteScript`'s fire-and-forget calls do not preserve submission order as execution order under load (multiple back-to-back submissions to a busy renderer) — a distinct, more precise mechanism than Q10's "silently never runs," though consistent with everything else already found (nothing hangs, both channels are independently healthy, the gap is specifically in this delivery path).
 **Fix implication**: an ack/retry scheme (Q10's design sketch, option B) would still work but is now overkill for what's actually a **causal-ordering** problem, not a **loss** problem. The precise, minimal fix: attach a monotonically increasing sequence number to every emitted `ViewModel` (or reuse the existing per-emit counter shape) and have `applyVm` **drop any incoming snapshot whose sequence number is not greater than the last-applied one**. This defeats out-of-order execution regardless of why WebView2 reorders it, needs no acknowledgment/round-trip, and is a standard, well-understood technique (the same idea as TCP sequence numbers or a Lamport clock) for exactly this class of problem.
@@ -102,6 +110,7 @@ This means `ExecuteScript`'s fire-and-forget calls do not preserve submission or
 ## Implementation Plan
 
 Not started. Proposed:
+
 1. Add a `Seq int64` field to `projection.ViewModel`; `Projection` increments a counter and stamps it on every emitted snapshot (`Run`, wherever `p.emitter.Emit(p.state)` is called).
 2. `ritual-app.ts`'s `applyVm` tracks the last-applied `Seq`; if an incoming `vm.seq <= lastSeq`, return immediately without touching `this.vm`.
 3. Regression test: a projection/ViewModel-level test asserting sequence numbers are strictly increasing across a session, plus a frontend test feeding `applyVm` an out-of-order pair (high seq then low seq) and asserting the low one is ignored.
@@ -121,11 +130,13 @@ Same as [[026-stuck-in-saving]]'s original criteria: after a full successful ses
 Implemented 2026-07-19, per the Seq-guard design (Q11), user-approved ("seq approved").
 
 **Go (`internal/gui/projection/`):**
+
 - `viewmodel.go`: added `Seq int64 \`json:"seq"\`` to `ViewModel`.
 - `projection.go`: added `nextSeq int64` to `Projection`; the three separate `p.emitter.Emit(p.state); p.publish(Snap{p.state})` call sites in `Run` (initial emit, 1Hz uptime tick, fold-relevant event) were consolidated into one `p.emit()` method that increments `nextSeq`, stamps it onto `p.state.Seq`, and dispatches — the single call site is what guarantees uniqueness/monotonicity.
 - **Deviation from plan, caught by user mid-implementation**: adding `nextSeq`/`Seq` surfaced a **pre-existing, unrelated data race** — `Snapshot()` (called by `ControlService.GetSnapshot()` from whatever goroutine services that RPC) read `p.state` with zero synchronization against `Run`'s single mutating goroutine, for every field, not just the new one. `go test -race` isn't usable in this environment (the local C toolchain doesn't support 64-bit mode), so this was traced by hand instead of empirically confirmed. Fixed properly rather than papered over: added `sync.RWMutex` (`Projection.mu`) — `Snapshot()` takes `RLock`, `emit()` takes `Lock` around the stamp-and-copy (releasing before the potentially-slow `Emit`/`publish` calls), and `Run`'s two mutation sites (`fold(evt)`, `UptimeSeconds` write) are wrapped in the same lock. Single-writer/many-reader, not mutual exclusion between writers — `Run` was always the only mutator.
 
 **Frontend:**
+
 - New `frontend/src/vm-seq.ts`: `isNewerSnapshot(current, incoming)` — a tiny, dependency-free pure predicate (`incoming.seq > current.seq`), extracted into its own module specifically so it can be unit-tested without importing `ritual-app.ts` (see test deviation below).
 - `ritual-app.ts`'s `applyVm` calls `isNewerSnapshot` as its first line; on a stale/out-of-order/duplicate snapshot it **warns and drops** — `console.warn` with both the incoming and currently-applied seq/stage/phase — per user direction ("instead of return do warn"): the drop must be observable, not silent, given the whole point of this session's tooling was making previously-invisible behavior visible.
 - `FALLBACK_VM` (the pre-first-Emit placeholder) explicitly sets `seq: -1` (not left at the implicit zero-value default) — guards a narrow startup race where `GetSnapshot()` could return the backend's own zero-value state (`Seq` not yet stamped, if called before `Projection.Run`'s first `emit()`) with `Seq: 0`, which would have tied with a naive zero-default placeholder and wrongly failed the `>` check.
@@ -136,11 +147,77 @@ Implemented 2026-07-19, per the Seq-guard design (Q11), user-approved ("seq appr
 **Test results**: Go — new `TestProjection_Seq_StrictlyIncreasingAcrossEveryEmit` (asserts strictly increasing `Seq` across a mixed tick/state-change/status sequence, including the exact "duplicate state-change with no visible field change" shape from the real repro) passes; full repo `go test ./...` passes. Frontend — new `vm-seq.test.ts` (4 cases: strictly-greater accepted, equal rejected, lesser rejected using the exact captured repro's seq 6-then-5 shape, and the `-1` placeholder-vs-zero startup edge case) passes; full frontend suite 182/182 passes. `npx tsc --noEmit` clean throughout.
 
 **Live confirmation, 2026-07-19, five consecutive real Upload cycles in one dev session** (console dump via [[053]]'s permanent IN echo). The race is still happening exactly as before — several sequence numbers (20, 37, 53, ...) never arrive in the browser at all across different cycles, confirming the underlying WebView2 delivery unreliability is unchanged — but it's now inert. The fifth cycle caught the exact race live:
+
 ```
 ritual:view {seq: 123, stage: 'idle', phase: 'idle', ...}          ← arrives first
 ritual:view {seq: 122, stage: 'uploading', phase: 'saving', ...}   ← stale straggler, arrives AFTER idle
 [applyVm] dropped stale/out-of-order snapshot: incoming seq=122 (uploading/saving) <= applied seq=123 (idle/idle)
 ```
+
 The dial stayed on idle; no freeze. This is the same race pattern as Q11's original capture (a stale duplicate executing after the terminal idle), caught live with the fix in place, doing exactly what it was designed to do. Verification criteria met.
 
 **Remaining cleanup**: the `FAILEDHERE` markers (`cmd/gui/main.go`, tagged `// REMOVE AFTER 051`) can now be removed — their job (confirming the Go-side emit call always returns) is superseded by the permanent IN/OUT echo from [[053]], which is more informative and stays.
+
+## Addendum — startup Preflight subscription gap (2026-07-26)
+
+### Background
+
+Autoupdate deliberately enters an inert `PhasePreflight` before IDLE ([[037]]). The dial is disabled in that phase.
+
+### Problem
+
+`ritual-app.connectedCallback()` awaited `GetSnapshot()` and `GetPrep()` before subscribing to `ritual:view`. A completed update check could publish its terminal Idle snapshot inside that gap. The backend log then correctly says `phase=idle`, while the browser retains Preflight and Start remains disabled.
+
+### Questions and Answers
+
+**Q — Is the failed R2 update check itself supposed to block Start?** **A — No.** [[037]] requires failure to leave a usable state. The 10-second `ListObjectsV2` timeout is the trigger that exposes the subscriber gap, not a valid Start gate.
+
+**Q — Can the existing sequence guard solve this alone?** **A — No.** It orders snapshots that arrive; it cannot restore one sent before a listener existed.
+
+### Design
+
+Subscribe synchronously before beginning snapshot hydration. Keep the unsubscribe handle immediately so teardown remains safe. Then hydrate through RPC: if a pushed terminal snapshot arrives before the RPC result, [[051]]'s strictly-increasing `seq` guard drops the older RPC snapshot.
+
+A small dependency-free `view-subscription.ts` owns this order, allowing a focused test without importing the Lit application (the `svgpath` test-runner interop limitation remains).
+
+### Implementation Plan
+
+1. Test that subscription exists before `getSnapshot()` begins and that an event delivered during hydration is applied before the stale RPC snapshot.
+2. Add `subscribeBeforeHydrate` and use it in `ritual-app.connectedCallback()`.
+3. Run focused frontend tests and TypeScript checking.
+
+### Examples
+
+✅ Subscribe → receive `Idle(seq=2)` → RPC returns `Preflight(seq=1)` → sequence guard keeps Idle; Start enables.
+
+❌ RPC `Preflight(seq=1)` → update finishes as `Idle(seq=2)` before subscription → browser remains Preflight forever.
+
+### Trade-offs
+
+One tiny helper adds a module, but makes the temporal safety rule executable and testable. No retry, polling, or backend change; event delivery remains push-driven.
+
+### Verification criteria
+
+- Subscription registration precedes snapshot invocation.
+- Event during hydration is observed; later stale snapshot does not overwrite it.
+- Existing sequence ordering semantics remain intact.
+
+### Addendum result
+
+Implemented 2026-07-26.
+
+- Added `frontend/src/view-subscription.ts`.
+  `subscribeBeforeHydrate` registers the `ritual:view` callback synchronously,
+  returns its unsubscribe handle immediately, then hydrates through
+  `GetSnapshot()`.
+- `ritual-app.connectedCallback()` now stores that unsubscribe handle before
+  awaiting hydration. `getPrep()` and other non-view startup work no longer
+  create a push-event blind window.
+- Added `frontend/test/view-subscription.test.ts`, using Node v25's
+  `node:test` and `node:assert/strict`. It proves subscription precedes
+  snapshot invocation and teardown can unsubscribe during hydration. No
+  package manifest changes.
+- Validation: focused Node test 2/2 passed; browser frontend suite 184/184
+  passed before this test moved out of the browser-only suite;
+  `npx tsc --noEmit` passed; primary LSP diagnostics for changed source files
+  are clean.

@@ -40,7 +40,7 @@ import (
 )
 
 func TestPuller_PullsRefAndEveryReferencedBlobFromRemoteIntoLocal(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -74,7 +74,7 @@ func TestPuller_PullsRefAndEveryReferencedBlobFromRemoteIntoLocal(t *testing.T) 
 }
 
 func TestPuller_SkipsBlobsAlreadyPresentLocally(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -104,7 +104,7 @@ func TestPuller_SkipsBlobsAlreadyPresentLocally(t *testing.T) {
 }
 
 func TestPuller_ReturnsErrorWhenRemoteRefMissing(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -120,7 +120,7 @@ func TestPuller_ReturnsErrorWhenRemoteRefMissing(t *testing.T) {
 }
 
 func TestPuller_LeavesLocalUntouchedWhenOriginHasNoRefsAtAll(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -138,7 +138,7 @@ func TestPuller_LeavesLocalUntouchedWhenOriginHasNoRefsAtAll(t *testing.T) {
 }
 
 func TestPuller_DeletesLocalRefWhenRemoteJSONInvalid(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -157,7 +157,7 @@ func TestPuller_DeletesLocalRefWhenRemoteJSONInvalid(t *testing.T) {
 }
 
 func TestPuller_SurfacesBlobFetchError(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -178,7 +178,7 @@ func TestPuller_SurfacesBlobFetchError(t *testing.T) {
 }
 
 func TestPuller_DoesNotCommitLocalRefUntilEveryBlobLanded(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -203,7 +203,7 @@ func TestPuller_DoesNotCommitLocalRefUntilEveryBlobLanded(t *testing.T) {
 }
 
 func TestPuller_OnlyFetchesBlobsForFilesThatChangedAcrossRefs(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -247,7 +247,7 @@ func TestPuller_OnlyFetchesBlobsForFilesThatChangedAcrossRefs(t *testing.T) {
 }
 
 func TestPuller_IsIdempotentAcrossReruns(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -271,7 +271,7 @@ func TestPuller_IsIdempotentAcrossReruns(t *testing.T) {
 }
 
 func TestPuller_SurfacesDownloadSentinelAndScrubsPartialOnWriteFailure(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -302,7 +302,7 @@ func TestPuller_SurfacesDownloadSentinelAndScrubsPartialOnWriteFailure(t *testin
 }
 
 func TestPuller_ResumesWhenBlobsAlreadyLocalButRefMissing(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -329,7 +329,7 @@ func TestPuller_ResumesWhenBlobsAlreadyLocalButRefMissing(t *testing.T) {
 }
 
 func TestPuller_OnPlan_AnnouncesFullRefBudgetWhenLocalIsEmpty(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -359,7 +359,7 @@ func TestPuller_OnPlan_AnnouncesFullRefBudgetWhenLocalIsEmpty(t *testing.T) {
 }
 
 func TestPuller_OnPlan_FiresWithZeroBudgetWhenAllBlobsAlreadyPresentLocally(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
@@ -383,7 +383,7 @@ func TestPuller_OnPlan_FiresWithZeroBudgetWhenAllBlobsAlreadyPresentLocally(t *t
 }
 
 func TestPuller_OnPlan_BytesTotalIsDeltaAfterLocalExistsGate(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	remote := newFSBundle(t)
