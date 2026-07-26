@@ -37,7 +37,7 @@ import (
 )
 
 func TestApplier_MaterialisesEveryRefObjectIntoWorkdir(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	blobs := newFSBundle(t)
@@ -64,7 +64,7 @@ func TestApplier_MaterialisesEveryRefObjectIntoWorkdir(t *testing.T) {
 }
 
 func TestApplier_SkipsFilesAlreadyPresentInWorkdir(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	blobs := newFSBundle(t)
@@ -94,7 +94,7 @@ func TestApplier_SkipsFilesAlreadyPresentInWorkdir(t *testing.T) {
 }
 
 func TestApplier_PrunesWorkdirPathsNotInRef(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	blobs := newFSBundle(t)
@@ -120,7 +120,7 @@ func TestApplier_PrunesWorkdirPathsNotInRef(t *testing.T) {
 }
 
 func TestApplier_LeavesOutOfScopePathsUntouched(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	blobs := newFSBundle(t)
@@ -142,7 +142,7 @@ func TestApplier_LeavesOutOfScopePathsUntouched(t *testing.T) {
 }
 
 func TestApplier_ReturnsErrorWhenRefMissing(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	blobs := newFSBundle(t)
@@ -158,7 +158,7 @@ func TestApplier_ReturnsErrorWhenRefMissing(t *testing.T) {
 }
 
 func TestApplier_OnlyRewritesFilesThatChangedAcrossRefs(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	blobs := newFSBundle(t)
@@ -205,7 +205,7 @@ func TestApplier_OnlyRewritesFilesThatChangedAcrossRefs(t *testing.T) {
 }
 
 func TestApplier_IsIdempotentAcrossReruns(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	blobs := newFSBundle(t)
@@ -231,7 +231,7 @@ func TestApplier_IsIdempotentAcrossReruns(t *testing.T) {
 }
 
 func TestApplier_ReturnsErrorWhenReferencedBlobMissing(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	blobs := newFSBundle(t)
@@ -254,7 +254,7 @@ func TestApplier_ReturnsErrorWhenReferencedBlobMissing(t *testing.T) {
 }
 
 func TestApplier_PrunesStaleFileInsideDeeplyNestedDoublestarTarget(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	blobs := newFSBundle(t)

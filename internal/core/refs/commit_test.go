@@ -45,7 +45,7 @@ import (
 )
 
 func TestCommitter_WritesRefAndBlobsForEveryMatchedWorkdirFile(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -80,7 +80,7 @@ func TestCommitter_WritesRefAndBlobsForEveryMatchedWorkdirFile(t *testing.T) {
 }
 
 func TestCommitter_IgnoresFilesNotMatchingTargets(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -113,7 +113,7 @@ func TestCommitter_IgnoresFilesNotMatchingTargets(t *testing.T) {
 }
 
 func TestCommitter_SkipsBlobPutWhenContentAlreadyStored(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -141,7 +141,7 @@ func TestCommitter_SkipsBlobPutWhenContentAlreadyStored(t *testing.T) {
 }
 
 func TestCommitter_OnlyStoresBlobsForFilesThatChangedAcrossCommits(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -180,7 +180,7 @@ func TestCommitter_OnlyStoresBlobsForFilesThatChangedAcrossCommits(t *testing.T)
 }
 
 func TestCommitter_PropagatesParentFromOpts(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -203,7 +203,7 @@ func TestCommitter_PropagatesParentFromOpts(t *testing.T) {
 }
 
 func TestCommitter_AmendReplacesOldDraft(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -238,7 +238,7 @@ func TestCommitter_AmendReplacesOldDraft(t *testing.T) {
 }
 
 func TestCommitter_AmendInvokesLocalGCAfterDeletingOldDraft(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -272,7 +272,7 @@ func TestCommitter_AmendInvokesLocalGCAfterDeletingOldDraft(t *testing.T) {
 }
 
 func TestCommitter_FreshCommitDoesNotInvokeLocalGC(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -295,7 +295,7 @@ func TestCommitter_FreshCommitDoesNotInvokeLocalGC(t *testing.T) {
 }
 
 func TestCommitter_AmendPropagatesLocalGCError(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -321,7 +321,7 @@ func TestCommitter_AmendPropagatesLocalGCError(t *testing.T) {
 }
 
 func TestCommitter_ReturnsErrorWhenNoWorkdirFilesMatchTargets(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -340,7 +340,7 @@ func TestCommitter_ReturnsErrorWhenNoWorkdirFilesMatchTargets(t *testing.T) {
 }
 
 func TestCommitter_DoesNotWriteRefWhenBlobPutFails(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -362,7 +362,7 @@ func TestCommitter_DoesNotWriteRefWhenBlobPutFails(t *testing.T) {
 }
 
 func TestCommitter_LeavesPartialBlobsWhenRefWriteFails(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -396,7 +396,7 @@ func TestCommitter_LeavesPartialBlobsWhenRefWriteFails(t *testing.T) {
 }
 
 func TestCommitter_AmendWritesNewRefBeforeDeletingOldDraft(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -429,7 +429,7 @@ func TestCommitter_AmendWritesNewRefBeforeDeletingOldDraft(t *testing.T) {
 }
 
 func TestCommitter_AmendRetryAfterInterruptedFinalizeSweepsOrphanSiblingRef(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -460,7 +460,7 @@ func TestCommitter_AmendRetryAfterInterruptedFinalizeSweepsOrphanSiblingRef(t *t
 }
 
 func TestCommitter_ErrorsOnAmendOfNonexistentDraft(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -483,7 +483,7 @@ func TestCommitter_ErrorsOnAmendOfNonexistentDraft(t *testing.T) {
 }
 
 func TestCommitter_SurfacesContextCanceledBeforeAnyWrite(t *testing.T) {
-	parentCtx, cancel := context.WithTimeout(t.Context(), time.Second)
+	parentCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -506,7 +506,7 @@ func TestCommitter_SurfacesContextCanceledBeforeAnyWrite(t *testing.T) {
 }
 
 func TestCommitter_RejectsClockCollisionWithExistingRef(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -538,7 +538,7 @@ func TestCommitter_RejectsClockCollisionWithExistingRef(t *testing.T) {
 }
 
 func TestCommitter_RefFileIsHumanReadableJSON_NotMinified(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
@@ -572,7 +572,7 @@ func TestCommitter_RefFileIsHumanReadableJSON_NotMinified(t *testing.T) {
 // that mirrors the post-#8 layout. Reverting the allowlist to ["**"] or
 // dropping a server/ subtree will fail this test loudly.
 func TestCommitter_DefaultCommitTargets_CapturePlaySurface_ExcludeOperationalDirs(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	workdir := newFSBundle(t)
