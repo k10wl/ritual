@@ -1,45 +1,55 @@
 name: Test CI
 
 on:
-  push:
-    branches: [ main, dev ]
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev]
 
 jobs:
   test:
     runs-on: windows-latest
-    
+
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version-file: 'go.mod'
-        cache: true
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache: true
 
-    - name: Set up Node
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: npm
-        cache-dependency-path: frontend/package-lock.json
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
-    - name: Add Go bin to PATH
-      shell: pwsh
-      run: Add-Content -Path $env:GITHUB_PATH -Value ((go env GOPATH) + "\bin")
+      - name: Add Go bin to PATH
+        shell: pwsh
+        run: |
+          $goBin = (go env GOPATH) + "\bin"
+          Add-Content -Path $env:GITHUB_PATH -Value $goBin
 
-    - name: Install Task
-      run: go install github.com/go-task/task/v3/cmd/task@latest
+      - name: Install Task
+        run: go install github.com/go-task/task/v3/cmd/task@latest
 
-    - name: Install Wails3 CLI
-      run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74
+      - name: Install Wails3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74
 
-    - name: Build frontend
-      # assets.go embeds frontend/dist (`//go:embed all:frontend/dist`), so the
-      # root and cmd/gui packages fail to even compile for `go test` without it.
-      run: task common:build:frontend
+      - name: Install golangci-lint
+        shell: pwsh
+        run: |
+          $package = 'github.com/golangci/golangci-lint/v2/cmd/' +
+            'golangci-lint@v2.12.2'
+          go install $package
 
-    - name: Run tests
-      run: go test ./...
+      - name: Build frontend
+        # assets.go embeds frontend/dist, so Go tests need the build output.
+        # Otherwise root and cmd/gui fail to compile.
+        run: task common:build:frontend
+
+      - name: Run tests
+        run: task test
+
+      - name: Run lint
+        run: task lint
