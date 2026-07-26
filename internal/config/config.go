@@ -12,7 +12,7 @@ import (
 const (
 	VersionMajor = 2
 	VersionMinor = 0
-	VersionPatch = 3
+	VersionPatch = 4
 )
 
 // Application identity
