@@ -27,6 +27,7 @@
     "@web/dev-server-esbuild": "^1.0.2",
     "@web/test-runner": "^0.20.0",
     "storybook": "^10.4.0",
+    "tsx": "^4.20.6",
     "typescript": "^5.2.2",
     "vite": "^5.0.0"
   }

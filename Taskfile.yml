@@ -1,3 +1,5 @@
+# yamllint disable rule:line-length
+---
 # Ritual build orchestration.
 #
 # Target platform: Windows. macOS is a dev-iteration host only.
@@ -26,7 +28,7 @@
 #   - Binding generator only picks up services in non-main packages — services
 #     must live under internal/gui/services/.
 
-version: '3'
+version: "3"
 
 includes:
   common: ./build/Taskfile.yml
@@ -45,19 +47,19 @@ includes:
 # Missing file is fatal at task time — Task aborts before launching the
 # GUI, naming the file it could not open. Missing keys inside an existing
 # file surface as remote.ErrR2EnvIncomplete at GUI boot.
-dotenv: ['.env.{{.RITUAL_ENV}}.local']
+dotenv: [".env.{{.RITUAL_ENV}}.local"]
 env:
-  RITUAL_R2_BUCKET: '{{.R2_BUCKET_NAME}}'
-  RITUAL_R2_ACCOUNT_ID: '{{.R2_ACCOUNT_ID}}'
-  RITUAL_R2_ACCESS_KEY_ID: '{{.R2_ACCESS_KEY_ID}}'
-  RITUAL_R2_SECRET_ACCESS_KEY: '{{.R2_SECRET_ACCESS_KEY}}'
+  RITUAL_R2_BUCKET: "{{.R2_BUCKET_NAME}}"
+  RITUAL_R2_ACCOUNT_ID: "{{.R2_ACCOUNT_ID}}"
+  RITUAL_R2_ACCESS_KEY_ID: "{{.R2_ACCESS_KEY_ID}}"
+  RITUAL_R2_SECRET_ACCESS_KEY: "{{.R2_SECRET_ACCESS_KEY}}"
 
 vars:
   RITUAL_ENV: '{{.RITUAL_ENV | default "dev"}}'
   APP_NAME: "ritual"
   BIN_DIR: "bin"
   MAIN_PKG: "./cmd/gui"
-  VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+  VITE_PORT: "{{.WAILS_VITE_PORT | default 9245}}"
 
 tasks:
   # --- GUI (cmd/gui, real backend) ----------------------------------------
@@ -161,12 +163,12 @@ tasks:
       - RITUAL_ENV=dev REMOTE_MODE= task _publish
 
   publish:dev:remote:
-    desc: Test + lint + build the dev-variant binary, then publish it to the dev R2 channel.
+    desc: Build the dev-variant binary, then publish it to the dev R2 channel.
     cmds:
       - RITUAL_ENV=dev REMOTE_MODE= task _publish
 
   publish:prod:
-    desc: Test + lint + build the prod-variant binary, then publish it to the prod R2 channel.
+    desc: Build the prod-variant binary, then publish it to the prod R2 channel.
     cmds:
       - RITUAL_ENV=prod task _publish
 
@@ -234,15 +236,12 @@ tasks:
   _publish:
     desc: "(private — use publish:dev:remote, publish:dev:local, or publish:prod)"
     cmds:
-      # Gate the deploy on green tests + lint — a failing step aborts before
-      # cmd/publish runs, so nothing red ever reaches R2. Build runs last so the
-      # uploaded binary re-bakes the current config.AppVersion (anti-loop invariant).
-      - task: test
-      - task: lint
+      # PR CI gates deployment on tests + lint. Build runs here so the uploaded
+      # binary re-bakes the current config.AppVersion (anti-loop invariant).
       - task: gui:_build
       # REMOTE_MODE=mock (publish:dev:local) routes cmd/publish itself at the
       # local-FS store via RITUAL_REMOTE_MODE — scoped to this command only so
-      # test/lint/build above stay backend-agnostic (design-log/048).
+      # the GUI build above stays backend-agnostic (design-log/048).
       #
       # The R2 branch passes credentials as explicit flags (Task's own
       # {{.R2_BUCKET_NAME}} etc. template vars) instead of letting cmd/publish
@@ -345,7 +344,7 @@ tasks:
     desc: "wails3 internal — forwards DEV to gui:build:dev. Humans: use gui:build:dev or gui:build:prod."
     cmds:
       - task: gui:build:dev
-        vars: {DEV: '{{.DEV}}'}
+        vars: { DEV: "{{.DEV}}" }
   run:
     desc: "wails3 internal — forwards to gui:run:dev. Humans: use gui:run:dev or gui:run:prod."
     cmds:
