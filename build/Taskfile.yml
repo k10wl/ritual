@@ -1,3 +1,5 @@
+# yamllint disable rule:line-length
+---
 version: "3"
 
 tasks:
@@ -28,9 +30,9 @@ tasks:
       - task: install:frontend:deps
     cmds:
       - npm run test
-      # Node v25 runs dependency-free startup sequencing tests without the
-      # browser-only svgpath import path used by ritual-app.ts.
-      - node --test test/view-subscription.test.ts
+      # tsx runs this TypeScript-only Node test under CI's Node 20 as well as
+      # local Node 24+, without loading ritual-app.ts's browser-only imports.
+      - npx tsx --test test/view-subscription.test.ts
 
   build:frontend:
     label: build:frontend (DEV={{.DEV}})

@@ -111,3 +111,7 @@ Implemented 2026-07-26.
 ### Deviations
 
 The initial design retained the publish workflow's frontend prebuild. Removed it after implementation inspection because the GUI build owns that dependency. Deployment still builds frontend once, as part of `gui:_build`.
+
+### CI follow-up
+
+PR #23 initially exposed a Node-runtime mismatch: `node --test test/view-subscription.test.ts` works on local Node 24 but Node 20 rejects the `.ts` extension. Added the pinned `tsx` dev dependency and changed `build/Taskfile.yml` to run `npx tsx --test test/view-subscription.test.ts`. Verified the test directly under Node 20.20.2 and through `task test`; both pass. `task lint` also passes with 0 issues.
