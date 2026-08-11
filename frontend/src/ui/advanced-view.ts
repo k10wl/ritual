@@ -13,11 +13,13 @@ import { LitElement, css, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./prep-settings";
 import "./sync-view";
+import "./work-root";
 import "./versions-view";
 import "./retention-rules";
 import "./primitives/rune-button";
 import type { PrepSettings } from "./prep-settings";
 import type { SyncVerdict } from "./sync-view";
+import type { WorkRootInfo, WorkRootPickResult } from "./work-root";
 import type { VersionRow, VersionScope, LocalStorageStatsLike } from "./versions-view";
 import type { RetentionChangeDetail } from "./retention-rules";
 import type { RetentionRules } from "./retention-model";
@@ -61,6 +63,23 @@ export class AdvancedView extends LitElement {
     // it is offered only when the dial is idle (design-log/037 §Q4 lean).
     @property({ type: Boolean }) canUpdate = false;
 
+    // Work root section (design-log/056, Phase F of 055): current content-
+    // root path (click-to-open) + Change, injected by the host (wraps
+    // GetWorkRoot/OpenRootFolder/PickWorkRootFolder/ChangeWorkRoot). Gated on
+    // the same idle signal as `canUpdate` — a relocate is disallowed outside
+    // PhaseIdle/PhaseFailed (055's RUNNING-gate), same shape as the
+    // update-restart gate above.
+    @property({ attribute: false }) getWorkRoot: () => Promise<WorkRootInfo> = async () => ({
+        path: "",
+        isDefault: true,
+    });
+    @property({ attribute: false }) openWorkFolder: () => Promise<void> = async () => {};
+    @property({ attribute: false }) pickWorkRootFolder: () => Promise<WorkRootPickResult> = async () => ({
+        path: "",
+        ok: false,
+    });
+    @property({ attribute: false }) changeWorkRoot: (path: string) => Promise<void> = async () => {};
+
     @state() private _rules: RetentionPair = { local: { ...DEFAULT_RULES }, remote: { ...DEFAULT_RULES } };
 
     firstUpdated() {
@@ -99,6 +118,16 @@ export class AdvancedView extends LitElement {
             <section>
                 <p class="label">Sync</p>
                 <sync-view auto .check=${this.check}></sync-view>
+            </section>
+            <section>
+                <p class="label">Work folder</p>
+                <work-root
+                    .get=${this.getWorkRoot}
+                    .open=${this.openWorkFolder}
+                    .pick=${this.pickWorkRootFolder}
+                    .change=${this.changeWorkRoot}
+                    ?idle=${this.canUpdate}
+                ></work-root>
             </section>
             <section>
                 <p class="label">Versions</p>

@@ -903,3 +903,93 @@ the new dedicated types; `projection_test.go` gained 8 new tests including
 the direct regression test for the collision this addendum fixes. `go
 build`/`go vet`/`go test ./...` clean; frontend `tsc --noEmit` clean; `npm
 test` (182 tests) clean.
+
+## Addendum: root `logs/` reclassified CONTROL → CONTENT (moves with the workroot)
+
+Follow-up session (2026-08-11), during [[056-work-root-folder-dialog-ui]]'s
+live design review. Trigger: user direction — "we should also move logs with
+the workfolder." This directly reverses this log's own §Directory
+classification table, which put root-level `logs/` in CONTROL ("Ritual's own
+diagnostic log — not game data") after an explicit audit. Recorded here as an
+addendum rather than edited into the original table (house rule: initial
+sections are immutable once implementation has started — this log is already
+Implemented).
+
+**Why this isn't a one-line reclassification.** Every other CONTENT item
+(`objects/refs/server/worlds`) is copied by `relocating.copyContent` through
+the `ports.StorageRepository` facades (`WorkRootRefs.local`/`.workdir`,
+`List`+`GetStream`/`PutStream`) — the same mechanism the rest of the app
+already reads/writes through, so the copy step needed no bespoke code for
+them. Root `logs/` is structurally different: `logging.Build(bus, opRoot)`
+(`cmd/gui/main.go:735`) opens one raw `*os.File` at boot
+(`logging.CreateLogFile`) and keeps a single long-lived `Attach` goroutine
+writing to it for the *entire process lifetime* — outside
+`ports.StorageRepository` entirely, like the three things §Q4 already
+carved out (`localStatsFn`, `scanner`/disk-check, `cmdBuilder`/
+`consoleReader`). Two problems compound:
+
+1. **It's the log of the relocate itself.** Every `RelocateStarted`/
+   `RelocatePlanned`/`RelocateProgress`/`RelocateCommitting` event the move
+   emits is currently written live to this exact file while the move is in
+   flight — closing it mid-copy would lose the audit trail of the operation
+   that's happening.
+2. **Open-handle-blocks-move**, the same Windows constraint this log's own
+   §Q2 designed the whole storage-copy approach around for CONTENT, applies
+   here too: the live file can't be relocated while still open for writes.
+
+**Decision: swap the log sink only after the durable commit point, not
+during the copy.** The relocate's own events keep logging normally to the
+*old* location through validate/copy/verify — nothing about that phase
+changes. Only **after** `commit()` succeeds (`Strategy.Run`'s
+`st.Refs.store(...)` + `domain.Settings.Save()` — the same ACID commit
+point §Q4/Crash-safety already treats as the line between "old root still
+authoritative" and "new root now authoritative") does `ControlService.
+ChangeWorkRoot`:
+
+1. Stop the current log attach (`stopLogFile()`, closing the old file) —
+   mirrors the `cmdBuilder`/`consoleReader` swap already happening at this
+   exact point (§Q4 Phase D).
+2. Best-effort copy the old root's historical `logs/*.log` files into the
+   new root's `logs/` — a plain `os.ReadDir` + file copy, not through
+   `ports.StorageRepository` (these aren't content-addressed keys, and nothing
+   else needs to read them through that interface).
+3. `logging.Build(bus, newRoot)` — opens a fresh timestamped file at the new
+   location; the relocate's own tail events (`RelocateFinished`) and
+   everything after log there.
+
+**Crash safety, mapped onto the existing ACID framing:**
+- Crash before `commit()`: identical to today — old root (incl. `logs/`)
+  fully intact and active, log file never touched.
+- Crash after `commit()` but before the log-swap steps above: `settings.
+  WorkRoot` already durably points at the new root, so the next boot resolves
+  `config.WorkRoot` there and opens a fresh log fine; the *historical* log
+  files from the old root simply weren't copied — an orphaned-but-harmless
+  old `logs/` directory, the exact same tolerance already accepted for a
+  crash during cleanup (§Crash safety, "stale files are not our concern").
+  No data loss, just a gap in log continuity for that one relocate — judged
+  acceptable rather than adding new machinery to make the historical-log
+  copy itself transactional.
+- This treats the historical-log copy as best-effort/non-durable by design,
+  matching the "stale files are not our concern" scope decision already made
+  for everything else in this log — no new crash-safety mechanism needed.
+
+**Directory classification table (superseding just this one row):**
+
+| Path | Category | Why |
+|---|---|---|
+| `logs/` (root-level) | ~~CONTROL~~ **CONTENT** | Ritual's own diagnostic log; now travels with the user-chosen workroot per this addendum, closing/reopening around the swap rather than being copied through `ports.StorageRepository` like the rest of CONTENT |
+
+**Scope note.** `server/logs/` (the Minecraft server's own console log) was
+already CONTENT before this addendum — it lives under `server/`, which
+`relocating` already copies via `WorkRootRefs.workdir`. This addendum only
+changes the root-level `<RootPath>/logs/<ts>.log` (Ritual's own session log).
+
+**Status: Draft.** Not yet implemented — captured here per user direction
+ahead of the [[056-work-root-folder-dialog-ui]] Phase F UI work landing.
+Implementation touches: `config` (root `logs/` no longer resolves off
+`RootPath` alone once moved — `logging.Build`'s call site moves from
+`opRoot` to the live `WorkRoot`), `cmd/gui/main.go` (wire the close/copy/
+reopen sequence into `ChangeWorkRoot`'s post-commit step, alongside the
+existing `cmdBuilder`/`consoleReader` swap), and a new small helper
+(tentatively `internal/subsystems/logging.CopyHistorical(oldRoot, newRoot
+*os.Root) error`) for the best-effort historical-file copy.
