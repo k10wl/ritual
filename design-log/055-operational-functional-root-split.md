@@ -610,3 +610,214 @@ nothing to move; layout identical to pre-055.
 ref-commit glob scope, not a directory-category list; conflating them would
 silently drop `worlds/`'s sibling-directory status or pull in commit-only
 globs that don't map to whole directories.
+
+## Implementation Results
+
+Phases A–E implemented and landed; Phase F (native folder dialog + UI) remains
+deferred, out of scope, per the original plan. `go build ./...`, `go vet ./...`,
+and `go test ./...` are clean across the whole repo; `internal/core/stages/
+relocating`, `internal/gui/control`, and `internal/integration` also pass under
+`-race`.
+
+**Phase A** — `domain.Settings.WorkRoot` (`json:"work_root"`, last field,
+validated absolute-or-empty in `Validate()`); `Settings.Save()` rewritten to
+atomic temp-file+fsync+rename+chmod (`internal/core/domain/settings.go`);
+`config.WorkRoot` var + `config.ResolveWorkRoot`. 21 domain tests, 9 config
+tests (existing + new), all passing.
+
+**Phase B** — `adapters.SwappableStorage` (`internal/adapters/swappable.go`),
+`adapters.LiveDirFS` (`internal/adapters/livefs.go`), `adapters.
+SwappableCmdBuilder` (`internal/adapters/swappable_cmdbuilder.go`, pulled
+forward from Phase D since `buildRuntime` needs it at construction time).
+`cmd/gui/main.go`'s `buildRuntime` split into `opRoot` (CONTROL, fixed) +
+`wr`/`config.WorkRoot` (CONTENT, swappable), with `rawLocalRef`/
+`rawWorkdirRef` facades threaded through the whole decorator stack. 6 new
+adapter tests.
+
+**Phase C** — `internal/core/stages/relocating` (new package): `WorkRootRefs`,
+`State`/`Strategy` (generic `machine.Strategy[State]`, not `ritual.RunState`),
+`validate`/`buildNewRoot`/`planCopy`/`copyContent`/`verify`/`commit`/
+`cleanup`. 10 unit tests covering success, corrupted-blob abort, verify
+failure, commit-failure rollback, permission/writability rejection,
+current-root/inside-root rejection, event publishing, and mid-copy
+cancellation.
+
+**Phase D** — `SwappableCmdBuilder` (built in Phase B); `ControlService.
+console` read/write guarded by the existing `c.mu` (was unguarded — safe only
+because it was set exactly once at boot prior to this change). 2 new tests,
+one run under `-race`.
+
+**Phase E** — `ControlService.SetWorkRoot`/`GetWorkRoot`/`ChangeWorkRoot`/
+`ResetWorkRoot`; `OpenRootFolder` now reveals `config.WorkRoot`. 5 new unit
+tests + 8 new integration tests in `internal/integration/
+workroot_integration_test.go`.
+
+### Deviations from the original design sketch
+
+1. **Import-cycle fix.** The design's own pseudocode,
+   `config.ResolveWorkRoot(s *domain.Settings) string`, would make `config`
+   import `domain` — but `domain` already imports `config`
+   (`internal/core/domain/settings.go:9`), a hard compile-time cycle. Fixed
+   by changing the signature to `config.ResolveWorkRoot(workRoot string)
+   string`, taking the already-extracted `settings.WorkRoot` string instead
+   of the whole struct. `config` stays at the bottom of the import graph.
+2. **`ControlService` wiring stays a setter, not a constructor param.** The
+   composition root already documents (`cmd/gui/main.go`, near the existing
+   `SetVersionDeleter`/`SetLocalStatsFn` calls) that later-added
+   `ControlService` dependencies are wired via setters specifically to keep
+   `NewControlService`'s positional signature stable. `SetWorkRoot(refs,
+   cmdBuilderRef, consoleReaderFactory)` follows that same convention rather
+   than growing the constructor, which the initial design sketch didn't
+   address either way.
+3. **Two silent wiring gaps found beyond the two the design's own audit
+   named** (lock-sharing-localStorage and `OpenRootFolder` — both fixed as
+   designed):
+   - `cmd/gui/main.go`'s `serverPath := filepath.Join(config.RootPath,
+     config.ServerDir)` had to become `config.WorkRoot` in Phase B itself,
+     not deferred to Phase D — `server/` is CONTENT per the design's own
+     classification table, so leaving it on `RootPath` would have launched
+     the game server against the wrong directory from the very first boot,
+     independent of whether a relocate ever ran.
+   - `scanner := adapters.NewFullScanner(os.DirFS(config.RootPath))` bakes
+     an immutable `fs.FS` into `applier`/`committer` **once, forever** —
+     structurally like the storage facades, not like the already-live
+     `workdirScan` closure the design cited as precedent (that closure
+     re-evaluates `config.RootPath` per call; `scanner` does not
+     re-evaluate anything after construction). Left as a baked string, a
+     relocate would have silently left Apply/Commit reading/writing the OLD
+     `worlds/`/`server/` forever. Fixed with the new `adapters.LiveDirFS`
+     wrapper, whose `Open` re-resolves `config.WorkRoot` on every call.
+4. **`verify()`'s `objects/` integrity check needed an explicit non-deferred
+   `Close()` check.** `CompressingStorage.GetStream`'s zstd-decode +
+   xxhash-vs-filename integrity check only surfaces a mismatch as an error
+   from `Close()` (`internal/adapters/compressing.go`), not from the read
+   itself. An early draft of `verifyStreamNonEmpty` used `defer func(){
+   _ = rc.Close() }()`, which silently discarded that error — a corrupted
+   blob would have passed verification. Caught by
+   `TestRelocating_CorruptedBlobDuringCopy_AbortsBeforeStoreSourceIntact`
+   during implementation; fixed by capturing and checking `Close()`'s error
+   explicitly before returning success.
+5. **`planCopy`'s byte total** cannot come from `ports.StorageRepository`
+   (no `Stat`/size method, only `List` for keys). Resolved the same way the
+   pre-existing `walkLocalPrefix` (design-log/045 §E) does: a raw
+   `*os.Root` + `fs.WalkDir` walk for the size estimate only — the actual
+   transfer in `copyContent` still goes exclusively through `List` +
+   `GetStream`/`PutStream`, preserving Q2's "uniform code path regardless
+   of volume" guarantee for the copy itself.
+6. **Added a resource-safety close on failure paths** not spelled out in the
+   design's `Run()` sketch: `Strategy.Run` now closes the newly-opened
+   `os.Root` (`newRoot.Close()`) on every failure branch after
+   `buildNewRoot` succeeds, to avoid leaking the destination's file handle.
+   The destination directory's contents are still left in place on failure
+   (per Crash safety §, "stale files are not our concern") — only the open
+   handle is released.
+7. **`OpenRootFolder` has no automated test.** It shells out to the OS file
+   manager (`exec.Command(...).Start()`) with no seam to intercept the
+   process launch; exercising it in `go test` would pop a real Finder/
+   Explorer window as a side effect. The one-line change (reveal
+   `config.WorkRoot` instead of `config.RootPath`) is verified by reading
+   the source rather than by an automated test.
+8. **RUNNING-gate test moved from Phase C to Phase E.** `relocating.State`
+   deliberately carries no `SnapshotSource`/phase field — the gate
+   structurally belongs to `ControlService.ChangeWorkRoot`, which already
+   holds `c.snapshot` for exactly this purpose. The design's own Phase C
+   test-list bullet ("RUNNING-gate blocks the call") is covered instead by
+   `TestControlService_ChangeWorkRoot_WhileRunning_RejectedNoStateChanged`
+   and `TestIntegration_ChangeWorkRoot_WhileSessionRunning_
+   RejectedNoStateChanged`.
+9. **Integration test scope narrowed on one scenario.** The Testing Plan's
+   "world loads after relaunch of server" scenario is covered as
+   `TestIntegration_ChangeWorkRoot_EndToEnd_ServerCmdBuilderFollowsTheSwap`:
+   it asserts the rebuilt `SwappableCmdBuilder`'s `Build()` returns a
+   `*exec.Cmd` with `cmd.Dir` pointing at the new `server/` path, rather
+   than driving the `fakerun` subprocess harness end-to-end through a full
+   pipeline session — `ChangeWorkRoot` sits outside the session pipeline
+   entirely (Q4/Q5), so the load-bearing guarantee is that the cmd builder
+   followed the swap, which this test proves directly without the added
+   weight of wiring `fakerun` through a bespoke composition root.
+
+### Verification against the Verification criteria
+
+- Fresh/existing install, empty `work_root` → `config.WorkRoot ==
+  config.RootPath`: covered by Phase A/B tests and the integration suite's
+  `ResetWorkRoot` scenario.
+- Non-default `work_root` moves the CONTENT set, leaves CONTROL in place:
+  `TestIntegration_ChangeWorkRoot_NonDefaultDestination_ContentSetMoves_
+  ControlStaysPut`.
+- No restart, facades never reconstructed: proven structurally (Phase B's
+  swap tests show the facade's *type* never changes across a `Store`) and
+  behaviorally (`ChangeWorkRoot` never rebuilds `puller`/`applier`/etc.).
+- Destination `objects/` re-hash, `refs/` re-parse, crash-before/after-write
+  outcomes, RUNNING-gate rejection, no half-old/half-new reads: all covered
+  by the `TestRelocating_*` and `TestIntegration_ChangeWorkRoot_*` suites
+  listed above.
+
+### Post-implementation code review (`/code-review high`)
+
+A high-effort review pass against the full diff surfaced 7 findings, all
+confirmed against source and fixed:
+
+1. **`newRoot` handle leak when `commit()` fails after the swap**
+   (`strategy.go`). `Refs.store(new)` had already run by the time `commit`
+   could fail; the rollback restored `Refs` to the old root but never closed
+   the now-orphaned `newRoot` handle. Fixed: `newRoot.Close()` added to that
+   branch too.
+2. **`verify()` was not cancellable.** It received the outer `ctx` (not
+   `stopCtx`) and never polled `ctx.Err()` between keys — combined with
+   `FSRepository.GetStream` ignoring its `ctx` parameter entirely, a Stop
+   request during the (potentially longest) verify phase of a large relocate
+   had no effect. Fixed: `Run` now passes `stopCtx` into `verify`, which
+   checks `ctx.Err()` between every object/ref/workdir key, mirroring
+   `copyContent`'s own granularity.
+3. **`validate()` missed same-physical-directory destinations reachable via
+   a symlink or (on a case-insensitive filesystem, e.g. default macOS APFS)
+   a case-only spelling difference.** The pure `filepath.Clean` string
+   compare would let such a destination through; `copyKey`'s
+   `GetStream(src)`-then-`PutStream(dst, O_TRUNC)` on what turns out to be
+   the *same* underlying file would then truncate the source while it was
+   still being read — real data loss. Fixed: `sameDirectory` resolves both
+   paths via `os.Stat` (follows symlinks, resolves case-insensitively) and
+   compares via `os.SameFile` (device+inode / file index), checked
+   alongside the existing string-based checks.
+4. **The RUNNING-gate was narrower than the design's own stated intent.**
+   `ChangeWorkRoot` only rejected `PhasePlaying`, but the design text says
+   "the game server **or a live sync** could be writing worlds/objects
+   mid-copy" — a Pull/Apply/Commit in flight during Downloading/Preparing/
+   Wrapping/Saving is exactly that hazard, and `config.WorkRoot` is a plain
+   package-level `string` read by live-rederivation call sites
+   (`adapters.LiveDirFS`'s `pathFn`, `checks.Disk`) from those same worker
+   goroutines with no synchronization — a real data race under those phases,
+   not just a logical inconsistency. Fixed: the gate now rejects any phase
+   other than `PhaseIdle`/`PhaseFailed`.
+5. **No mutual exclusion between overlapping `ChangeWorkRoot` calls, or
+   between a relocate and `Start`.** Two concurrent `ChangeWorkRoot` calls
+   could interleave their `snapshot()`/`store()`/`cleanup()` calls over the
+   same `WorkRootRefs`; and because `Start` is fire-and-forget (just
+   publishes `StartRequested`, no gate of its own), a `Start` issued
+   immediately after `ChangeWorkRoot`'s one-time phase check could still
+   land while the copy was in flight. Fixed: `ControlService` gained
+   `relocateInFlight atomic.Bool`, set via `CompareAndSwap` at the top of
+   `ChangeWorkRoot` (second caller gets a new `ErrRelocateInProgress`) and
+   checked by `Start`. **Residual, accepted risk**: because phase
+   transitions arrive asynchronously over the event bus, a `Start` issued in
+   the instant *before* `ChangeWorkRoot`'s phase check but not yet reflected
+   in `c.snapshot` is not closed by this fix — pre-existing to this
+   event-driven architecture generally, not introduced by this change, and
+   judged out of scope for this pass.
+6. **`ChangeWorkRoot` silently swallowed the cmdBuilder-rebuild error.** On
+   `adapters.NewServerCmdBuilder` failure post-relocate, the old code just
+   skipped `Store`, leaving `cmdBuilderRef` pointing at a builder whose
+   `server/` directory `relocating`'s `cleanup()` had already
+   `os.RemoveAll`'d — the next `Start` would silently launch against a path
+   that no longer exists. Fixed: the error now returns from `ChangeWorkRoot`
+   (the relocate itself already committed by this point, so this is
+   reported as a partial-failure error, not masked as full success).
+7. Regression tests added for all of the above except #6 (`NewServerCmdBuilder`
+   only fails on empty `serverPath`/`startScript`/nil runtime — all
+   unreachable post-relocate given `domain.LoadSettings`'s own
+   defaulting, so a dedicated failure-injection test would need to be
+   fairly contrived; the fix itself is a straightforward
+   don't-swallow-the-error change, verified by reading).
+
+`go build`/`go vet`/`go test ./...` clean after these fixes; `relocating`,
+`gui/control`, and `integration` re-verified under `-race`.

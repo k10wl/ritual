@@ -8,16 +8,21 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
+	"ritual/internal/adapters"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
+	"ritual/internal/core/machine"
 	"ritual/internal/core/ports"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pulling"
+	"ritual/internal/core/stages/relocating"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/gui/projection"
 	"ritual/internal/subsystems/selfupdate"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -227,6 +232,22 @@ type ControlService struct {
 	// console reads the running server's own latest.log for the one-shot
 	// backfill (design-log/043 §3b); nil ⇒ ReadServerLog returns nil.
 	console func(ctx context.Context) ([]string, error)
+
+	// workRootRefs/cmdBuilderRef/consoleReaderFactory (design-log/055 Phase
+	// E) are wired post-construction via SetWorkRoot, following the same
+	// house convention as SetVersionDeleter/SetLocalStatsFn/SetConsoleReader
+	// — NewControlService's positional signature stays stable, per
+	// cmd/gui/main.go's own comment: "Wired here rather than through the
+	// constructor to keep the positional signature stable."
+	workRootRefs         relocating.WorkRootRefs
+	cmdBuilderRef        *adapters.SwappableCmdBuilder
+	consoleReaderFactory func(serverPath, startScript string) func(context.Context) ([]string, error)
+	// relocateInFlight guards against two overlapping ChangeWorkRoot calls
+	// racing over the same WorkRootRefs (their snapshot()/store()/cleanup()
+	// calls could interleave and delete a directory the other's refs now
+	// point to), and is also checked by Start so a session cannot begin
+	// while a relocate's copy is still reading/writing worlds/objects.
+	relocateInFlight atomic.Bool
 }
 
 // NewControlService wires the service to the shared bus, projection, sync
@@ -251,6 +272,9 @@ func (c *ControlService) Start(port int, memoryMB int, skipSync bool) error {
 	}
 	if memoryMB <= 0 {
 		return errors.New("memory must be positive")
+	}
+	if c.relocateInFlight.Load() {
+		return errors.New("cannot start while the work root is being relocated")
 	}
 	settings, err := domain.LoadSettings()
 	if err != nil {
@@ -481,12 +505,15 @@ func (c *ControlService) SetLocalStatsFn(fn StorageStatFn) {
 // timeout, missing file, or any read error collapses to nil — the console
 // opens to live-only, never an error.
 func (c *ControlService) ReadServerLog() []string {
-	if c.console == nil {
+	c.mu.Lock()
+	reader := c.console
+	c.mu.Unlock()
+	if reader == nil {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), consoleReadTimeout)
 	defer cancel()
-	lines, err := c.console(ctx)
+	lines, err := reader(ctx)
 	if err != nil {
 		return nil
 	}
@@ -495,17 +522,116 @@ func (c *ControlService) ReadServerLog() []string {
 
 // SetConsoleReader injects the latest.log tail reader (design-log/043). The
 // composition root resolves the running server's working dir from the start
-// script and supplies a reader over <cwd>/logs/latest.log.
+// script and supplies a reader over <cwd>/logs/latest.log. Guarded by c.mu
+// (design-log/055 Phase D): originally called exactly once at boot, before
+// any reader goroutine existed, so it was safe unguarded — ChangeWorkRoot
+// can now call it a second time mid-run, racing a concurrently-open logs
+// window's ReadServerLog calls.
 func (c *ControlService) SetConsoleReader(fn func(ctx context.Context) ([]string, error)) {
+	c.mu.Lock()
 	c.console = fn
+	c.mu.Unlock()
 }
 
-// OpenRootFolder reveals the Ritual working root (config.RootPath) in the
+// SetWorkRoot wires the workroot-relocate dependencies (design-log/055
+// Phase E): the swappable storage/root refs, the cmdBuilder forwarding
+// facade, and a factory for rebuilding the console reader against a new
+// server/ path. Follows the same post-construction wiring convention as
+// SetVersionDeleter/SetLocalStatsFn/SetConsoleReader.
+func (c *ControlService) SetWorkRoot(refs relocating.WorkRootRefs, cmdBuilderRef *adapters.SwappableCmdBuilder, consoleReaderFactory func(serverPath, startScript string) func(context.Context) ([]string, error)) {
+	c.workRootRefs = refs
+	c.cmdBuilderRef = cmdBuilderRef
+	c.consoleReaderFactory = consoleReaderFactory
+}
+
+// WorkRootInfo reports the currently active content root and whether it is
+// still the zero-config default (== config.RootPath).
+type WorkRootInfo struct {
+	Path      string
+	IsDefault bool
+}
+
+// GetWorkRoot reports the currently active content root.
+func (c *ControlService) GetWorkRoot() WorkRootInfo {
+	return WorkRootInfo{Path: config.WorkRoot, IsDefault: config.WorkRoot == config.RootPath}
+}
+
+// ErrSessionRunning is returned by ChangeWorkRoot/ResetWorkRoot when a
+// session is active — not for os.Root reasons, but because the game server
+// or a live sync could be writing worlds/objects mid-copy, producing an
+// inconsistent snapshot at the destination (design-log/055 Isolation §).
+// Gated on anything other than Idle/Failed, not just PhasePlaying: the
+// pipeline can be actively touching CONTENT storage during Downloading/
+// Preparing/Wrapping/Saving too (a Pull/Apply/Commit in flight), not only
+// while the server process itself is running.
+var ErrSessionRunning = errors.New("control: cannot change work root while a session is active")
+
+// ErrRelocateInProgress is returned when ChangeWorkRoot/ResetWorkRoot is
+// called while another relocate is already running — two overlapping calls
+// would race over the same WorkRootRefs (interleaved snapshot/store/cleanup
+// can delete a directory the other call's refs now point to).
+var ErrRelocateInProgress = errors.New("control: a work root relocate is already in progress")
+
+// ChangeWorkRoot moves the CONTENT set (objects/refs/server/worlds) to dst
+// and atomically swaps every storage facade to point at it — no restart,
+// no reconstruction of puller/applier/committer/pusher/etc. See
+// design-log/055 for the full ACID reasoning. Rebuilds the server cmd
+// builder + console reader against the new server/ path afterward so a
+// subsequent Start launches against the right directory.
+func (c *ControlService) ChangeWorkRoot(path string) error {
+	if c.snapshot != nil {
+		if phase := c.snapshot.Snapshot().Phase; phase != projection.PhaseIdle && phase != projection.PhaseFailed {
+			return ErrSessionRunning
+		}
+	}
+	if !c.relocateInFlight.CompareAndSwap(false, true) {
+		return ErrRelocateInProgress
+	}
+	defer c.relocateInFlight.Store(false)
+
+	settings, err := domain.LoadSettings()
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+
+	st := &relocating.State{Dst: path, Refs: c.workRootRefs, Settings: settings, Bus: c.bus}
+	if err := machine.Drive(context.Background(), st, relocating.New(nil, nil)); err != nil {
+		return err
+	}
+
+	newServerPath := filepath.Join(config.WorkRoot, config.ServerDir)
+	if c.cmdBuilderRef != nil {
+		newBuilder, err := adapters.NewServerCmdBuilder(newServerPath, settings.StartScript, settings.ToServerRuntime)
+		if err != nil {
+			// The relocate itself already succeeded and committed by this
+			// point — leaving cmdBuilderRef pointing at the OLD builder
+			// would be worse than surfacing this: relocating's cleanup()
+			// has already removed the old server/ directory, so a stale
+			// builder would launch against a path that no longer exists.
+			return fmt.Errorf("relocate succeeded but rebuilding the server command failed: %w", err)
+		}
+		c.cmdBuilderRef.Store(newBuilder)
+	}
+	if c.consoleReaderFactory != nil {
+		c.SetConsoleReader(c.consoleReaderFactory(newServerPath, settings.StartScript))
+	}
+	return nil
+}
+
+// ResetWorkRoot moves the content root back to config.RootPath (the
+// zero-config default), via the same swap path as ChangeWorkRoot.
+func (c *ControlService) ResetWorkRoot() error {
+	return c.ChangeWorkRoot(config.RootPath)
+}
+
+// OpenRootFolder reveals the Ritual content root (config.WorkRoot) in the
 // OS file manager. Used by the "Show folder" button in the main window so
 // users can reach synced worlds, logs, and settings without knowing the
-// path.
+// path. Reveals WorkRoot rather than RootPath (design-log/055) — that is
+// where the user's actual synced files live, which is the point of the
+// button; RootPath (settings.json/lock/root logs/) never moves.
 func (c *ControlService) OpenRootFolder() error {
-	return revealFolder(config.RootPath)
+	return revealFolder(config.WorkRoot)
 }
 
 func revealFolder(path string) error {

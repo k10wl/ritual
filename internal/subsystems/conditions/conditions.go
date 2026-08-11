@@ -29,7 +29,7 @@ func Build(
 ) []checks.Check {
 	return []checks.Check{
 		observed.NewCheck("ram", checks.RAM(s.MinRAMMB, hw), bus),
-		observed.NewCheck("disk", checks.Disk(s.MinDiskMB, config.RootPath, hw), bus),
+		observed.NewCheck("disk", checks.Disk(s.MinDiskMB, config.WorkRoot, hw), bus),
 		observed.NewCheck("java", checks.Java(s.MinJavaVersion, java), bus),
 	}
 }

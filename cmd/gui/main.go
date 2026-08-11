@@ -28,6 +28,7 @@ import (
 	"ritual/internal/core/refs"
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/pulling"
+	"ritual/internal/core/stages/relocating"
 	"ritual/internal/gui/control"
 	"ritual/internal/gui/logsink"
 	"ritual/internal/gui/netinfo"
@@ -72,6 +73,9 @@ func main() { //nolint:gocyclo // composition root — high fanout is structural
 	controlSvc.SetVersionDeleter(runtime.localVersionDeleter, runtime.loadedRefIDFn, runtime.clearLoadedRefID)
 	controlSvc.SetRemoteVersionDeleter(runtime.remoteVersionDeleter)
 	controlSvc.SetLocalStatsFn(runtime.localStatsFn)
+	// design-log/055 Phase E — workroot relocate dependencies, same
+	// post-construction wiring convention as the setters above.
+	controlSvc.SetWorkRoot(runtime.workRootRefs, runtime.cmdBuilderRef, newConsoleReader)
 
 	// OS notifications (design-log/047). Registered as a Wails service so its
 	// ServiceStartup runs the Windows AppUserModelID/CLSID registration before
@@ -371,23 +375,25 @@ type guiRuntime struct {
 	// reason for their 8MB buffers to survive between syncs.
 	localCompressed  *adapters.CompressingStorage
 	remoteCompressed *adapters.CompressingStorage
+	// workRootRefs/cmdBuilderRef (design-log/055) bundle the swap points a
+	// workroot relocate touches — passed to ControlService via SetWorkRoot
+	// so ChangeWorkRoot/ResetWorkRoot can drive relocating.Strategy.
+	workRootRefs  relocating.WorkRootRefs
+	cmdBuilderRef *adapters.SwappableCmdBuilder
 }
 
 func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root — high fanout is structural, not logical
+	// opRoot is the CONTROL root (design-log/055): settings.json, lock, and
+	// the root logs/ dir. Fixed at config.RootPath forever, never rebuilt.
 	if err := os.MkdirAll(config.RootPath, config.DirPermission); err != nil {
 		return nil, fmt.Errorf("create root: %w", err)
 	}
-	workRoot, err := os.OpenRoot(config.RootPath)
+	opRoot, err := os.OpenRoot(config.RootPath)
 	if err != nil {
 		return nil, fmt.Errorf("open root: %w", err)
 	}
 
 	bus := adapters.NewEventBus(4096)
-
-	rawLocal, err := adapters.NewFSRepository(workRoot, "local")
-	if err != nil {
-		return nil, fmt.Errorf("local storage: %w", err)
-	}
 
 	settings, err := domain.LoadSettings()
 	if err != nil {
@@ -405,6 +411,32 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 			return nil, fmt.Errorf("init settings file: %w", err)
 		}
 	}
+
+	// workRoot is the CONTENT root (design-log/055): objects/refs/server/
+	// worlds/. Defaults to config.RootPath (today's single-root layout,
+	// zero on-disk change) unless settings.work_root names a different
+	// absolute path. rawLocalRef/rawWorkdirRef are the two swappable
+	// storage facades every downstream consumer (puller/applier/committer/
+	// pusher/dirtyProber/versionLister/localCollector/Deleter/locker) is
+	// built on top of, once, forever — a relocate later swaps only these
+	// two pointers plus workRootRef, never rebuilding any consumer.
+	config.WorkRoot = config.ResolveWorkRoot(settings.WorkRoot)
+	if err := os.MkdirAll(config.WorkRoot, config.DirPermission); err != nil {
+		return nil, fmt.Errorf("create work root: %w", err)
+	}
+	wr, err := os.OpenRoot(config.WorkRoot)
+	if err != nil {
+		return nil, fmt.Errorf("open work root: %w", err)
+	}
+	workRootRef := new(atomic.Pointer[os.Root])
+	workRootRef.Store(wr)
+
+	rawLocalRef := adapters.NewSwappableStorage()
+	localFS, err := adapters.NewFSRepository(wr, "local")
+	if err != nil {
+		return nil, fmt.Errorf("local storage: %w", err)
+	}
+	rawLocalRef.Store(localFS)
 
 	// Remote backend selected by ResolveMode: RITUAL_REMOTE_MODE env wins,
 	// else the bakedRemoteMode ldflag (gui:build:dev:local — design-log/048),
@@ -444,7 +476,7 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 	// untouched (audit fix #5).
 	localWire := &adapters.StorageCounters{}
 	remoteWire := &adapters.StorageCounters{}
-	localBackend := adapters.NewCounterStorage(rawLocal, localWire)
+	localBackend := adapters.NewCounterStorage(rawLocalRef, localWire)
 	remoteBackend := adapters.NewCounterStorage(rawRemote, remoteWire)
 
 	localCompressed, err := adapters.NewCompressingStorage(localBackend)
@@ -470,12 +502,21 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 	// them. Audit fix #8 (docs/dev-session-2026-04-25-poc-setup.md):
 	// pre-fix workdir was <root>/worlds and a fresh host could not pull-
 	// and-run because nothing under server/ was tracked.
-	rawWorkdir, err := adapters.NewFSRepository(workRoot, "workdir")
+	rawWorkdirRef := adapters.NewSwappableStorage()
+	workdirFS, err := adapters.NewFSRepository(wr, "workdir")
 	if err != nil {
 		return nil, fmt.Errorf("workdir storage: %w", err)
 	}
-	workdirStorage := observed.NewStorage(rawWorkdir, bus)
-	scanner := adapters.NewFullScanner(os.DirFS(config.RootPath))
+	rawWorkdirRef.Store(workdirFS)
+	workdirStorage := observed.NewStorage(rawWorkdirRef, bus)
+	// LiveDirFS re-resolves config.WorkRoot on every Scan call instead of
+	// baking a directory string in here — scanner is built once, forever,
+	// and held by applier/committer below, so a later relocate would
+	// otherwise leave them silently reading/writing the OLD worlds/server/
+	// (design-log/055 Q4 — a real gap workdirScan's own live-rederivation
+	// pattern below does not cover, since that closure is re-evaluated per
+	// call while scanner is not).
+	scanner := adapters.NewFullScanner(adapters.LiveDirFS(func() string { return config.WorkRoot }))
 
 	// Refs V2 pipeline: ParallelRunner(10) shared by Pull (remote → local
 	// blob download concurrency) and Apply (local blob → workdir placement).
@@ -521,7 +562,7 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 	}
 	readRef := makeRefReader(localStorage)
 	workdirScan := func(ctx context.Context, since time.Time, previous map[string]domain.FileEntry, targets []string) (map[string]domain.FileEntry, error) {
-		sc, err := adapters.NewMtimeScanner(config.RootPath, since, previous)
+		sc, err := adapters.NewMtimeScanner(config.WorkRoot, since, previous)
 		if err != nil {
 			return nil, err
 		}
@@ -592,7 +633,7 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 	// directly to sum file sizes under a prefix (objects/). Stays inside the
 	// existing os.Root so the read can't escape the work root.
 	localStatsFn := func(_ context.Context, prefix string) (int64, int, error) {
-		return walkLocalPrefix(workRoot, prefix)
+		return walkLocalPrefix(workRootRef.Load(), prefix)
 	}
 
 	// Wire pull/push plan callbacks into the bus so the projection can
@@ -609,11 +650,18 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 	// builder on first launch, so a fresh host carries no empty server/ until an
 	// Apply has written into it (design-log/040). The only eager MkdirAll is the
 	// root sandbox anchor above, which never stays empty (logs/ lands at once).
-	serverPath := filepath.Join(config.RootPath, config.ServerDir)
-	cmdBuilder, err := adapters.NewServerCmdBuilder(serverPath, settings.StartScript, settings.ToServerRuntime)
+	serverPath := filepath.Join(config.WorkRoot, config.ServerDir)
+	realCmdBuilder, err := adapters.NewServerCmdBuilder(serverPath, settings.StartScript, settings.ToServerRuntime)
 	if err != nil {
 		return nil, fmt.Errorf("server cmd builder: %w", err)
 	}
+	// cmdBuilderRef is a forwarding facade (design-log/055 Phase D) so a
+	// later relocate can rebuild the real ServerCmdBuilder against the new
+	// server/ path without reconstructing running.Strategy, which holds
+	// this facade as a plain ports.CmdBuilder interface value from New()
+	// onward and never caches the concrete builder underneath it.
+	cmdBuilderRef := adapters.NewSwappableCmdBuilder()
+	cmdBuilderRef.Store(realCmdBuilder)
 
 	// On-demand console backfill (design-log/043): read the running server's own
 	// <cwd>/logs/latest.log tail when the logs window opens. cwd mirrors the
@@ -629,8 +677,16 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 	// a same-host PID that already grabbed <root>/lock cannot pin a remote
 	// lease that no live process can release. Both sides reuse lock.Locker
 	// — no Windows API, no new adapter — per audit open item #0.
+	// controlStorage is CONTROL-only (opRoot), never swappable — the lock
+	// must not ride localStorage/objects/ (design-log/055 wiring fix #1:
+	// lock previously shared localStorage, silently pulling a CONTROL
+	// concern into the CONTENT root).
+	controlStorage, err := adapters.NewFSRepository(opRoot)
+	if err != nil {
+		return nil, fmt.Errorf("control storage: %w", err)
+	}
 	host, _ := os.Hostname()
-	localLocker := observed.NewLocker(lock.New(localStorage, host), bus)
+	localLocker := observed.NewLocker(lock.New(controlStorage, host), bus)
 	remoteLocker := observed.NewLocker(lock.New(remoteStorage, host), bus)
 	locker := lock.NewBoth(localLocker, remoteLocker)
 	pipelineDeps := pipeline.Deps{
@@ -645,7 +701,7 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 		Pusher:            pusher,
 		LocalRetentions:   localRets,
 		RemoteRetentions:  remoteRets,
-		CmdBuilder:        cmdBuilder,
+		CmdBuilder:        cmdBuilderRef,
 		Readiness:         readiness,
 		AcquireFn:         locker.Acquire,
 		InspectFn:         locker.Inspect,
@@ -676,7 +732,7 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 	// in-memory logsink above feeds the GUI logs window only. Persist
 	// the same bus stream to <root>/logs/<ts>.log so a session leaves an
 	// on-disk record an operator can inspect after the GUI window is gone.
-	stopLogFile, err := logging.Build(bus, workRoot)
+	stopLogFile, err := logging.Build(bus, opRoot)
 	if err != nil {
 		return nil, fmt.Errorf("logging build: %w", err)
 	}
@@ -717,6 +773,12 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 		localStatsFn:         localStatsFn,
 		localCompressed:      localCompressed,
 		remoteCompressed:     remoteCompressed,
+		workRootRefs: relocating.WorkRootRefs{
+			Root:    workRootRef,
+			Local:   rawLocalRef,
+			Workdir: rawWorkdirRef,
+		},
+		cmdBuilderRef: cmdBuilderRef,
 	}, nil
 }
 
