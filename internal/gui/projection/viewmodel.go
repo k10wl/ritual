@@ -29,6 +29,13 @@ const (
 	// every launch (and on manual re-check) — the dial means "system working,
 	// hands off". Carries PhasePreflight then PhaseUpdating. Design-log/037.
 	StagePreflight Stage = "preflight"
+	// StageRelocating is the workroot-relocate bucket (design-log/055
+	// addendum): a settings-level operation, not a session flow, gated to
+	// only run while the session dial is idle/failed. Own Stage rather than
+	// reusing StageDownloading/StageUploading because it copies files
+	// locally in neither the pull nor the push direction — a distinct dial
+	// colour keeps that honest instead of implying network transfer.
+	StageRelocating Stage = "relocating"
 )
 
 // Phase is the finer-grained sub-state the frontend uses to pick glyph,
@@ -68,6 +75,13 @@ const (
 	// live in StagePreflight. Design-log/037 §State-machine additions.
 	PhasePreflight Phase = "preflight"
 	PhaseUpdating  Phase = "updating"
+	// PhaseRelocating carries StageRelocating's whole duration (planning →
+	// copying → verifying → committing) as one dial beat — file-count-driven
+	// progress (FilesDone/FilesTotal, Progress) while copying; the frontend
+	// reads FilesDone>=FilesTotal to know copying gave way to the tail
+	// verify/commit work, the same "bytesDone>=bytesTotal ⇒ tail" pattern
+	// PhaseSaving already uses. Design-log/055 addendum.
+	PhaseRelocating Phase = "relocating"
 )
 
 // JoinAddress pairs a human label with a dial address shown on the Running

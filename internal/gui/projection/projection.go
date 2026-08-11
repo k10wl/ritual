@@ -9,6 +9,7 @@ import (
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/acquiring"
 	"ritual/internal/core/stages/pulling"
+	"ritual/internal/core/stages/relocating"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/subsystems/lifecycle"
 	"sync"
@@ -263,6 +264,9 @@ func (p *Projection) fold(evt ports.Event) bool {
 	case lifecycle.StatusChanged:
 		p.onStatusChanged(e)
 	default:
+		if p.foldRelocate(evt) {
+			return true
+		}
 		// Autoupdate (design-log/037) and anything else the projection ignores.
 		return p.foldUpdate(evt)
 	}
@@ -309,6 +313,63 @@ func (p *Projection) foldUpdate(evt ports.Event) bool {
 		// Update errors (check or apply) are non-blocking: drop to idle so the
 		// user can keep using the app. Hint surfaces under the dial; detail in the log.
 		p.state = ViewModel{Stage: StageIdle, Phase: PhaseIdle, ErrorText: "Couldn't update — Advanced › Check for update"}
+	default:
+		return false
+	}
+	return true
+}
+
+// foldRelocate folds relocating's own event stream (internal/core/stages/
+// relocating/events.go) into StageRelocating/PhaseRelocating (design-log/055
+// addendum). Split out of fold the same way foldUpdate is, and reached via
+// the same default-branch delegate chain — relocate publishes dedicated
+// Relocate* types rather than the generic ritual.StartInfo/PlanInfo/
+// UpdateInfo/FinishInfo/ErrorInfo pull/push use, so this can never collide
+// with (or need to filter) the session-flow cases above it.
+func (p *Projection) foldRelocate(evt ports.Event) bool {
+	switch e := evt.(type) {
+	case relocating.RelocateStarted:
+		p.state = ViewModel{Stage: StageRelocating, Phase: PhaseRelocating}
+	case relocating.RelocatePlanned:
+		p.state.BytesTotal = e.BytesTotal
+		p.state.FilesTotal = e.FilesTotal
+		p.state.FilesDone = 0
+		// Empty relocate (nothing to copy — e.g. a fresh install with no
+		// content yet): no RelocateProgress will ever fire, so plateau
+		// complete-on-arrival the same way PlanInfo's empty-delta branch
+		// does for pull/push.
+		if e.BytesTotal == 0 && e.FilesTotal == 0 {
+			p.state.Progress = 100
+		} else {
+			p.state.Progress = 0
+		}
+		p.refreshFormattedFields()
+	case relocating.RelocateProgress:
+		p.state.FilesDone = e.FilesDone
+		p.state.FilesTotal = e.FilesTotal
+		if e.FilesTotal > 0 {
+			p.state.Progress = e.FilesDone * 100 / e.FilesTotal
+			// BytesDone has no independent counter here (copyContent tracks
+			// file count, not a byte stream) — estimate proportionally from
+			// the file-count ratio so arcFromBytes/SizeDoneText stay
+			// consistent with Progress instead of reading a stale BytesDone.
+			p.state.BytesDone = p.state.BytesTotal * int64(e.FilesDone) / int64(e.FilesTotal)
+		}
+		p.refreshFormattedFields()
+	case relocating.RelocateVerifying, relocating.RelocateCommitting:
+		// Fixed-cost tail work with no counter of its own — the frontend
+		// detects the copying→tail handoff via FilesDone>=FilesTotal, the
+		// same pattern PhaseSaving already uses for bytesDone>=bytesTotal.
+		// Plateau explicitly rather than relying on the last
+		// RelocateProgress having landed exactly at 100/FilesTotal.
+		p.state.Progress = 100
+		p.state.FilesDone = p.state.FilesTotal
+		p.state.BytesDone = p.state.BytesTotal
+		p.refreshFormattedFields()
+	case relocating.RelocateFinished:
+		p.state = ViewModel{Stage: StageIdle, Phase: PhaseIdle}
+	case relocating.RelocateFailed:
+		p.state = ViewModel{Stage: StageFailed, Phase: PhaseFailed, ErrorText: e.Err.Error()}
 	default:
 		return false
 	}

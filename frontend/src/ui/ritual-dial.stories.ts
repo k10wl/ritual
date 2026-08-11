@@ -108,6 +108,92 @@ export class DialCycleDemo extends LitElement {
     }
 }
 
+const TOTAL_FILES = 240;
+
+// Workroot relocate cycle (design-log/055 addendum): idle → RelocateStarted
+// (moving files, 0%) → RelocatePlanned/RelocateProgress (files flow 0→total,
+// file-count sub — relocate has no byte-rate counter, unlike the session's
+// download/save beats above) → RelocateVerifying/RelocateCommitting
+// (plateau, "Finishing up") → RelocateFinished (idle) → failure overlay →
+// idle. Mirrors DialCycleDemo's shape one-for-one against relocate's actual
+// event sequence (internal/core/stages/relocating/strategy.go).
+@customElement("relocate-cycle-demo")
+export class RelocateCycleDemo extends LitElement {
+    @state() private state: DialState = "idle";
+    @state() private arc = 0;
+    @state() private glyph: DialGlyph = "play";
+    @state() private label = "Start";
+    @state() private sub = "";
+
+    private tl?: gsap.core.Timeline;
+
+    connectedCallback() {
+        super.connectedCallback();
+        const f = { v: 0 };
+        const writeProgress = () => {
+            this.arc = f.v;
+            const done = Math.round(f.v * TOTAL_FILES);
+            this.sub = `${done} of ${TOTAL_FILES} files`;
+        };
+        const tl = gsap.timeline({ repeat: -1 });
+
+        // Idle
+        tl.call(() => {
+            this.state = "idle"; this.arc = 0; this.glyph = "play";
+            this.label = "Start"; this.sub = "";
+        });
+        tl.to({}, { duration: PLATEAU_S });
+
+        // RelocateStarted + RelocatePlanned: dial flips, sub appears at 0/total
+        tl.call(() => {
+            this.state = "prep"; this.glyph = "folder-input"; this.label = "Moving files";
+            f.v = 0; writeProgress();
+        });
+        tl.to({}, { duration: PHASE_S * 0.5 });
+
+        // RelocateProgress: files flow (file-count, not byte-rate)
+        tl.to(f, { v: 1, duration: TRANSFER_S, ease: "power2.out", onUpdate: writeProgress });
+
+        // RelocateVerifying + RelocateCommitting: fixed-cost tail, plateau
+        tl.call(() => {
+            this.arc = 1; this.sub = "Finishing up";
+        });
+        tl.to({}, { duration: PHASE_S });
+
+        // RelocateFinished
+        tl.call(() => {
+            this.state = "idle"; this.arc = 0; this.glyph = "play";
+            this.label = "Start"; this.sub = "";
+        });
+        tl.to({}, { duration: PLATEAU_S });
+
+        // RelocateFailed overlay (dismiss-to-idle copy)
+        tl.call(() => {
+            this.state = "fail"; this.arc = 0.6; this.glyph = "x";
+            this.label = "Couldn't move files"; this.sub = "Tap to dismiss";
+        });
+        tl.to({}, { duration: PLATEAU_S });
+        this.tl = tl;
+    }
+
+    disconnectedCallback() {
+        super.disconnectedCallback();
+        this.tl?.kill();
+    }
+
+    render() {
+        return html`
+            <ritual-dial
+                .state=${this.state}
+                .arc=${this.arc}
+                .glyph=${this.glyph}
+                .label=${this.label}
+                .sub=${this.sub}
+            ></ritual-dial>
+        `;
+    }
+}
+
 interface Args {
     state: DialState;
     arc: number;
@@ -130,7 +216,7 @@ export default {
         sub: { control: { type: "text" } },
         glyph: {
             control: { type: "select" },
-            options: ["", "play", "stop", "x", "download", "upload", "brain-cog", "unplug"],
+            options: ["", "play", "stop", "x", "download", "upload", "brain-cog", "unplug", "folder-input"],
         },
         disabled: { control: { type: "boolean" } },
     },
@@ -186,6 +272,22 @@ export const PhaseSavingTail = () => html`
         label="Wrapping up" sub="Almost done"></ritual-dial>
 `;
 
+// Workroot relocate (design-log/055 addendum): files copying, file-count
+// sub-line (relocateSub) rather than etaSub's byte-rate ETA — relocate has
+// no speed counter (copyContent tracks files copied, not a byte stream).
+export const PhaseRelocating = () => html`
+    <ritual-dial state="prep" .arc=${0.42} glyph="folder-input"
+        label="Moving files" sub="42 of 100 files"></ritual-dial>
+`;
+
+// Copying done, fixed-cost verify/commit tail — same arc-plateau +
+// "Finishing up" pattern PhaseSavingTail uses for the equivalent moment in
+// the save beat.
+export const PhaseRelocatingTail = () => html`
+    <ritual-dial state="prep" .arc=${1} glyph="folder-input"
+        label="Moving files" sub="Finishing up"></ritual-dial>
+`;
+
 export const PhaseFailed = () => html`
     <ritual-dial state="fail" .arc=${0.42} glyph="x"
         label="Couldn't finish saving" sub="Tap to dismiss"></ritual-dial>
@@ -214,3 +316,8 @@ export const FailedUpdate = () => html`
 `;
 
 export const Cycle = () => html`<dial-cycle-demo></dial-cycle-demo>`;
+
+// Workroot relocate, animated end-to-end (design-log/055 addendum): plays
+// RelocateStarted → RelocatePlanned/RelocateProgress → RelocateVerifying/
+// RelocateCommitting → RelocateFinished → RelocateFailed → idle, on repeat.
+export const RelocateCycle = () => html`<relocate-cycle-demo></relocate-cycle-demo>`;

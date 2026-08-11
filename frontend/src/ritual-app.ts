@@ -148,6 +148,18 @@ function etaSub(vm: ViewModel, _ctx: AppCtx): string {
 	return formatEta(vm.etaSeconds);
 }
 
+// relocateSub is PhaseRelocating's sub-line — file-count progress instead of
+// etaSub's byte-rate ETA, since relocate has no speed counter (copyContent
+// tracks files copied, not a byte stream — internal/core/stages/relocating/
+// copy.go). "Finishing up" once copying gives way to the fixed-cost verify/
+// commit tail, the same bytesDone>=bytesTotal ⇒ "Almost done" pattern etaSub
+// uses for PhaseSaving.
+function relocateSub(vm: ViewModel): string {
+	if (vm.filesTotal <= 0) return "";
+	if (vm.filesDone >= vm.filesTotal) return "Finishing up";
+	return `${vm.filesDone} of ${vm.filesTotal} files`;
+}
+
 // Phase → dial view table. Single source of truth for glyph + label + arc +
 // sub-line + under-slot dispatch. Per design-log/017 §Visual dispatch +
 // copy table. Lock-conflict is a PhaseFailed beat with friendly copy
@@ -246,6 +258,21 @@ const PHASE_VIEW: Record<Phase, DialView> = {
 		underSlot: null,
 		arc: () => 1,
 		sub: (vm) => `Updating → v${vm.targetVersion}`,
+	},
+	// Workroot relocate (design-log/055 addendum): a settings-level operation,
+	// not a session flow — only reachable while the dial is otherwise idle/
+	// failed. "prep" ring colour (same neutral busy tone as downloading/
+	// preparing) since it's genuinely mid-work, not failed or complete; no
+	// telemetry underSlot because relocate has no speed/rate counter to show
+	// (copyContent tracks file count, not a byte stream) — file-count
+	// progress renders directly as the sub-line instead.
+	[Phase.PhaseRelocating]: {
+		state: "prep",
+		glyph: "folder-input",
+		label: "Moving files",
+		underSlot: null,
+		arc: arcFromBytes,
+		sub: relocateSub,
 	},
 };
 

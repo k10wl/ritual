@@ -57,7 +57,7 @@ func (*Strategy) Name() string { return "relocate" }
 // old root. See design-log/055 Design § and Crash safety § for the
 // ACID reasoning behind this exact step order.
 func (s *Strategy) Run(ctx context.Context, st *State) (machine.Strategy[State], error) {
-	publish(st.Bus, ritual.StartInfo{Operation: "relocate"})
+	publish(st.Bus, RelocateStarted{})
 	if err := ctx.Err(); err != nil {
 		return s.fail(st, err)
 	}
@@ -79,14 +79,14 @@ func (s *Strategy) Run(ctx context.Context, st *State) (machine.Strategy[State],
 		_ = newRoot.Close()
 		return s.fail(st, err)
 	}
-	publish(st.Bus, ritual.PlanInfo{Operation: "relocate", BytesTotal: total, FilesTotal: files})
+	publish(st.Bus, RelocatePlanned{BytesTotal: total, FilesTotal: files})
 
 	if err := copyContent(stopCtx, st.Refs, newLocal, newWorkdir, st.Bus); err != nil {
 		_ = newRoot.Close()
 		return s.fail(st, err)
 	}
 
-	publish(st.Bus, ritual.UpdateInfo{Operation: "relocate", Message: "verifying"})
+	publish(st.Bus, RelocateVerifying{})
 	if err := verify(stopCtx, newLocal, newWorkdir); err != nil {
 		_ = newRoot.Close()
 		return s.fail(st, err)
@@ -94,7 +94,7 @@ func (s *Strategy) Run(ctx context.Context, st *State) (machine.Strategy[State],
 
 	old := st.Refs.snapshot()
 	st.Refs.store(newRoot, newLocal, newWorkdir)
-	publish(st.Bus, ritual.UpdateInfo{Operation: "relocate", Message: "committing"})
+	publish(st.Bus, RelocateCommitting{})
 	if err := commit(st.Settings, st.Dst); err != nil {
 		st.Refs.store(old.root, old.local, old.workdir)
 		_ = newRoot.Close()
@@ -102,19 +102,19 @@ func (s *Strategy) Run(ctx context.Context, st *State) (machine.Strategy[State],
 	}
 
 	cleanup(old.root, old.root.Name())
-	publish(st.Bus, ritual.FinishInfo{Operation: "relocate"})
+	publish(st.Bus, RelocateFinished{})
 	return s.onOK, nil
 }
 
-// fail publishes ErrorInfo and, deliberately, does NOT store st.Err the way
-// checking/pulling store rs.Err before returning (onFail, nil) — the rest
-// of internal/core/stages does that so ritual.Runner.RunCurrent/Resume can
-// re-enter a stopped chain at the failed stage. relocating has nothing to
-// re-enter, so a caller with no onFail wired gets the real error back
+// fail publishes RelocateFailed and, deliberately, does NOT store st.Err the
+// way checking/pulling store rs.Err before returning (onFail, nil) — the
+// rest of internal/core/stages does that so ritual.Runner.RunCurrent/Resume
+// can re-enter a stopped chain at the failed stage. relocating has nothing
+// to re-enter, so a caller with no onFail wired gets the real error back
 // directly instead of a silent false "success" from machine.Drive.
 func (s *Strategy) fail(st *State, err error) (machine.Strategy[State], error) {
 	st.Err = err
-	publish(st.Bus, ritual.ErrorInfo{Operation: "relocate", Err: err})
+	publish(st.Bus, RelocateFailed{Err: err})
 	if s.onFail != nil {
 		return s.onFail, nil
 	}

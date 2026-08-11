@@ -12,7 +12,6 @@ import (
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
-	"ritual/internal/core/ritual"
 )
 
 // contentDirs is the CONTENT set from design-log/055's classification
@@ -64,7 +63,8 @@ func buildNewRoot(dst string) (*os.Root, ports.StorageRepository, ports.StorageR
 }
 
 // planCopy sums file count/bytes across objects/refs/server/worlds under
-// the CURRENTLY active root, for the PlanInfo{BytesTotal,FilesTotal} event.
+// the CURRENTLY active root, for the "planned" UpdateInfo event
+// (strategy.go) carrying {bytesTotal,filesTotal}.
 // Walks the raw *os.Root directly (same technique FSRepository.List already
 // uses internally, and the same shape as cmd/gui's walkLocalPrefix) rather
 // than via StorageRepository, because that interface has no Stat/size
@@ -124,9 +124,9 @@ func walkPrefixSize(root *os.Root, prefix string) (int64, int, error) {
 // GetStream->PutStream. StorageRepository.Copy is intra-repository only
 // (FSRepository.Copy takes a single *os.Root receiver) so a cross-root
 // transfer cannot use it; GetStream/PutStream is the only viable primitive
-// (design-log/055 Q2). Periodically publishes ritual.UpdateInfo with a
-// "percent" key. Checks ctx.Err() between files, never mid-stream, so a
-// Stop finishes the in-flight file then aborts before starting the next.
+// (design-log/055 Q2). Periodically publishes RelocateProgress. Checks
+// ctx.Err() between files, never mid-stream, so a Stop finishes the
+// in-flight file then aborts before starting the next.
 func copyContent(ctx context.Context, refs WorkRootRefs, newLocal, newWorkdir ports.StorageRepository, bus ports.EventBus) error {
 	targets := copyTargets(refs, newLocal, newWorkdir)
 
@@ -152,8 +152,7 @@ func copyContent(ctx context.Context, refs WorkRootRefs, newLocal, newWorkdir po
 			}
 			done++
 			if bus != nil && totalKeys > 0 {
-				pct := float64(done) / float64(totalKeys) * 100
-				bus.Publish(ritual.UpdateInfo{Operation: "relocate", Message: "copying", Data: map[string]any{"percent": pct}})
+				bus.Publish(RelocateProgress{FilesDone: done, FilesTotal: totalKeys})
 			}
 		}
 	}

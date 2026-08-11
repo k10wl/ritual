@@ -9,6 +9,7 @@ import (
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/acquiring"
 	"ritual/internal/core/stages/pulling"
+	"ritual/internal/core/stages/relocating"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/gui/projection"
 	"ritual/internal/subsystems/lifecycle"
@@ -558,4 +559,109 @@ func TestProjection_Seq_StrictlyIncreasingAcrossEveryEmit(t *testing.T) {
 		assert.Greater(t, vms[i].Seq, vms[i-1].Seq,
 			"every emit must carry a strictly greater Seq than the previous one (index %d vs %d) — a repeat or reversal would let a stale snapshot pass the frontend's seq guard", i, i-1)
 	}
+}
+
+// --- design-log/055 addendum: StageRelocating/PhaseRelocating ---
+
+func TestProjection_RelocateStarted_FlipsToRelocatingBucket(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+	})
+	final := last(vms)
+	assert.Equal(t, projection.StageRelocating, final.Stage, "RelocateStarted must flip Stage to Relocating so the dial reads a distinct colour, not the pull/push buckets")
+	assert.Equal(t, projection.PhaseRelocating, final.Phase, "RelocateStarted must flip Phase to Relocating")
+}
+
+func TestProjection_RelocatePlanned_PopulatesBytesAndFilesTotal(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 6_000, FilesTotal: 3})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(6000), final.BytesTotal)
+	assert.Equal(t, 3, final.FilesTotal)
+	assert.Equal(t, 0, final.Progress, "non-empty plan leaves Progress at 0 until the first RelocateProgress")
+}
+
+func TestProjection_RelocatePlannedWithZeroDelta_AnchorsProgressTo100(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 0, FilesTotal: 0})
+	})
+	final := last(vms)
+	assert.Equal(t, 100, final.Progress, "an empty relocate (nothing to copy) must plateau complete-on-arrival, mirroring PlanInfo's empty-delta anchor for pull/push")
+}
+
+func TestProjection_RelocateProgress_DerivesProgressAndBytesDoneFromFileRatio(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 1000, FilesTotal: 4})
+		bus.Publish(relocating.RelocateProgress{FilesDone: 1, FilesTotal: 4})
+	})
+	final := last(vms)
+	assert.Equal(t, 1, final.FilesDone)
+	assert.Equal(t, 25, final.Progress, "Progress must derive from the file-count ratio (1/4 = 25%%), the only counter copyContent actually tracks")
+	assert.Equal(t, int64(250), final.BytesDone, "BytesDone must be estimated proportionally from the file ratio so arcFromBytes/SizeDoneText stay consistent with Progress")
+}
+
+func TestProjection_RelocateVerifyingAndCommitting_PlateauAtFullEvenOnRoundingShortfall(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 1000, FilesTotal: 3})
+		// 2/3 files rounds down to 66%, not 100 — verify/commit must still
+		// plateau explicitly rather than trusting the last progress ratio.
+		bus.Publish(relocating.RelocateProgress{FilesDone: 2, FilesTotal: 3})
+		bus.Publish(relocating.RelocateVerifying{})
+	})
+	final := last(vms)
+	assert.Equal(t, 100, final.Progress, "RelocateVerifying must plateau Progress to 100 regardless of the last file-ratio rounding")
+	assert.Equal(t, 3, final.FilesDone, "RelocateVerifying must plateau FilesDone to FilesTotal")
+	assert.Equal(t, int64(1000), final.BytesDone)
+}
+
+func TestProjection_RelocateFinished_ResetsToIdle(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 1000, FilesTotal: 3})
+		bus.Publish(relocating.RelocateFinished{})
+	})
+	final := last(vms)
+	assert.Equal(t, projection.StageIdle, final.Stage)
+	assert.Equal(t, projection.PhaseIdle, final.Phase)
+	assert.Equal(t, int64(0), final.BytesTotal, "RelocateFinished must reset to a fresh ViewModel — a stale BytesTotal/FilesTotal must not bleed into whatever runs next")
+}
+
+func TestProjection_RelocateFailed_RoutesToFailedWithErrorText(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocateFailed{Err: errors.New("disk full")})
+	})
+	final := last(vms)
+	assert.Equal(t, projection.StageFailed, final.Stage)
+	assert.Equal(t, projection.PhaseFailed, final.Phase)
+	assert.Equal(t, "disk full", final.ErrorText)
+}
+
+// TestProjection_RelocateEventsDuringIdleSession_DoNotResurrectStaleSessionType
+// is the regression test for the bug this addendum fixes: before relocating
+// gained its own dedicated event vocabulary, it published the shared
+// ritual.PlanInfo/UpdateInfo/StartInfo/FinishInfo types, and fold() switches
+// on ritual.PlanInfo by concrete type alone with no Operation check — so a
+// relocate's plan would have landed straight on the session ViewModel. This
+// asserts the actual observable contract instead: relocate's own dedicated
+// types drive Stage/Phase to Relocating, not to any pull/push bucket, no
+// matter what the session last looked like.
+func TestProjection_RelocateEventsDuringIdleSession_DoNotResurrectStaleSessionType(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		// A prior session left the ViewModel idle (the only state relocate's
+		// RUNNING-gate — internal/gui/control/control.go — ever allows a
+		// relocate to start from).
+		bus.Publish(lifecycle.StatusChanged{Status: lifecycle.Idle})
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 500, FilesTotal: 2})
+	})
+	final := last(vms)
+	assert.Equal(t, projection.StageRelocating, final.Stage, "relocate's own Stage must win, never StageDownloading/StageUploading")
+	assert.NotEqual(t, projection.PhaseDownloading, final.Phase)
+	assert.NotEqual(t, projection.PhaseSaving, final.Phase)
 }

@@ -341,12 +341,19 @@ collect:
 	for {
 		select {
 		case e := <-sub:
+			// relocate publishes its own dedicated event vocabulary
+			// (events.go), not the generic ritual.StartInfo/PlanInfo/
+			// UpdateInfo/FinishInfo pull/push use — internal/gui/projection's
+			// fold() switches ritual.PlanInfo by concrete type alone with no
+			// Operation check, so a shared PlanInfo would land straight on
+			// the session ViewModel (design-log/055 addendum). Dedicated
+			// types can't collide with the session's, by construction.
 			switch e.(type) {
-			case ritual.StartInfo:
+			case relocating.RelocateStarted:
 				sawStart = true
-			case ritual.PlanInfo:
+			case relocating.RelocatePlanned:
 				sawPlan = true
-			case ritual.FinishInfo:
+			case relocating.RelocateFinished:
 				sawFinish = true
 			}
 			if sawStart && sawPlan && sawFinish {
@@ -357,9 +364,9 @@ collect:
 		}
 	}
 
-	assert.True(t, sawStart, "Run must publish StartInfo{Operation:\"relocate\"}")
-	assert.True(t, sawPlan, "Run must publish PlanInfo before copying so the progress bar has a denominator")
-	assert.True(t, sawFinish, "Run must publish FinishInfo on success")
+	assert.True(t, sawStart, "Run must publish RelocateStarted")
+	assert.True(t, sawPlan, "Run must publish RelocatePlanned before copying")
+	assert.True(t, sawFinish, "Run must publish RelocateFinished on success")
 }
 
 func TestRelocating_CancelMidCopy_LeavesOldRootActiveNewRootDiscarded(t *testing.T) {

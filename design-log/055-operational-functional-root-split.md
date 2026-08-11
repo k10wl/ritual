@@ -821,3 +821,85 @@ confirmed against source and fixed:
 
 `go build`/`go vet`/`go test ./...` clean after these fixes; `relocating`,
 `gui/control`, and `integration` re-verified under `-race`.
+
+## Addendum: relocate progress on the dial (StageRelocating/PhaseRelocating)
+
+Follow-up session. Trigger: relocate had no representation in
+`projection.ViewModel` at all — worse, `relocating.Strategy` was publishing
+the generic `ritual.PlanInfo{Operation:"relocate",...}` event, and
+`projection.fold()`'s `case ritual.PlanInfo:` switches on concrete type
+alone with **no `Operation` check** (`PlanInfo`'s own doc comment scopes it
+to pull/push). A relocate running today would have overwritten the live
+session's `BytesTotal`/`FilesTotal`/`Progress` mid-transfer and emitted a
+spurious Wails IPC push + session-log line. Confirmed harmless *today* only
+by accident: `PHASE_VIEW[PhaseIdle]` (`frontend/src/ritual-app.ts`) hardcodes
+`arc: () => 0` and ignores `vm.progress`/`vm.bytesTotal`, and relocate never
+emits `StateChangedInfo` so `Phase` never leaves `PhaseIdle` for its
+duration — a coincidence of the RUNNING-gate (fix #4 above), not a
+guarantee.
+
+**Fix, step one — stop the collision at the source.** Rather than teach the
+shared `projection.fold()`/`case ritual.PlanInfo:` about an `Operation`
+field (touches established pull/push code every session flow depends on),
+`relocating` was given its own event vocabulary
+(`internal/core/stages/relocating/events.go`: `RelocateStarted`,
+`RelocatePlanned{BytesTotal,FilesTotal}`,
+`RelocateProgress{FilesDone,FilesTotal}`, `RelocateVerifying`,
+`RelocateCommitting`, `RelocateFinished`, `RelocateFailed{Err}`), each with
+its own `String()` — the exact shape `internal/adapters/observed`'s
+`Update*` events already use for autoupdate (design-log/037 §Q8): dedicated
+per-feature types can't collide with the session's generic ones by
+construction, and `logging.Build`'s existing `default: fmt.Fprintf("%v")`
+branch logs them via `Stringer` with zero changes to `logging.go`.
+
+**Fix, step two — give relocate somewhere real to land.** Added
+`StageRelocating`/`PhaseRelocating` to the JSON-stable enums
+(`internal/gui/projection/viewmodel.go`) and `foldRelocate`
+(`internal/gui/projection/projection.go`), reached via the same
+default-branch delegate chain `foldUpdate` already uses — an additive
+one-line change (`default: if p.foldRelocate(evt) {...}`) rather than a new
+case in the switch pull/push/PlanInfo already share. `RelocateProgress`
+carries `FilesDone`/`FilesTotal` (not a pre-computed percent) since that's
+the only counter `copyContent` actually tracks (file count, not a byte
+stream — relocate has no per-file-size-weighted progress or speed rate);
+`Progress`/`BytesDone` are derived proportionally from the file ratio so
+`arcFromBytes`/`SizeDoneText` stay consistent. `RelocateVerifying`/
+`RelocateCommitting` plateau `Progress`/`FilesDone` to 100%/`FilesTotal`
+explicitly (not trusted to already be there after integer-rounding on the
+last `RelocateProgress`) — the frontend's copying→tail handoff detection
+(`vm.filesDone >= vm.filesTotal`) mirrors `PhaseSaving`'s existing
+`bytesDone>=bytesTotal ⇒ "Almost done"` pattern.
+
+**Frontend.** `Phase.PhaseRelocating` added to `PHASE_VIEW`
+(`frontend/src/ritual-app.ts`): `state: "prep"` (reuses the neutral busy
+ring colour downloading/preparing already use — no new design token),
+glyph `folder-input` (new; lucide `FolderInput`, added to
+`dial-glyphs.ts` — download/upload's arrows are network-direction and
+would misrepresent a local-to-local move), label "Moving files", no
+`telemetry` underSlot (relocate has no speed/rate to show there — new
+`relocateSub` renders "`N of M files`" / "Finishing up" directly as the
+dial's sub-line instead, `etaSub`'s counterpart). `task gui:bindings`
+regenerated `frontend/bindings` (gitignored) to pick up the new enum
+values.
+
+Storybook: `PhaseRelocating`/`PhaseRelocatingTail` added to
+`ritual-dial.stories.ts`, same shape as the existing `PhaseDownloading`/
+`PhaseSavingTail` pair — verified rendering in a live Storybook session
+(orange "prep" ring, `folder-input` glyph, file-count sub-line; full ring +
+"Finishing up" for the tail beat).
+
+**Deviations from the original design/first pass.** This addendum
+supersedes the "publish `ritual.PlanInfo`/`UpdateInfo`" approach taken
+earlier in the same implementation session — that first fix (Operation-gate
+inside `projection.fold()`) was rejected in favor of not touching the
+shared/established file at all; the dedicated-event-type approach here
+achieves the same isolation from the relocate side only, matching
+`observed`'s existing precedent instead of inventing a new pattern.
+
+Regression coverage: `strategy_test.go`'s
+`TestRelocating_PublishesStartPlanUpdateFinishEventsOnBus` updated to assert
+the new dedicated types; `projection_test.go` gained 8 new tests including
+`TestProjection_RelocateEventsDuringIdleSession_DoNotResurrectStaleSessionType`,
+the direct regression test for the collision this addendum fixes. `go
+build`/`go vet`/`go test ./...` clean; frontend `tsc --noEmit` clean; `npm
+test` (182 tests) clean.
