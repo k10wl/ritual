@@ -133,6 +133,23 @@ export const Playground = (a: Args) => {
 
 export const RunBusy = () => html`<dial-telemetry-run-busy></dial-telemetry-run-busy>`;
 
+// hideSpeed variant (design-log/056 follow-up): relocate has no rate
+// counter, so it renders <dial-telemetry> with the speed row dropped
+// entirely instead of a placeholder that never resolves.
+export const SizeOnlyNoSpeedRow = () => {
+    const sz = demoFormatSize(412 * 1024 * 1024, 980 * 1024 * 1024);
+    return html`
+        <dial-telemetry
+            .sizeDoneText=${sz.doneText}
+            .sizeTotalText=${sz.totalText}
+            .sizeUnit=${sz.unit}
+            .bytesTotal=${980 * 1024 * 1024}
+            .logicalMbps=${0}
+            hideSpeed
+        ></dial-telemetry>
+    `;
+};
+
 export const TotalUnknown = () => {
     const sz = demoFormatSize(42 * 1024 * 1024, 0);
     const sp = demoFormatSpeed(1 * 1024 * 1024);

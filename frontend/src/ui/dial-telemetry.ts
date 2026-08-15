@@ -40,6 +40,12 @@ export class DialTelemetry extends LitElement {
     @property() sizeUnit = "";
     @property() speedText = "";
     @property() speedUnit = "";
+    // Relocate has no rate counter (copyContent tracks files copied, not a
+    // byte stream) — logicalMbps stays 0 for the whole operation, which
+    // would otherwise pin the speed row on its "unknown yet" placeholder
+    // forever instead of just briefly. hideSpeed drops the row entirely
+    // rather than showing a value that will never resolve.
+    @property({ type: Boolean }) hideSpeed = false;
     // Raw numbers, kept only for the "is there real data yet, or should this
     // cell show the decoder placeholder" threshold reads below — simple
     // comparisons against backend-authoritative fields, not computation of
@@ -106,10 +112,12 @@ export class DialTelemetry extends LitElement {
         const speedValue = rushing ? jitterStone(NUMERIC_PLACEHOLDER, true) : this.speedText;
         const doneValue = planned ? this.sizeDoneText : jitterStone(NUMERIC_PLACEHOLDER, true);
         return html`
-            <div class="row">
-                <stable-num chars="6" align="right">${speedValue}</stable-num>
-                <span class="unit">${jitterStone(this.speedUnit, false)}</span>
-            </div>
+            ${this.hideSpeed ? null : html`
+                <div class="row">
+                    <stable-num chars="6" align="right">${speedValue}</stable-num>
+                    <span class="unit">${jitterStone(this.speedUnit, false)}</span>
+                </div>
+            `}
             <div class="row">
                 <stable-num chars="6" align="right">${doneValue}</stable-num>
                 <span class="unit">${jitterStone(this.sizeUnit, false)}</span>

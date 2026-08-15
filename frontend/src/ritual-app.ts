@@ -2,6 +2,7 @@ import { css, html, LitElement } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import {
 	applyRetentionNow,
+	changeWorkRoot,
 	deleteLocalVersion,
 	deleteRemoteVersion,
 	dismiss,
@@ -12,8 +13,12 @@ import {
 	getRetentionRules,
 	getSnapshot,
 	getSyncStatus,
+	getWorkRoot,
 	listVersions,
 	onView,
+	openControlFolder,
+	openRootFolder,
+	pickWorkRootFolder,
 	restore,
 	revert,
 	setRetentionRules,
@@ -41,6 +46,7 @@ import "./ui/advanced-view";
 import type { RuneStack } from "./ui/primitives/rune-stack";
 import type { NavView } from "./ui/contexts/nav-context";
 import type { SyncConfirmDetail, SyncVerdict } from "./ui/sync-view";
+import type { WorkRootInfo } from "./ui/work-root";
 import type {
 	RestoreConfirmDetail,
 	DeleteConfirmDetail,
@@ -71,7 +77,12 @@ import type {
 
 const FALLBACK_PREP: PrepSettings = { port: 25565, memoryMB: 4096 };
 
-type UnderSlot = "telemetry" | "addresses" | null;
+// "telemetry-size" is PhaseRelocating's variant: the same <dial-telemetry>
+// Download/Upload use, minus the speed row — relocate has no rate counter
+// (copyContent tracks files copied, not a byte stream), so logicalMbps
+// never goes positive and the speed row would sit on its placeholder for
+// the entire operation instead of just the first tick.
+type UnderSlot = "telemetry" | "telemetry-size" | "addresses" | null;
 
 interface DialView {
 	state: DialState;
@@ -148,16 +159,21 @@ function etaSub(vm: ViewModel, _ctx: AppCtx): string {
 	return formatEta(vm.etaSeconds);
 }
 
-// relocateSub is PhaseRelocating's sub-line — file-count progress instead of
-// etaSub's byte-rate ETA, since relocate has no speed counter (copyContent
-// tracks files copied, not a byte stream — internal/core/stages/relocating/
-// copy.go). "Finishing up" once copying gives way to the fixed-cost verify/
-// commit tail, the same bytesDone>=bytesTotal ⇒ "Almost done" pattern etaSub
-// uses for PhaseSaving.
+// relocateSub is PhaseRelocating's sub-line — the ETA countdown, same shape
+// as etaSub, now that projection.go's foldRelocate computes a real
+// EtaSeconds for relocate (RelocateProgress.Elapsed feeds the identical
+// etaFromSessionAvg beat-wide-average math onTick uses for pull/push — see
+// internal/gui/projection/projection.go). Size itself is shown separately
+// in the underSlot ("telemetry-size" below), the same split Download/Upload
+// use (sub = ETA, underSlot = size/speed block) — not crammed onto one
+// line. "Finishing up" once copying gives way to the fixed-cost verify/
+// commit tail, the same bytesDone>=bytesTotal gate etaSub uses for
+// PhaseSaving's "Almost done".
 function relocateSub(vm: ViewModel): string {
-	if (vm.filesTotal <= 0) return "";
-	if (vm.filesDone >= vm.filesTotal) return "Finishing up";
-	return `${vm.filesDone} of ${vm.filesTotal} files`;
+	if (vm.bytesTotal <= 0) return "";
+	if (vm.bytesDone >= vm.bytesTotal) return "Finishing up";
+	if (vm.etaSeconds <= 0) return formatEta(null);
+	return formatEta(vm.etaSeconds);
 }
 
 // Phase → dial view table. Single source of truth for glyph + label + arc +
@@ -262,15 +278,16 @@ const PHASE_VIEW: Record<Phase, DialView> = {
 	// Workroot relocate (design-log/055 addendum): a settings-level operation,
 	// not a session flow — only reachable while the dial is otherwise idle/
 	// failed. "prep" ring colour (same neutral busy tone as downloading/
-	// preparing) since it's genuinely mid-work, not failed or complete; no
-	// telemetry underSlot because relocate has no speed/rate counter to show
-	// (copyContent tracks file count, not a byte stream) — file-count
-	// progress renders directly as the sub-line instead.
+	// preparing) since it's genuinely mid-work, not failed or complete.
+	// "telemetry-size" underSlot mirrors Download/Upload's size/speed block
+	// minus the speed row (no rate counter — copyContent tracks file count,
+	// not a byte stream); relocateSub carries the ETA the same way etaSub
+	// does for Download.
 	[Phase.PhaseRelocating]: {
 		state: "prep",
 		glyph: "folder-input",
 		label: "Moving files",
-		underSlot: null,
+		underSlot: "telemetry-size",
 		arc: arcFromBytes,
 		sub: relocateSub,
 	},
@@ -447,6 +464,11 @@ export class RitualApp extends LitElement {
             ?dirty=${this.unpublished}
             .loadRules=${this.loadRetention}
             .canUpdate=${this.vm.phase === Phase.PhaseIdle}
+            .getWorkRoot=${this.getWorkRootInfo}
+            .openWorkFolder=${openRootFolder}
+            .pickWorkRootFolder=${pickWorkRootFolder}
+            .changeWorkRoot=${this.onChangeWorkRoot}
+            .openControlFolder=${openControlFolder}
             @change=${this.onPrepChange}
             @sync=${this.onSyncConfirmed}
             @checkupdate=${this.onCheckUpdate}
@@ -526,6 +548,26 @@ export class RitualApp extends LitElement {
 	// forwarded too so the Revert confirm (design-log/045 §C) can pick honest
 	// copy (drops edits vs no-op refresh). Errors propagate so sync-view shows
 	// "Couldn't reach the remote".
+	// Work root section (design-log/056). getWorkRoot maps the bindings'
+	// PascalCase WorkRootInfo (Path/IsDefault) to the camelCase shape
+	// <work-root> speaks — same boundary-mapping convention as loadRetention.
+	private getWorkRootInfo = async (): Promise<WorkRootInfo> => {
+		const info = await getWorkRoot();
+		return { path: info.Path, isDefault: info.IsDefault };
+	};
+
+	// Confirmed workroot change (design-log/056). Like Restore/Publish-first/
+	// RetentionApply, this animates the root dial via PhaseRelocating (055
+	// addendum) — pop the stack immediately so that's actually visible instead
+	// of running invisibly behind the pushed Advanced pane. Fire-and-forget:
+	// success/failure both surface on the dial (PhaseRelocating → idle or
+	// PhaseFailed), not as work-root's own local inline error, once the flow
+	// is in motion.
+	private onChangeWorkRoot = (path: string) => {
+		void changeWorkRoot(path);
+		this._stack?.popToRoot();
+	};
+
 	private checkSync = async (): Promise<SyncVerdict> => {
 		const s = await getSyncStatus();
 		return {
@@ -670,7 +712,7 @@ export class RitualApp extends LitElement {
                 <run-console-link @press=${this.onOpenConsole}></run-console-link>
             </div>`;
 		}
-		if (d.underSlot === "telemetry") {
+		if (d.underSlot === "telemetry" || d.underSlot === "telemetry-size") {
 			return html`<dial-telemetry
                 .sizeDoneText=${d.telemetry.sizeDoneText}
                 .sizeTotalText=${d.telemetry.sizeTotalText}
@@ -679,6 +721,7 @@ export class RitualApp extends LitElement {
                 .speedUnit=${d.telemetry.speedUnit}
                 .bytesTotal=${d.telemetry.bytesTotal}
                 .logicalMbps=${d.telemetry.logicalMbps}
+                ?hideSpeed=${d.underSlot === "telemetry-size"}
             ></dial-telemetry>`;
 		}
 		return null;

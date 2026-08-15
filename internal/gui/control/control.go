@@ -248,6 +248,10 @@ type ControlService struct {
 	// point to), and is also checked by Start so a session cannot begin
 	// while a relocate's copy is still reading/writing worlds/objects.
 	relocateInFlight atomic.Bool
+	// directoryPicker opens the native OS folder picker (design-log/056
+	// Phase A). nil ⇒ PickWorkRootFolder degrades to ("", false) — the same
+	// "degrade explicitly" convention as a nil console/logs factory.
+	directoryPicker func(dir string) (string, error)
 }
 
 // NewControlService wires the service to the shared bus, projection, sync
@@ -544,6 +548,50 @@ func (c *ControlService) SetWorkRoot(refs relocating.WorkRootRefs, cmdBuilderRef
 	c.consoleReaderFactory = consoleReaderFactory
 }
 
+// SetDirectoryPicker injects the native OS folder picker (design-log/056
+// Phase A), following the same post-construction setter convention as
+// SetConsoleReader/SetLocalStatsFn — cmd/gui/main.go supplies the real
+// closure over wailsApp.Dialog once the Wails app exists.
+func (c *ControlService) SetDirectoryPicker(fn func(dir string) (string, error)) {
+	c.mu.Lock()
+	c.directoryPicker = fn
+	c.mu.Unlock()
+}
+
+// PickWorkRootFolder opens the native OS directory picker, seeded at the
+// current WorkRoot. ok=false covers both user-cancel and an unset/failing
+// picker — neither is user-actionable, so callers show nothing rather than
+// an error (mirrors OpenRootFolder's ignored exec error).
+//
+// The picker chooses a CONTAINER, not the exact content folder: the returned
+// path is the user's selection plus a config.AppName subfolder ("ritual"/
+// "ritualdev" — the same segment RootPath itself uses, config.go's
+// filepath.Join(workDir, GroupName, AppName)), so e.g. picking D:\Games
+// yields D:\Games\ritual. Deliberate UX call (2026-08-11): dumping
+// objects/refs/server/worlds directly into whatever folder someone happens
+// to pick would mix Ritual's data in with anything else already there and
+// give no obvious, identifiable, single thing to move/delete later — the
+// container makes the destination self-describing regardless of what
+// directory was chosen (root of a drive, Desktop, an existing unrelated
+// folder), the same pattern as Steam's "Add Library Folder". The confirm
+// step (work-root.ts) shows this already-appended path verbatim before
+// ChangeWorkRoot runs, so the actual destination is never a surprise.
+// ChangeWorkRoot itself stays a pure "move into exactly this path" — the
+// containment decision lives only at this dialog-adapter boundary.
+func (c *ControlService) PickWorkRootFolder() (path string, ok bool) {
+	c.mu.Lock()
+	fn := c.directoryPicker
+	c.mu.Unlock()
+	if fn == nil {
+		return "", false
+	}
+	p, err := fn(config.WorkRoot)
+	if err != nil || p == "" {
+		return "", false
+	}
+	return filepath.Join(p, config.AppName), true
+}
+
 // WorkRootInfo reports the currently active content root and whether it is
 // still the zero-config default (== config.RootPath).
 type WorkRootInfo struct {
@@ -632,6 +680,17 @@ func (c *ControlService) ResetWorkRoot() error {
 // button; RootPath (settings.json/lock/root logs/) never moves.
 func (c *ControlService) OpenRootFolder() error {
 	return revealFolder(config.WorkRoot)
+}
+
+// OpenControlFolder reveals the CONTROL root (config.RootPath — settings.json,
+// lock, root logs/, design-log/055) in the OS file manager. Deliberately
+// separate from OpenRootFolder (which reveals the CONTENT root, WorkRoot):
+// once a relocate points WorkRoot somewhere else, the two are different
+// directories, and there was previously no UI path to the fixed one at all —
+// support/troubleshooting (inspecting settings.json or the root logs/) had
+// no way to get there without knowing the path by heart.
+func (c *ControlService) OpenControlFolder() error {
+	return revealFolder(config.RootPath)
 }
 
 func revealFolder(path string) error {

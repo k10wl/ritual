@@ -4,14 +4,22 @@ import "./advanced-view";
 import type { AdvancedView } from "./advanced-view";
 
 describe("advanced-view", () => {
-    it("renders five flat sections — Server, Sync, Versions, Retention, Updates — with no menu nesting", async () => {
+    it("renders six flat sections — Server, Sync, Work folder, Versions, Retention, Updates — with no menu nesting", async () => {
         const el = await fixture<AdvancedView>(html`<advanced-view></advanced-view>`);
         const labels = [...el.shadowRoot!.querySelectorAll(".label")].map((l) =>
             l.textContent!.trim(),
         );
-        expect(labels).to.deep.equal(["Server", "Sync", "Versions", "Retention", "Updates"]);
+        expect(labels).to.deep.equal([
+            "Server",
+            "Sync",
+            "Work folder",
+            "Versions",
+            "Retention",
+            "Updates",
+        ]);
         expect(el.shadowRoot!.querySelector("prep-settings")).to.exist;
         expect(el.shadowRoot!.querySelector("sync-view")).to.exist;
+        expect(el.shadowRoot!.querySelector("work-root")).to.exist;
         expect(el.shadowRoot!.querySelector("versions-view")).to.exist;
         expect(el.shadowRoot!.querySelector("retention-rules")).to.exist;
     });
@@ -161,9 +169,29 @@ describe("advanced-view", () => {
         expect(prep.skipSync).to.equal(true);
     });
 
+    it("calls openControlFolder when the Open app folder button is pressed", async () => {
+        let called = false;
+        const el = await fixture<AdvancedView>(
+            html`<advanced-view .openControlFolder=${async () => {
+                called = true;
+            }}></advanced-view>`,
+        );
+        const btn = [...el.shadowRoot!.querySelectorAll("rune-button")].find((b) =>
+            b.textContent?.includes("Open app folder"),
+        )!;
+        btn.dispatchEvent(new CustomEvent("press", { bubbles: true, composed: true }));
+        expect(called).to.equal(true);
+    });
+
+    function checkUpdateButton(el: AdvancedView): (HTMLElement & { disabled: boolean }) | undefined {
+        return [...el.shadowRoot!.querySelectorAll("rune-button")].find((b) =>
+            b.textContent?.includes("Check for update"),
+        ) as (HTMLElement & { disabled: boolean }) | undefined;
+    }
+
     it("disables Check for update unless canUpdate (dial idle) — design-log/037 §Q4", async () => {
         const el = await fixture<AdvancedView>(html`<advanced-view></advanced-view>`);
-        const btn = el.shadowRoot!.querySelector("rune-button") as HTMLElement & { disabled: boolean };
+        const btn = checkUpdateButton(el)!;
         expect(btn.disabled).to.equal(true, "default (not idle) keeps the update check gated");
 
         el.canUpdate = true;
@@ -175,9 +203,7 @@ describe("advanced-view", () => {
         const el = await fixture<AdvancedView>(html`<advanced-view .canUpdate=${true}></advanced-view>`);
         let fired = false;
         el.addEventListener("checkupdate", () => (fired = true));
-        el.shadowRoot!.querySelector("rune-button")!.dispatchEvent(
-            new CustomEvent("press", { bubbles: true, composed: true }),
-        );
+        checkUpdateButton(el)!.dispatchEvent(new CustomEvent("press", { bubbles: true, composed: true }));
         expect(fired).to.equal(true);
     });
 });

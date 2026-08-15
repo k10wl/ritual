@@ -1,6 +1,9 @@
 package relocating
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Relocate* events are the single stream that drives BOTH the dial
 // (projection folds them into StageRelocating/PhaseRelocating) and the
@@ -30,13 +33,29 @@ func (e RelocatePlanned) String() string {
 	return fmt.Sprintf("relocate: planned files=%d bytes=%d", e.FilesTotal, e.BytesTotal)
 }
 
-// RelocateProgress fires periodically during copyContent. FilesDone/
-// FilesTotal (not a pre-computed percent) so the projection derives
-// Progress the same way it would from any other counter — one fewer unit
-// conversion to keep in sync between here and there.
+// RelocateProgress fires both after each file completes AND on a 500ms
+// heartbeat while copyContent is mid-copy (internal/core/stages/relocating/
+// copy.go) — a single large file (a world region file, level.dat, etc.) can
+// easily outlast the per-file cadence on its own, so without the heartbeat
+// the dial/ETA/size telemetry would sit frozen for that file's whole
+// transfer (2026-08-15 follow-up: reported as "progress not moving while
+// transferring"). BytesDone is read live off a CounterStorage tap installed
+// on the destination writer — real bytes actually flushed to disk, not
+// estimated from the file-count ratio — so the dial keeps moving even
+// mid-file. FilesDone/FilesTotal (not a pre-computed percent) so the
+// projection derives Progress the same way it would from any other counter
+// — one fewer unit conversion to keep in sync between here and there.
+// Elapsed is time since copyContent started (not wall-clock/time.Now() read
+// projection-side) — mirrors progress.Tick.Elapsed's role for pull/push:
+// carrying the clock as event data, not a projection-side side-channel,
+// keeps Projection.etaFromSessionAvg's beat-average math testable with
+// synthetic durations instead of real sleeps (design-log/056 follow-up,
+// 2026-08-11).
 type RelocateProgress struct {
 	FilesDone  int
 	FilesTotal int
+	BytesDone  int64
+	Elapsed    time.Duration
 }
 
 func (e RelocateProgress) String() string {

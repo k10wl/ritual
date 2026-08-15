@@ -139,10 +139,122 @@ func TestRelocating_SuccessfulMove_ContentLandsAtDestinationAndOldRootIsRemoved(
 
 	onDisk, err := os.ReadFile(domain.SettingsPath())
 	require.NoError(t, err, "commit must durably persist settings.json via the now-atomic Settings.Save()")
-	assert.Contains(t, string(onDisk), dst, "the persisted settings.json must contain the new work_root")
+	var persisted domain.Settings
+	require.NoError(t, json.Unmarshal(onDisk, &persisted), "settings.json must stay valid JSON")
+	assert.Equal(t, dst, persisted.WorkRoot, "the persisted settings.json must contain the new work_root")
 
-	_, statErr := os.Stat(oldDir)
-	assert.True(t, os.IsNotExist(statErr), "cleanup must remove the old root directory after a successful commit — stale files are explicitly not left behind on the success path")
+	for _, dir := range []string{"objects", "refs", "server", "worlds"} {
+		_, statErr := os.Stat(filepath.Join(oldDir, dir))
+		assert.True(t, os.IsNotExist(statErr), "cleanup must remove the old root's %s subdirectory after a successful commit — stale content files are explicitly not left behind on the success path", dir)
+	}
+}
+
+// TestRelocating_FirstRelocateFromDefaultRoot_PreservesControlFiles
+// regression-guards the most severe live repro of the session (2026-08-11):
+// on a never-relocated install, config.WorkRoot defaults to config.RootPath
+// — the CONTENT root and the CONTROL root (settings.json/lock/logs/) are the
+// SAME directory. cleanup() used to os.RemoveAll(oldDir) wholesale, which on
+// a real machine deleted the settings.json commit() had just durably
+// written moments earlier (plus the lock file and older logs) — the
+// relocated data landed safely at the new destination, but the pointer to
+// it, and the whole control root, was wiped. Fixed by scoping cleanup to
+// exactly the CONTENT subdirectories (contentDirs) instead of the directory
+// itself; this test sets up the exact old-root-equals-RootPath topology the
+// existing newSourceRefs-based tests structurally cannot reach (they always
+// use a source root distinct from config.RootPath) and asserts settings.json
+// and lock survive with the NEW work_root, not a regenerated default.
+func TestRelocating_FirstRelocateFromDefaultRoot_PreservesControlFiles(t *testing.T) {
+	withScratchRootPath(t)
+	withScratchWorkRoot(t)
+
+	// The old content root IS config.RootPath — exactly the default,
+	// never-relocated topology every real install starts from.
+	root, err := os.OpenRoot(config.RootPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = root.Close() })
+	local, err := adapters.NewFSRepository(root, "local")
+	require.NoError(t, err)
+	workdir, err := adapters.NewFSRepository(root, "workdir")
+	require.NoError(t, err)
+	rootRef := new(atomic.Pointer[os.Root])
+	rootRef.Store(root)
+	localRef := adapters.NewSwappableStorage()
+	localRef.Store(local)
+	workdirRef := adapters.NewSwappableStorage()
+	workdirRef.Store(workdir)
+	refs := relocating.WorkRootRefs{Root: rootRef, Local: localRef, Workdir: workdirRef}
+
+	require.NoError(t, domain.DefaultSettings().Save(), "a real install always has settings.json at RootPath before any relocate")
+	lockPath := filepath.Join(config.RootPath, "lock")
+	require.NoError(t, os.WriteFile(lockPath, []byte("held"), 0o600))
+	writeObject(t, refs, []byte("blob content"))
+
+	dst := filepath.Join(t.TempDir(), "content")
+	bus := adapters.NewEventBus(64)
+	state := newState(dst, refs, bus)
+
+	_, err = relocating.New(nil, nil).Run(context.Background(), state)
+	require.NoError(t, err)
+
+	assert.FileExists(t, lockPath, "the lock file at RootPath must survive a relocate whose old content root happened to be RootPath itself")
+	onDisk, err := os.ReadFile(domain.SettingsPath())
+	require.NoError(t, err, "settings.json at RootPath must survive — cleanup must never delete the CONTROL root's own files")
+	var persisted domain.Settings
+	require.NoError(t, json.Unmarshal(onDisk, &persisted))
+	assert.Equal(t, dst, persisted.WorkRoot, "settings.json must reflect the successful relocate's new work_root, not fall back to a regenerated default")
+
+	_, statErr := os.Stat(filepath.Join(config.RootPath, "objects"))
+	assert.True(t, os.IsNotExist(statErr), "the old objects/ subdirectory must still be cleaned up, same as any other relocate")
+}
+
+// TestRelocating_EmptyObjectBlob_PassesVerify regression-guards a real dev
+// repro (2026-08-11): a genuine zero-byte content-addressed object
+// (xxhash64("") == "ef46db3751d8e999", a real, correctly-hashed key — not
+// corruption) failed relocate's verify step because it reused the
+// non-content-addressed server/worlds/ "reject 0 bytes" check on objects/
+// too. objects/ integrity is already guaranteed by the zstd-decode +
+// xxhash-vs-filename check on Close (see the corrupted-blob test below); an
+// empty result is a legitimate outcome for objects/, not a failure signal.
+func TestRelocating_EmptyObjectBlob_PassesVerify(t *testing.T) {
+	withScratchRootPath(t)
+	withScratchWorkRoot(t)
+
+	refs := newSourceRefs(t)
+	objKey := writeObject(t, refs, []byte{})
+
+	dst := filepath.Join(t.TempDir(), "content")
+	bus := adapters.NewEventBus(64)
+	state := newState(dst, refs, bus)
+
+	_, err := relocating.New(nil, nil).Run(context.Background(), state)
+	require.NoError(t, err, "a genuinely empty, correctly-hashed object must pass verify, not be mistaken for a failed copy")
+	assert.FileExists(t, filepath.Join(dst, filepath.FromSlash(objKey)), "the empty object blob must still land at the destination")
+}
+
+// TestRelocating_EmptyWorldsFile_PassesVerify regression-guards a second
+// live repro on the same session (2026-08-11), right after the objects/ fix
+// above: a real Paper world save contains dozens of genuinely 0-byte `.mca`
+// region files (lazily-allocated POI/entity/region files for
+// sparsely-generated areas, e.g. the Nether) — verify's server/worlds/ check
+// rejected the first one it saw (worlds/world/DIM-1/poi/r.-2.-2.mca) as
+// "empty file", even though the copy itself succeeded byte-for-byte. Fixed
+// by dropping the server/worlds/ verify pass entirely (redundant with
+// copyContent's own error surfacing — see verify's doc comment), not by
+// softening its empty-check, so this now guards the whole class of case.
+func TestRelocating_EmptyWorldsFile_PassesVerify(t *testing.T) {
+	withScratchRootPath(t)
+	withScratchWorkRoot(t)
+
+	refs := newSourceRefs(t)
+	key := writeWorkdirFile(t, refs, "worlds/world/DIM-1/poi/r.-2.-2.mca", []byte{})
+
+	dst := filepath.Join(t.TempDir(), "content")
+	bus := adapters.NewEventBus(64)
+	state := newState(dst, refs, bus)
+
+	_, err := relocating.New(nil, nil).Run(context.Background(), state)
+	require.NoError(t, err, "a genuinely empty, lazily-allocated .mca region file must pass verify, not be mistaken for a failed copy")
+	assert.FileExists(t, filepath.Join(dst, filepath.FromSlash(key)), "the empty worlds file must still land at the destination")
 }
 
 func TestRelocating_CorruptedBlobDuringCopy_AbortsBeforeStoreSourceIntact(t *testing.T) {

@@ -108,15 +108,19 @@ export class DialCycleDemo extends LitElement {
     }
 }
 
-const TOTAL_FILES = 240;
+const RELOCATE_ETA_S = 42;
 
-// Workroot relocate cycle (design-log/055 addendum): idle → RelocateStarted
-// (moving files, 0%) → RelocatePlanned/RelocateProgress (files flow 0→total,
-// file-count sub — relocate has no byte-rate counter, unlike the session's
-// download/save beats above) → RelocateVerifying/RelocateCommitting
-// (plateau, "Finishing up") → RelocateFinished (idle) → failure overlay →
-// idle. Mirrors DialCycleDemo's shape one-for-one against relocate's actual
-// event sequence (internal/core/stages/relocating/strategy.go).
+// Workroot relocate cycle (design-log/055 addendum, ETA/size added as a
+// design-log/056 follow-up): idle → RelocateStarted (moving files, 0%) →
+// RelocatePlanned/RelocateProgress (sub-line carries the ETA countdown —
+// RelocateProgress.Elapsed feeds the same beat-wide-average
+// etaFromSessionAvg math onTick uses for pull/push, projection.go's
+// foldRelocate; size itself renders in the underSlot "telemetry-size" block
+// in the real app, which this bare-dial demo can't show — <ritual-dial> has
+// no underSlot of its own) → RelocateVerifying/RelocateCommitting (plateau,
+// "Finishing up") → RelocateFinished (idle) → failure overlay → idle.
+// Mirrors DialCycleDemo's shape one-for-one against relocate's actual event
+// sequence (internal/core/stages/relocating/strategy.go).
 @customElement("relocate-cycle-demo")
 export class RelocateCycleDemo extends LitElement {
     @state() private state: DialState = "idle";
@@ -132,8 +136,10 @@ export class RelocateCycleDemo extends LitElement {
         const f = { v: 0 };
         const writeProgress = () => {
             this.arc = f.v;
-            const done = Math.round(f.v * TOTAL_FILES);
-            this.sub = `${done} of ${TOTAL_FILES} files`;
+            const remainingS = Math.round(RELOCATE_ETA_S * (1 - f.v));
+            this.sub = remainingS >= 60
+                ? `about ${Math.round(remainingS / 60)} minute${remainingS >= 120 ? "s" : ""}`
+                : `about ${remainingS} seconds`;
         };
         const tl = gsap.timeline({ repeat: -1 });
 
@@ -151,7 +157,7 @@ export class RelocateCycleDemo extends LitElement {
         });
         tl.to({}, { duration: PHASE_S * 0.5 });
 
-        // RelocateProgress: files flow (file-count, not byte-rate)
+        // RelocateProgress: ETA counts down (estimated from beat-wide average server-side)
         tl.to(f, { v: 1, duration: TRANSFER_S, ease: "power2.out", onUpdate: writeProgress });
 
         // RelocateVerifying + RelocateCommitting: fixed-cost tail, plateau
@@ -272,12 +278,14 @@ export const PhaseSavingTail = () => html`
         label="Wrapping up" sub="Almost done"></ritual-dial>
 `;
 
-// Workroot relocate (design-log/055 addendum): files copying, file-count
-// sub-line (relocateSub) rather than etaSub's byte-rate ETA — relocate has
-// no speed counter (copyContent tracks files copied, not a byte stream).
+// Workroot relocate (design-log/055 addendum, ETA follow-up design-log/056):
+// files copying, ETA sub-line (relocateSub — same beat-wide-average shape as
+// etaSub) rather than a size caption; size itself renders separately in the
+// app's underSlot "telemetry-size" block (see dial-telemetry.stories.ts'
+// SizeOnlyNoSpeedRow), which this bare-dial story doesn't include.
 export const PhaseRelocating = () => html`
     <ritual-dial state="prep" .arc=${0.42} glyph="folder-input"
-        label="Moving files" sub="42 of 100 files"></ritual-dial>
+        label="Moving files" sub="about 24 seconds"></ritual-dial>
 `;
 
 // Copying done, fixed-cost verify/commit tail — same arc-plateau +

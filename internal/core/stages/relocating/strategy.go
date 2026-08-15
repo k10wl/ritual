@@ -87,7 +87,7 @@ func (s *Strategy) Run(ctx context.Context, st *State) (machine.Strategy[State],
 	}
 
 	publish(st.Bus, RelocateVerifying{})
-	if err := verify(stopCtx, newLocal, newWorkdir); err != nil {
+	if err := verify(stopCtx, newLocal); err != nil {
 		_ = newRoot.Close()
 		return s.fail(st, err)
 	}

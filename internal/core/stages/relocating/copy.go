@@ -12,7 +12,18 @@ import (
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/ports"
+	"sync"
+	"sync/atomic"
+	"time"
 )
+
+// relocateHeartbeat is how often copyContent publishes a RelocateProgress
+// even when no file has completed since the last publish — see
+// RelocateProgress's doc comment for why a large single file needs this. A
+// var (not const), mirroring progress.Ticker's exported Alpha/WindowN
+// tunables, so a white-box test can shrink it and observe a mid-file
+// heartbeat without waiting out a real 500ms per test run.
+var relocateHeartbeat = 500 * time.Millisecond
 
 // contentDirs is the CONTENT set from design-log/055's classification
 // table — everything a relocate physically moves. objects/ and refs/ live
@@ -124,9 +135,15 @@ func walkPrefixSize(root *os.Root, prefix string) (int64, int, error) {
 // GetStream->PutStream. StorageRepository.Copy is intra-repository only
 // (FSRepository.Copy takes a single *os.Root receiver) so a cross-root
 // transfer cannot use it; GetStream/PutStream is the only viable primitive
-// (design-log/055 Q2). Periodically publishes RelocateProgress. Checks
-// ctx.Err() between files, never mid-stream, so a Stop finishes the
-// in-flight file then aborts before starting the next.
+// (design-log/055 Q2). Destination writes go through a CounterStorage tap
+// (internal/adapters/counter.go, the same decorator pull/push tap for
+// progress.Ticker) so BytesDone reflects bytes actually flushed to disk as
+// io.Copy streams them, not a per-file estimate — RelocateProgress
+// publishes both after each file completes and on a relocateHeartbeat
+// ticker, so a single large file doesn't freeze the dial for its whole
+// transfer (design-log/056 follow-up, 2026-08-15). Checks ctx.Err() between
+// files, never mid-stream, so a Stop finishes the in-flight file then
+// aborts before starting the next.
 func copyContent(ctx context.Context, refs WorkRootRefs, newLocal, newWorkdir ports.StorageRepository, bus ports.EventBus) error {
 	targets := copyTargets(refs, newLocal, newWorkdir)
 
@@ -141,7 +158,47 @@ func copyContent(ctx context.Context, refs WorkRootRefs, newLocal, newWorkdir po
 		totalKeys += len(keys)
 	}
 
-	var done int
+	counters := &adapters.StorageCounters{}
+	for i := range targets {
+		targets[i].newer = adapters.NewCounterStorage(targets[i].newer, counters)
+	}
+
+	start := time.Now()
+	var filesDone atomic.Int64
+	publish := func() {
+		if bus != nil && totalKeys > 0 {
+			bus.Publish(RelocateProgress{
+				FilesDone:  int(filesDone.Load()),
+				FilesTotal: totalKeys,
+				BytesDone:  counters.BytesOut.Load(),
+				Elapsed:    time.Since(start),
+			})
+		}
+	}
+
+	var wg sync.WaitGroup
+	stopHeartbeat := make(chan struct{})
+	if bus != nil && totalKeys > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ticker := time.NewTicker(relocateHeartbeat)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopHeartbeat:
+					return
+				case <-ticker.C:
+					publish()
+				}
+			}
+		}()
+	}
+	defer func() {
+		close(stopHeartbeat)
+		wg.Wait()
+	}()
+
 	for i, t := range targets {
 		for _, key := range keysPerTarget[i] {
 			if err := ctx.Err(); err != nil {
@@ -150,10 +207,8 @@ func copyContent(ctx context.Context, refs WorkRootRefs, newLocal, newWorkdir po
 			if err := copyKey(ctx, t.old, t.newer, key); err != nil {
 				return fmt.Errorf("relocating: copy %s: %w", key, err)
 			}
-			done++
-			if bus != nil && totalKeys > 0 {
-				bus.Publish(RelocateProgress{FilesDone: done, FilesTotal: totalKeys})
-			}
+			filesDone.Add(1)
+			publish()
 		}
 	}
 	return nil
@@ -168,20 +223,29 @@ func copyKey(ctx context.Context, src, dst ports.StorageRepository, key string) 
 	return dst.PutStream(ctx, key, rc)
 }
 
-// verify re-checks the destination before it becomes live. objects/ blobs
-// are re-decoded and xxhash-verified against their filename for free by
-// wrapping the destination in a CompressingStorage — GetStream through it
-// performs the same zstd-decode + xxhash integrity check design-log/025
-// already relies on for a corrupted-write detection, so a mismatch simply
-// surfaces as an error on Close, no re-implementation needed. refs/ entries
-// are re-parsed as JSON. server/worlds/ are not content-addressed, so they
-// only get a presence + non-zero-size check.
+// verify re-checks the destination before it becomes live, but only for the
+// two paths that need something beyond what copyContent already guarantees:
+// objects/ blobs are re-decoded and xxhash-verified against their filename
+// for free by wrapping the destination in a CompressingStorage — GetStream
+// through it performs the same zstd-decode + xxhash integrity check
+// design-log/025 already relies on for a corrupted-write detection, so a
+// mismatch simply surfaces as an error on Close, no re-implementation
+// needed. refs/ entries are re-parsed as JSON — a validity check copy can't
+// provide. server/worlds/ get no separate verify pass (dropped 2026-08-11):
+// they're not content-addressed, so there is nothing to check beyond "did
+// the bytes arrive," and copyContent already surfaces any GetStream/
+// PutStream error immediately, aborting before verify ever runs — a second
+// read-through would only re-derive a success signal copy already gave. (A
+// prior non-zero-size check here was also wrong on its own terms: a real
+// world save legitimately contains dozens of 0-byte `.mca` region files —
+// lazily-allocated POI/entity/region files for sparsely-generated areas
+// like the Nether.)
 // verify takes stopCtx (not the outer, uncancellable-by-Stop ctx) and polls
 // ctx.Err() between keys — FSRepository.GetStream ignores its ctx parameter
 // entirely, so this between-key check is the only way a Stop request during
 // the (potentially long, for a large install) verify phase can actually
 // take effect, mirroring copyContent's own cancellation granularity.
-func verify(ctx context.Context, newLocal, newWorkdir ports.StorageRepository) error {
+func verify(ctx context.Context, newLocal ports.StorageRepository) error {
 	compressed, err := adapters.NewCompressingStorage(newLocal)
 	if err != nil {
 		return fmt.Errorf("relocating: build verification decoder: %w", err)
@@ -195,7 +259,7 @@ func verify(ctx context.Context, newLocal, newWorkdir ports.StorageRepository) e
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := verifyStreamNonEmpty(ctx, compressed, key); err != nil {
+		if err := verifyStreamIntegrity(ctx, compressed, key); err != nil {
 			return fmt.Errorf("relocating: verify object %s: %w", key, err)
 		}
 	}
@@ -213,46 +277,28 @@ func verify(ctx context.Context, newLocal, newWorkdir ports.StorageRepository) e
 		}
 	}
 
-	for _, dir := range []string{"server/", "worlds/"} {
-		keys, err := newWorkdir.List(ctx, dir)
-		if err != nil {
-			return fmt.Errorf("relocating: list %s for verification: %w", dir, err)
-		}
-		for _, key := range keys {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err := verifyStreamNonEmpty(ctx, newWorkdir, key); err != nil {
-				return fmt.Errorf("relocating: verify %s: %w", dir, err)
-			}
-		}
-	}
-
 	return nil
 }
 
-// verifyStreamNonEmpty reads key fully and checks Close's error, not just
-// the read's. This is load-bearing for objects/ keys: CompressingStorage's
-// integrity check (zstd-decode + xxhash-vs-filename) only surfaces a
-// mismatch from Close (internal/adapters/compressing.go), so a deferred,
-// discarded Close would silently accept a corrupted blob.
-func verifyStreamNonEmpty(ctx context.Context, store ports.StorageRepository, key string) error {
+// verifyStreamIntegrity reads an objects/ key fully through the
+// CompressingStorage-wrapped store and checks Close's error, WITHOUT
+// rejecting a zero-byte result — a real 0-byte object is legitimate
+// (xxhash64("") == "ef46db3751d8e999" is a real, valid object key).
+// CompressingStorage's integrity check (zstd-decode + xxhash-vs-filename)
+// still surfaces a mismatch from Close (internal/adapters/compressing.go)
+// regardless of length, so a discarded Close would silently accept a
+// corrupted blob — this keeps that check.
+func verifyStreamIntegrity(ctx context.Context, store ports.StorageRepository, key string) error {
 	rc, err := store.GetStream(ctx, key)
 	if err != nil {
 		return err
 	}
-	n, copyErr := io.Copy(io.Discard, rc)
+	_, copyErr := io.Copy(io.Discard, rc)
 	closeErr := rc.Close()
 	if copyErr != nil {
 		return copyErr
 	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if n == 0 {
-		return fmt.Errorf("empty file: %s", key)
-	}
-	return nil
+	return closeErr
 }
 
 func verifyRefParses(ctx context.Context, store ports.StorageRepository, key string) error {

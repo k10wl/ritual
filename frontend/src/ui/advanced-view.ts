@@ -79,6 +79,11 @@ export class AdvancedView extends LitElement {
         ok: false,
     });
     @property({ attribute: false }) changeWorkRoot: (path: string) => Promise<void> = async () => {};
+    // Reveals the fixed CONTROL root (settings.json/lock/logs, design-log/055)
+    // — separate from work-root's own path, which is the (possibly relocated)
+    // CONTENT root. A small link alongside it rather than its own section:
+    // it's a support/troubleshooting affordance, not a setting.
+    @property({ attribute: false }) openControlFolder: () => Promise<void> = async () => {};
 
     @state() private _rules: RetentionPair = { local: { ...DEFAULT_RULES }, remote: { ...DEFAULT_RULES } };
 
@@ -128,6 +133,9 @@ export class AdvancedView extends LitElement {
                     .change=${this.changeWorkRoot}
                     ?idle=${this.canUpdate}
                 ></work-root>
+                <rune-button variant="plain" size="sm" @press=${this.#pressOpenControlFolder}
+                    >Open app folder</rune-button
+                >
             </section>
             <section>
                 <p class="label">Versions</p>
@@ -162,6 +170,14 @@ export class AdvancedView extends LitElement {
     // exits via a custom event, not a wails-api call here.
     private emitCheckUpdate = () => {
         this.dispatchEvent(new CustomEvent("checkupdate", { bubbles: true, composed: true }));
+    };
+
+    // Immediate, non-navigational action (just reveals a folder in the OS
+    // file manager, no dial takeover) — called directly like work-root's own
+    // `open`, unlike emitCheckUpdate above which re-emits because the host
+    // needs to add stack-pop/dial-takeover behavior around it.
+    #pressOpenControlFolder = () => {
+        void this.openControlFolder();
     };
 
     // Retention edits arrive as a generic `change` from `<retention-rules>`.

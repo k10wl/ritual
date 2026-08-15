@@ -3,6 +3,7 @@ package control_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -242,3 +243,55 @@ func TestControlService_ResetWorkRoot_MovesBackToConfigRootPath(t *testing.T) {
 // test` would actually pop a real Finder/Explorer window as a side effect.
 // The design-log/055 wiring fix (reveal config.WorkRoot instead of
 // config.RootPath) is a one-line change, verified by reading control.go.
+
+func TestControlService_PickWorkRootFolder_NilPickerDegrades(t *testing.T) {
+	svc := control.NewControlService(nil, nil, nil, nil, nil, nil)
+	path, ok := svc.PickWorkRootFolder()
+	assert.False(t, ok, "an unset directoryPicker must degrade to ok=false, never a panic or error")
+	assert.Empty(t, path)
+}
+
+func TestControlService_PickWorkRootFolder_CancelDegrades(t *testing.T) {
+	svc := control.NewControlService(nil, nil, nil, nil, nil, nil)
+	// Mirrors Wails v3's own macOS Cancel contract (design-log/056): the
+	// dialog returns ("", nil) on Cancel, not an error.
+	svc.SetDirectoryPicker(func(dir string) (string, error) { return "", nil })
+	path, ok := svc.PickWorkRootFolder()
+	assert.False(t, ok, "a cancelled pick (empty path, nil error) must degrade to ok=false")
+	assert.Empty(t, path)
+}
+
+func TestControlService_PickWorkRootFolder_ErrorDegrades(t *testing.T) {
+	svc := control.NewControlService(nil, nil, nil, nil, nil, nil)
+	svc.SetDirectoryPicker(func(dir string) (string, error) { return "", errors.New("dialog failed") })
+	path, ok := svc.PickWorkRootFolder()
+	assert.False(t, ok, "a real dialog-open failure must degrade to ok=false, not be surfaced as an error the user can't act on")
+	assert.Empty(t, path)
+}
+
+// TestControlService_PickWorkRootFolder_AppendsAppNameContainer guards the
+// 2026-08-11 UX decision: the picker chooses a CONTAINER, not the exact
+// content folder, so the returned path is always <picked>/<AppName> — never
+// the raw OS selection verbatim. Dumping objects/refs/server/worlds
+// straight into whatever folder a user happens to pick would mix Ritual's
+// data in with anything else already there.
+func TestControlService_PickWorkRootFolder_AppendsAppNameContainer(t *testing.T) {
+	svc := control.NewControlService(nil, nil, nil, nil, nil, nil)
+	picked := filepath.Join(t.TempDir(), "Games")
+	svc.SetDirectoryPicker(func(dir string) (string, error) { return picked, nil })
+	path, ok := svc.PickWorkRootFolder()
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(picked, config.AppName), path, "the returned path must be the picked folder plus an AppName container subfolder")
+}
+
+func TestControlService_PickWorkRootFolder_SeedsDialogAtCurrentWorkRoot(t *testing.T) {
+	withScratchRoots(t, filepath.Join(t.TempDir(), "current-content"))
+	svc := control.NewControlService(nil, nil, nil, nil, nil, nil)
+	var seenDir string
+	svc.SetDirectoryPicker(func(dir string) (string, error) {
+		seenDir = dir
+		return "", nil
+	})
+	_, _ = svc.PickWorkRootFolder()
+	assert.Equal(t, config.WorkRoot, seenDir, "the dialog must be seeded at the current WorkRoot so it opens somewhere relevant")
+}

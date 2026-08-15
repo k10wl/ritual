@@ -2,6 +2,7 @@ package relocating
 
 import (
 	"os"
+	"path/filepath"
 	"ritual/internal/config"
 	"ritual/internal/core/domain"
 )
@@ -23,10 +24,22 @@ func commit(settings *domain.Settings, dst string) error {
 	return nil
 }
 
-// cleanup best-effort closes and removes the old root. Explicitly out of
-// scope to make this robust (Crash safety § "stale files are not our
+// cleanup best-effort closes the old root and removes ONLY the CONTENT
+// subdirectories it held (contentDirs — objects/refs/server/worlds), never
+// the old root directory itself. This is load-bearing, not cosmetic: on a
+// never-relocated install config.WorkRoot defaults to config.RootPath, so
+// the "old content root" IS the CONTROL root — a blanket
+// os.RemoveAll(oldDir) there would delete settings.json/lock/logs/ right
+// after commit() durably wrote the new work_root into that same
+// settings.json, orphaning it (live repro, 2026-08-11: exactly this
+// happened — the relocated data landed safely at the new destination, but
+// the pointer to it, and the whole control root, was wiped seconds later).
+// Leftover stale content-subdir files on a crash mid-cleanup are still
+// explicitly out of scope (Crash safety § "stale files are not our
 // concern") — errors are swallowed, not surfaced.
 func cleanup(oldRoot *os.Root, oldDir string) {
 	_ = oldRoot.Close()
-	_ = os.RemoveAll(oldDir)
+	for _, dir := range contentDirs {
+		_ = os.RemoveAll(filepath.Join(oldDir, dir))
+	}
 }

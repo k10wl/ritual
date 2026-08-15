@@ -1,6 +1,6 @@
 # 056 — Work root: native folder dialog + Advanced UI (Phase F of #055)
 
-**Status:** Draft
+**Status:** Implemented
 **Date:** 2026-08-11
 
 ## Background
@@ -295,3 +295,104 @@ flowchart TD
   something the user can act on differently than a cancel, and Wails itself
   doesn't distinguish the failure mode further on macOS (empty channel close
   either way).
+
+## Implementation Results
+
+Phases A–C implemented and landed: `ControlService.PickWorkRootFolder`/
+`SetDirectoryPicker`/`OpenControlFolder`, `cmd/gui/main.go` dialog wiring,
+`work-root`/Advanced-view UI, `ritual-app.ts` wiring incl. `popToRoot()` on
+change so the relocate takeover is visible over a pushed Advanced screen.
+`go build ./...`, `go vet ./...`, `gofmt -l` clean; `tsc --noEmit` and
+`vite build` clean; frontend test suite green.
+
+Live testing against a real dev workroot (`ritualdev`) surfaced four bugs
+beyond the original design's scope, in order:
+
+1. **`verify()` false-positives on legitimate empty files.** A non-empty
+   check reused across `objects/` and `server/worlds/` rejected a genuinely
+   empty content-addressed blob (`xxhash64("") == "ef46db3751d8e999"`, a
+   real, correctly-hashed key) and genuinely 0-byte `.mca` region files (a
+   real Paper world legitimately has dozens — lazily-allocated POI/entity
+   files for sparse areas like the Nether). Root-caused via a standalone
+   `xxhash.Sum64([]byte{})` check confirming the "corrupted" object was not
+   corrupted at all. Fixed by dropping the `server/worlds/` verify pass
+   entirely (`copyContent` already errors on any stream failure — a second
+   read-through only re-derived a signal copy already gave) and by giving
+   `objects/` its own `verifyStreamIntegrity` with no non-empty check,
+   relying solely on `CompressingStorage`'s decode+hash-on-`Close` integrity
+   check.
+2. **`cleanup()` deleted the CONTROL root on a never-relocated install.**
+   `cleanup(oldRoot, oldDir)` called `os.RemoveAll(oldDir)` on the whole old
+   root directory. On any install that had never relocated before,
+   `config.WorkRoot == config.RootPath` — so this deleted `settings.json`
+   moments after `commit()` had durably written the new `work_root` into it,
+   plus the lock file and prior logs. The relocated content itself landed
+   safely at the new destination; the pointer to it, and the whole CONTROL
+   root, was wiped — confirmed via `.log` analysis (a `relocate: finished`
+   entry immediately followed by a next-boot log showing `work_root: ""`,
+   i.e. regenerated defaults). The most severe bug found this session. Fixed
+   by scoping `cleanup` to `contentDirs` only, never the directory itself.
+   Regression-guarded by
+   `TestRelocating_FirstRelocateFromDefaultRoot_PreservesControlFiles`,
+   which sets up the exact old-root-equals-`RootPath` topology the
+   pre-existing tests structurally couldn't reach.
+3. **Dial progress frozen during a large single file (2026-08-15).**
+   `copyContent` originally published `RelocateProgress` only once per
+   completed file, with `BytesDone` estimated proportionally from the
+   file-count ratio (`BytesTotal × FilesDone / FilesTotal`). A world save's
+   region files or `level.dat` can each dwarf the time between two file
+   completions, so the dial's arc, size telemetry, and ETA all sat frozen
+   for that file's entire transfer, then jumped — reported live as
+   "progress not moving while transferring." Fixed by wrapping the
+   destination write in the same `adapters.CounterStorage` tap
+   `progress.Ticker` already uses for pull/push (`internal/adapters/
+   counter.go`), so `RelocateProgress.BytesDone` is real bytes flushed to
+   disk, not an estimate, and publishing on both a per-file boundary and a
+   500ms heartbeat ticker (`relocateHeartbeat`, a `var` so tests can shrink
+   it) so a single slow file still moves the dial mid-copy. `projection.go`'s
+   `foldRelocate` now reads `BytesDone` straight off the event instead of
+   deriving it. Regression-guarded by
+   `TestCopyContent_HeartbeatPublishesProgressMidLargeFile`, which drips a
+   slow fake source out over several chunks and asserts a heartbeat tick
+   reports partial `BytesDone > 0` while `FilesDone` is still 0 — i.e.
+   before any file-boundary event could have fired.
+4. **Size + ETA telemetry (2026-08-11).** `RelocateProgress` gained an
+   `Elapsed time.Duration` field so `foldRelocate` could feed
+   `Projection.etaFromSessionAvg` — the identical beat-wide-average function
+   `onTick` already uses for pull/push — rather than inventing a second ETA
+   implementation. Frontend: `dial-telemetry.ts` gained a `hideSpeed` flag
+   (relocate has no rate counter to show), `relocateSub()` renders the ETA
+   countdown the same shape as `etaSub`, size moved into the dial's
+   `underSlot: "telemetry-size"` block reusing `<dial-telemetry>` verbatim.
+
+All four fixes are additive to the shipped Phase A–C surface, not deviations
+from the Draft's design — `verify`/`cleanup`/progress-publish internals were
+implementation detail the Draft didn't specify at this level.
+
+5. **ETA frozen for 30+ seconds mid-transfer (2026-08-15, same day as #3).**
+   Live testing of the CounterStorage-tap fix above (a 2021-file, 2.2GB
+   relocate) showed `EtaSeconds` stuck at the exact same integer for 34 real
+   seconds while ~930MB visibly flowed (`done=` climbing continuously in the
+   on-disk log the whole time) — then a second, shorter freeze later in the
+   same transfer. Not a stale-event or concurrency bug: `etaFromSessionAvg`
+   (shared with pull/push, `internal/gui/projection/projection.go`) averages
+   over the WHOLE beat since its absolute start, and a cumulative average
+   becomes progressively less sensitive to new samples as elapsed grows —
+   each additional second is a shrinking fraction of an increasingly long
+   history. Pull/push don't show this visibly (network throughput is
+   comparatively uniform across a transfer), but relocate's local-disk copy
+   apparently isn't, running long enough for the effect to be visible as a
+   dead flat number. Fixed by giving `etaFromSessionAvg` a 5-second sliding
+   window (`etaWindowSeconds`, chosen to match `progress.Ticker`'s existing
+   `DefaultWindowN=5` at its 1s cadence — the same "5-ish seconds of
+   history" convention already used for the speed metric): once
+   elapsed-since-anchor crosses the window, the anchor slides forward to the
+   current sample so the next estimate reflects recent throughput rather
+   than the whole history. Shared with pull/push (same function), but their
+   existing tests all use elapsed spans well under 5s so behavior there is
+   unchanged — confirmed by the full existing suite passing unmodified.
+   Regression-guarded by
+   `TestProjection_RelocateProgress_LateWindowSlide_ReactsToThroughputBurstFasterThanLifetimeAverageWould`,
+   which constructs a throughput burst after the window has slid and asserts
+   the estimate reacts to it immediately rather than being diluted by a
+   6.5-second-old anchor.

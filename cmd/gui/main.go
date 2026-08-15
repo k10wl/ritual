@@ -158,6 +158,19 @@ func main() { //nolint:gocyclo // composition root — high fanout is structural
 		return &wailsWindowControl{win: w}
 	})
 	controlSvc.SetConsoleReader(runtime.consoleReader)
+	// Native folder picker for the workroot Change affordance (design-log/056
+	// Phase A). Cancel returns ("", nil) on macOS (verified against Wails
+	// v3 alpha.77's dialogs_darwin.go) — PickWorkRootFolder already treats
+	// empty-path-and-nil-err as "cancelled," so no special-casing needed here.
+	controlSvc.SetDirectoryPicker(func(dir string) (string, error) {
+		return wailsApp.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+			CanChooseDirectories: true,
+			CanChooseFiles:       false,
+			CanCreateDirectories: true,
+			Title:                "Choose workroot folder",
+			Directory:            dir,
+		}).PromptForSingleSelection()
+	})
 
 	mainWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		if shuttingDown.Load() {
