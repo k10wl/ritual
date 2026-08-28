@@ -13,11 +13,13 @@ import { LitElement, css, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./prep-settings";
 import "./sync-view";
+import "./work-root";
 import "./versions-view";
 import "./retention-rules";
 import "./primitives/rune-button";
 import type { PrepSettings } from "./prep-settings";
 import type { SyncVerdict } from "./sync-view";
+import type { WorkRootInfo, WorkRootPickResult } from "./work-root";
 import type { VersionRow, VersionScope, LocalStorageStatsLike } from "./versions-view";
 import type { RetentionChangeDetail } from "./retention-rules";
 import type { RetentionRules } from "./retention-model";
@@ -61,6 +63,28 @@ export class AdvancedView extends LitElement {
     // it is offered only when the dial is idle (design-log/037 §Q4 lean).
     @property({ type: Boolean }) canUpdate = false;
 
+    // Work root section (design-log/056, Phase F of 055): current content-
+    // root path (click-to-open) + Change, injected by the host (wraps
+    // GetWorkRoot/OpenRootFolder/PickWorkRootFolder/ChangeWorkRoot). Gated on
+    // the same idle signal as `canUpdate` — a relocate is disallowed outside
+    // PhaseIdle/PhaseFailed (055's RUNNING-gate), same shape as the
+    // update-restart gate above.
+    @property({ attribute: false }) getWorkRoot: () => Promise<WorkRootInfo> = async () => ({
+        path: "",
+        isDefault: true,
+    });
+    @property({ attribute: false }) openWorkFolder: () => Promise<void> = async () => {};
+    @property({ attribute: false }) pickWorkRootFolder: () => Promise<WorkRootPickResult> = async () => ({
+        path: "",
+        ok: false,
+    });
+    @property({ attribute: false }) changeWorkRoot: (path: string) => Promise<void> = async () => {};
+    // Reveals the fixed CONTROL root (settings.json/lock/logs, design-log/055)
+    // — separate from work-root's own path, which is the (possibly relocated)
+    // CONTENT root. A small link alongside it rather than its own section:
+    // it's a support/troubleshooting affordance, not a setting.
+    @property({ attribute: false }) openControlFolder: () => Promise<void> = async () => {};
+
     @state() private _rules: RetentionPair = { local: { ...DEFAULT_RULES }, remote: { ...DEFAULT_RULES } };
 
     firstUpdated() {
@@ -101,6 +125,19 @@ export class AdvancedView extends LitElement {
                 <sync-view auto .check=${this.check}></sync-view>
             </section>
             <section>
+                <p class="label">Work folder</p>
+                <work-root
+                    .get=${this.getWorkRoot}
+                    .open=${this.openWorkFolder}
+                    .pick=${this.pickWorkRootFolder}
+                    .change=${this.changeWorkRoot}
+                    ?idle=${this.canUpdate}
+                ></work-root>
+                <rune-button variant="plain" size="sm" @press=${this.#pressOpenControlFolder}
+                    >Open app folder</rune-button
+                >
+            </section>
+            <section>
                 <p class="label">Versions</p>
                 <versions-view
                     .list=${this.versions}
@@ -133,6 +170,14 @@ export class AdvancedView extends LitElement {
     // exits via a custom event, not a wails-api call here.
     private emitCheckUpdate = () => {
         this.dispatchEvent(new CustomEvent("checkupdate", { bubbles: true, composed: true }));
+    };
+
+    // Immediate, non-navigational action (just reveals a folder in the OS
+    // file manager, no dial takeover) — called directly like work-root's own
+    // `open`, unlike emitCheckUpdate above which re-emits because the host
+    // needs to add stack-pop/dial-takeover behavior around it.
+    #pressOpenControlFolder = () => {
+        void this.openControlFolder();
     };
 
     // Retention edits arrive as a generic `change` from `<retention-rules>`.

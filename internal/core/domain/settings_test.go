@@ -201,7 +201,8 @@ func TestSettingsSavePrettyPrints(t *testing.T) {
     "keep_weekly": 0,
     "keep_monthly": 0
   },
-  "loaded_ref_id": ""
+  "loaded_ref_id": "",
+  "work_root": ""
 }`, config.DefaultMinRAMMB, config.DefaultMinDiskMB, config.DefaultMinJavaVersion)
 	if string(content) != expected {
 		t.Errorf("expected pretty printed JSON:\n%s\n\ngot:\n%s", expected, string(content))
@@ -242,4 +243,68 @@ func TestLoadSettings_BackfillsMissingThresholds(t *testing.T) {
 	assert.Equal(t, config.DefaultMinDiskMB, loaded.MinDiskMB, "missing MinDiskMB must be backfilled to the documented default")
 	assert.Equal(t, config.DefaultMinJavaVersion, loaded.MinJavaVersion, "missing MinJavaVersion must be backfilled to the documented default")
 	assert.NoError(t, loaded.Validate(), "backfilled settings must pass Validate so users do not see errors after upgrade")
+}
+
+func TestSettingsValidate_RejectsRelativeWorkRoot(t *testing.T) {
+	s := validSettings()
+	s.WorkRoot = "relative/path"
+	assert.Error(t, s.Validate(), "a relative work_root must fail Validate — config.ResolveWorkRoot only accepts absolute paths")
+}
+
+func TestSettingsValidate_AcceptsEmptyOrAbsoluteWorkRoot(t *testing.T) {
+	empty := validSettings()
+	empty.WorkRoot = ""
+	assert.NoError(t, empty.Validate(), "empty work_root (default) must pass Validate")
+
+	abs := validSettings()
+	abs.WorkRoot = filepath.Join(t.TempDir(), "content")
+	assert.NoError(t, abs.Validate(), "an absolute work_root must pass Validate")
+}
+
+func TestSettingsSave_AtomicWrite_LeavesNoTempFileAndCorrectContent(t *testing.T) {
+	tempDir := t.TempDir()
+	originalRootPath := config.RootPath
+	config.RootPath = tempDir
+	defer func() { config.RootPath = originalRootPath }()
+
+	settings := validSettings()
+	require.NoError(t, settings.Save(), "first Save must succeed")
+	require.NoError(t, settings.Save(), "second Save must succeed and overwrite cleanly")
+
+	entries, err := os.ReadDir(tempDir)
+	require.NoError(t, err, "reading the settings dir must succeed")
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), ".settings-", "no leftover temp file must survive a successful Save: found %s", e.Name())
+	}
+
+	loaded, err := LoadSettings()
+	require.NoError(t, err, "LoadSettings after an atomic Save must succeed")
+	assert.Equal(t, settings.Port, loaded.Port, "atomic Save must persist the exact content written")
+}
+
+func TestSettingsSave_FailedWrite_LeavesPriorFileUntouched(t *testing.T) {
+	tempDir := t.TempDir()
+	originalRootPath := config.RootPath
+	config.RootPath = tempDir
+	defer func() { config.RootPath = originalRootPath }()
+
+	first := validSettings()
+	first.Port = 25565
+	require.NoError(t, first.Save(), "first Save must succeed so there is prior content to protect")
+
+	before, err := os.ReadFile(filepath.Join(tempDir, SettingsFilename))
+	require.NoError(t, err, "reading the settings file after the first Save must succeed")
+
+	// Point RootPath at a non-existent directory so os.CreateTemp fails
+	// deterministically on every OS (a chmod-based read-only-directory
+	// trick is unreliable on Windows).
+	config.RootPath = filepath.Join(tempDir, "does-not-exist")
+	second := validSettings()
+	second.Port = 25999
+	assert.Error(t, second.Save(), "Save must fail when the settings directory does not exist")
+
+	config.RootPath = tempDir
+	after, err := os.ReadFile(filepath.Join(tempDir, SettingsFilename))
+	require.NoError(t, err, "reading the settings file after the failed Save must succeed")
+	assert.Equal(t, before, after, "a failed Save must leave the prior settings file byte-for-byte untouched")
 }

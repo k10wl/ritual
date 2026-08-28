@@ -11,8 +11,8 @@ import (
 // Version info (single source of truth)
 const (
 	VersionMajor = 2
-	VersionMinor = 0
-	VersionPatch = 4
+	VersionMinor = 2
+	VersionPatch = 0
 )
 
 // Application identity
@@ -146,6 +146,23 @@ const (
 
 // RootPath is the absolute on-disk working root, computed at init from UserHomeDir.
 var RootPath string
+
+// WorkRoot is the content root (objects/refs/server/worlds, design-log/055);
+// defaults to RootPath and may be relocated by the user. Set once at boot
+// by buildRuntime via ResolveWorkRoot, and thereafter mutated only by
+// relocating.Strategy's commit step.
+var WorkRoot string
+
+// ResolveWorkRoot returns workRoot if it is a non-empty absolute path, else
+// RootPath (today's single-root layout). Takes the already-extracted
+// settings.WorkRoot string rather than *domain.Settings to avoid an import
+// cycle (internal/core/domain already imports this package).
+func ResolveWorkRoot(workRoot string) string {
+	if workRoot != "" && filepath.IsAbs(workRoot) {
+		return workRoot
+	}
+	return RootPath
+}
 
 func init() {
 	AppVersion = fmt.Sprintf("%d.%d.%d", VersionMajor, VersionMinor, VersionPatch)

@@ -1,6 +1,7 @@
 import { html } from "lit";
 import "./advanced-view";
 import type { SyncVerdict } from "./sync-view";
+import type { WorkRootInfo, WorkRootPickResult } from "./work-root";
 
 export default {
     title: "Components / Advanced View",
@@ -31,11 +32,21 @@ const log = (e: Event) =>
     // eslint-disable-next-line no-console
     console.log(e.type, "→", (e as CustomEvent).detail);
 
+const delayedWorkRoot = (v: WorkRootInfo): (() => Promise<WorkRootInfo>) =>
+    () => new Promise((res) => setTimeout(() => res(v), 400));
+const delayedPick = (v: WorkRootPickResult): (() => Promise<WorkRootPickResult>) =>
+    () => new Promise((res) => setTimeout(() => res(v), 400));
+const noop = async () => {};
+
 export const Default = () =>
     pane(html`<advanced-view
         .config=${{ port: 25565, memoryMB: 4096 }}
         .check=${delayed({ behind: true, ahead: false })}
         .canUpdate=${true}
+        .getWorkRoot=${delayedWorkRoot({ path: "/Users/k10wl/k10wl/ritual", isDefault: true })}
+        .openWorkFolder=${noop}
+        .pickWorkRootFolder=${delayedPick({ path: "/Volumes/GameDrive/k10wl/ritual", ok: true })}
+        .changeWorkRoot=${async (p: string) => log(new CustomEvent("changeworkroot", { detail: p }))}
         @change=${log}
         @sync=${log}
         @checkupdate=${log}

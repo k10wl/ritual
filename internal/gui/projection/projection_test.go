@@ -9,6 +9,7 @@ import (
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/acquiring"
 	"ritual/internal/core/stages/pulling"
+	"ritual/internal/core/stages/relocating"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/gui/projection"
 	"ritual/internal/subsystems/lifecycle"
@@ -558,4 +559,169 @@ func TestProjection_Seq_StrictlyIncreasingAcrossEveryEmit(t *testing.T) {
 		assert.Greater(t, vms[i].Seq, vms[i-1].Seq,
 			"every emit must carry a strictly greater Seq than the previous one (index %d vs %d) — a repeat or reversal would let a stale snapshot pass the frontend's seq guard", i, i-1)
 	}
+}
+
+// --- design-log/055 addendum: StageRelocating/PhaseRelocating ---
+
+func TestProjection_RelocateStarted_FlipsToRelocatingBucket(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+	})
+	final := last(vms)
+	assert.Equal(t, projection.StageRelocating, final.Stage, "RelocateStarted must flip Stage to Relocating so the dial reads a distinct colour, not the pull/push buckets")
+	assert.Equal(t, projection.PhaseRelocating, final.Phase, "RelocateStarted must flip Phase to Relocating")
+}
+
+func TestProjection_RelocatePlanned_PopulatesBytesAndFilesTotal(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 6_000, FilesTotal: 3})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(6000), final.BytesTotal)
+	assert.Equal(t, 3, final.FilesTotal)
+	assert.Equal(t, 0, final.Progress, "non-empty plan leaves Progress at 0 until the first RelocateProgress")
+}
+
+func TestProjection_RelocatePlannedWithZeroDelta_AnchorsProgressTo100(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 0, FilesTotal: 0})
+	})
+	final := last(vms)
+	assert.Equal(t, 100, final.Progress, "an empty relocate (nothing to copy) must plateau complete-on-arrival, mirroring PlanInfo's empty-delta anchor for pull/push")
+}
+
+func TestProjection_RelocateProgress_ReadsBytesDoneAndProgressFromEvent(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 1000, FilesTotal: 4})
+		bus.Publish(relocating.RelocateProgress{FilesDone: 1, FilesTotal: 4, BytesDone: 300})
+	})
+	final := last(vms)
+	assert.Equal(t, 1, final.FilesDone)
+	assert.Equal(t, 25, final.Progress, "Progress derives from the file-count ratio (1/4 = 25%%)")
+	assert.Equal(t, int64(300), final.BytesDone, "BytesDone must come straight off the event's live CounterStorage tap, not a file-ratio estimate — a heartbeat tick mid-file reports real bytes flushed so far, which a ratio would never capture")
+}
+
+func TestProjection_RelocateProgress_FirstOfBeat_LeavesEtaZeroToAnchor(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 1000, FilesTotal: 4})
+		bus.Publish(relocating.RelocateProgress{FilesDone: 1, FilesTotal: 4, BytesDone: 250, Elapsed: 1 * time.Second})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(0), final.EtaSeconds, "the first RelocateProgress of a beat only anchors elapsed+bytes, same as the first Tick for pull/push — EtaSeconds stays 0 so the dial shows the decoder placeholder, not a number derived from one sample")
+}
+
+func TestProjection_RelocateProgress_SecondOfBeat_DerivesEtaFromBeatWideAverage(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 1000, FilesTotal: 4})
+		bus.Publish(relocating.RelocateProgress{FilesDone: 1, FilesTotal: 4, BytesDone: 250, Elapsed: 1 * time.Second})
+		// +1s, BytesDone 250→500 (real bytes off the event, not a file ratio)
+		// ⇒ beat-wide rate 250 B/s, 500 B remaining → 2s. Uses the identical
+		// etaFromSessionAvg beat math pull/push's onTick calls — just fed
+		// RelocateProgress.Elapsed instead of progress.Tick.Elapsed. FilesDone
+		// still only 1→2 of 4 here — a heartbeat tick mid-copy of file 2 would
+		// report this same BytesDone/FilesDone split, which is exactly the
+		// case a file-ratio estimate couldn't represent.
+		bus.Publish(relocating.RelocateProgress{FilesDone: 2, FilesTotal: 4, BytesDone: 500, Elapsed: 2 * time.Second})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(2), final.EtaSeconds, "EtaSeconds = remaining / beat-wide rate = 500 / (250B over 1s) = 2s")
+}
+
+// TestProjection_RelocateProgress_LateWindowSlide_ReactsToThroughputBurstFasterThanLifetimeAverageWould
+// regression-guards the live 2026-08-15 report ("progress stuck at eta 43"):
+// a real relocate (2021 files, 2.2GB) showed EtaSeconds frozen at the exact
+// same integer for 34 real seconds while ~930MB visibly flowed. Root cause
+// was etaFromSessionAvg averaging over the WHOLE beat since its absolute
+// start — as elapsed grows, each new sample is a shrinking fraction of the
+// total average, so the estimate becomes progressively less sensitive to
+// recent throughput, exactly the failure mode a lifetime-cumulative average
+// has and a bounded window doesn't. This constructs a throughput burst late
+// in a beat and asserts the estimate reacts to it near-immediately (the
+// window having sled past etaWindowSeconds) rather than the diluted ~5s a
+// lifetime average anchored at the beat's absolute start would have shown.
+func TestProjection_RelocateProgress_LateWindowSlide_ReactsToThroughputBurstFasterThanLifetimeAverageWould(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 10100, FilesTotal: 4})
+		bus.Publish(relocating.RelocateProgress{FilesDone: 1, FilesTotal: 4, BytesDone: 0, Elapsed: 1 * time.Second})
+		bus.Publish(relocating.RelocateProgress{FilesDone: 2, FilesTotal: 4, BytesDone: 100, Elapsed: 2 * time.Second})
+		// +5s at a steady 100 B/s: dt-since-anchor crosses etaWindowSeconds, so
+		// the anchor slides forward to (elapsed=7s, done=600) for future samples.
+		bus.Publish(relocating.RelocateProgress{FilesDone: 3, FilesTotal: 4, BytesDone: 600, Elapsed: 7 * time.Second})
+		// Sudden burst: 5000B in 0.5s (10,000 B/s) — 100x the earlier rate. Against
+		// the slid anchor this computes ETA≈0s; against the ORIGINAL beat-start
+		// anchor (elapsed=1s, done=0) it would have diluted to ≈5s instead
+		// (5600B over 6.5s ≈ 861 B/s, 4500B remaining ≈ 5.2s) — the exact kind of
+		// stale, too-slow-to-react estimate the live report showed.
+		bus.Publish(relocating.RelocateProgress{FilesDone: 4, FilesTotal: 4, BytesDone: 5600, Elapsed: 7500 * time.Millisecond})
+	})
+	final := last(vms)
+	assert.Equal(t, int64(0), final.EtaSeconds, "once dt crosses etaWindowSeconds the anchor slides forward, so a late throughput change is reflected against the recent window instead of being diluted by the whole beat's history")
+}
+
+func TestProjection_RelocateVerifyingAndCommitting_PlateauAtFullEvenOnRoundingShortfall(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 1000, FilesTotal: 3})
+		// 2/3 files rounds down to 66%, not 100 — verify/commit must still
+		// plateau explicitly rather than trusting the last progress ratio.
+		bus.Publish(relocating.RelocateProgress{FilesDone: 2, FilesTotal: 3})
+		bus.Publish(relocating.RelocateVerifying{})
+	})
+	final := last(vms)
+	assert.Equal(t, 100, final.Progress, "RelocateVerifying must plateau Progress to 100 regardless of the last file-ratio rounding")
+	assert.Equal(t, 3, final.FilesDone, "RelocateVerifying must plateau FilesDone to FilesTotal")
+	assert.Equal(t, int64(1000), final.BytesDone)
+}
+
+func TestProjection_RelocateFinished_ResetsToIdle(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 1000, FilesTotal: 3})
+		bus.Publish(relocating.RelocateFinished{})
+	})
+	final := last(vms)
+	assert.Equal(t, projection.StageIdle, final.Stage)
+	assert.Equal(t, projection.PhaseIdle, final.Phase)
+	assert.Equal(t, int64(0), final.BytesTotal, "RelocateFinished must reset to a fresh ViewModel — a stale BytesTotal/FilesTotal must not bleed into whatever runs next")
+}
+
+func TestProjection_RelocateFailed_RoutesToFailedWithErrorText(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocateFailed{Err: errors.New("disk full")})
+	})
+	final := last(vms)
+	assert.Equal(t, projection.StageFailed, final.Stage)
+	assert.Equal(t, projection.PhaseFailed, final.Phase)
+	assert.Equal(t, "disk full", final.ErrorText)
+}
+
+// TestProjection_RelocateEventsDuringIdleSession_DoNotResurrectStaleSessionType
+// is the regression test for the bug this addendum fixes: before relocating
+// gained its own dedicated event vocabulary, it published the shared
+// ritual.PlanInfo/UpdateInfo/StartInfo/FinishInfo types, and fold() switches
+// on ritual.PlanInfo by concrete type alone with no Operation check — so a
+// relocate's plan would have landed straight on the session ViewModel. This
+// asserts the actual observable contract instead: relocate's own dedicated
+// types drive Stage/Phase to Relocating, not to any pull/push bucket, no
+// matter what the session last looked like.
+func TestProjection_RelocateEventsDuringIdleSession_DoNotResurrectStaleSessionType(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		// A prior session left the ViewModel idle (the only state relocate's
+		// RUNNING-gate — internal/gui/control/control.go — ever allows a
+		// relocate to start from).
+		bus.Publish(lifecycle.StatusChanged{Status: lifecycle.Idle})
+		bus.Publish(relocating.RelocateStarted{})
+		bus.Publish(relocating.RelocatePlanned{BytesTotal: 500, FilesTotal: 2})
+	})
+	final := last(vms)
+	assert.Equal(t, projection.StageRelocating, final.Stage, "relocate's own Stage must win, never StageDownloading/StageUploading")
+	assert.NotEqual(t, projection.PhaseDownloading, final.Phase)
+	assert.NotEqual(t, projection.PhaseSaving, final.Phase)
 }
