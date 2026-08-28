@@ -28,6 +28,7 @@ import (
 func Build(
 	localStorage, remoteStorage ports.StorageRepository,
 	bus ports.EventBus,
+	runner ports.BlobRunner,
 ) (local, remote []retaining.Job) {
 	logRules := domain.RetentionRules{KeepLast: config.MaxLogFiles}
 
@@ -39,7 +40,7 @@ func Build(
 		),
 		retaining.NewGCRefsJob(
 			"gc-refs-local",
-			refs.NewCollector(localStorage),
+			refs.NewCollector(localStorage, runner),
 		),
 		retaining.NewLogsJob(
 			"logs-local",
@@ -55,7 +56,7 @@ func Build(
 		),
 		retaining.NewGCRefsJob(
 			"gc-refs-remote",
-			refs.NewCollector(remoteStorage),
+			refs.NewCollector(remoteStorage, runner),
 		),
 	}
 	return local, remote

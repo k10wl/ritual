@@ -30,15 +30,22 @@ import (
 //
 // Both behaviors are intentional: GC is eventually-consistent cleanup,
 // not a transaction. A flaky delete must not block the remaining sweep.
+//
+// Orphan deletes fan out through runner (the same ports.BlobRunner used by
+// Pull/Push/Commit/Apply) instead of one-at-a-time — a session with dozens
+// of orphaned blobs was previously paying a full network round-trip per
+// key, serially.
 type Collector struct {
-	store ports.StorageRepository
+	store  ports.StorageRepository
+	runner ports.BlobRunner
 }
 
 // NewCollector wires a Collector. `store` is the side to sweep — local
 // for local-GC-after-amend, remote for remote-GC-after-push. Collector
 // is direction-agnostic; the composition root decides which side to wire.
-func NewCollector(store ports.StorageRepository) *Collector {
-	return &Collector{store: store}
+// runner schedules orphan-delete concurrency.
+func NewCollector(store ports.StorageRepository, runner ports.BlobRunner) *Collector {
+	return &Collector{store: store, runner: runner}
 }
 
 // Collect removes every objects/{hash} not referenced by any refs/*.json
@@ -52,15 +59,20 @@ func (c *Collector) Collect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("refs.Collector.Collect: list objects: %w", err)
 	}
+	var orphans []ports.BlobItem
 	for _, key := range blobKeys {
 		hash := path.Base(key)
-		_, isLive := live[hash]
-		if isLive {
+		if _, isLive := live[hash]; isLive {
 			continue
 		}
-		_ = c.store.Delete(ctx, key)
+		orphans = append(orphans, ports.BlobItem{Key: key})
 	}
-	return nil
+	// fn always returns nil so one flaky delete never trips runner's
+	// first-error cancellation — fail-continue is per-key, not per-batch.
+	return c.runner.Run(ctx, orphans, func(ctx context.Context, key string) error {
+		_ = c.store.Delete(ctx, key)
+		return nil
+	})
 }
 
 func (c *Collector) buildLiveSet(ctx context.Context) (map[string]struct{}, error) {

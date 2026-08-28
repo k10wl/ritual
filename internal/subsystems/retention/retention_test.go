@@ -49,7 +49,7 @@ func TestBuild_PrunesRefsAndSweepsOrphanBlobs(t *testing.T) {
 
 	writeSettings(t, rulesLocal, rulesRemote)
 
-	localJobs, remoteJobs := retention.Build(localStorage, remoteStorage, nil)
+	localJobs, remoteJobs := retention.Build(localStorage, remoteStorage, nil, adapters.NewSerialRunner())
 
 	for _, job := range localJobs {
 		require.NoError(t, job.Run(ctx), "each local retention job must complete cleanly")
