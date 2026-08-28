@@ -39,6 +39,7 @@ import (
 	"ritual/internal/subsystems/logging"
 	"ritual/internal/subsystems/notify"
 	"ritual/internal/subsystems/pipeline"
+	"ritual/internal/subsystems/preprundup"
 	"ritual/internal/subsystems/remote"
 	"ritual/internal/subsystems/retention"
 	"ritual/internal/subsystems/selfupdate"
@@ -223,6 +224,11 @@ func main() { //nolint:gocyclo // composition root — high fanout is structural
 	// behind the notify.Notifier port — wailsNotifier is the only platform seam.
 	stopNotify := notify.Attach(ctx, runtime.bus, &wailsNotifier{svc: notifSvc})
 	defer stopNotify()
+	// Prep/wrap timing recorder (design-log/058): writes prep-history.json
+	// on every completed FlowSession run so the Estimator wired into
+	// buildRuntime's projection.New has data to average on the next launch.
+	stopPrepRecorder := preprundup.Attach(ctx, runtime.bus, preprundup.NewStore())
+	defer stopPrepRecorder()
 	// Live-sync subsystem (design-log/016). 5-min Commit+Push tick during
 	// the Running stage; ServerReadyInfo starts it, lifecycle events stop
 	// it. parentFn tracks pulling.HeadResolvedInfo so the ticker never
@@ -738,7 +744,14 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 	logEmitter := newBatchingLogEmitter()
 
 	addresses := netinfo.NewAddressProvider(settings.Port, netinfo.NewSysInterfaceLister())
-	proj := projection.New(bus, viewEmitter, addresses)
+	// Prep/wrap ETA history (design-log/058): prep-history.json lives beside
+	// settings.json at config.RootPath (the fixed CONTROL root), not the
+	// movable WorkRoot. The estimator only reads it; the recorder (which
+	// writes it) is attached in main() alongside notify.Attach, where ctx
+	// and runtime.bus are both already in scope.
+	prepHistory := preprundup.NewStore()
+	estimator := preprundup.NewEstimator(prepHistory)
+	proj := projection.New(bus, viewEmitter, addresses, estimator)
 	sink := logsink.New(bus, logEmitter)
 
 	// Audit fix #6 (docs/dev-session-2026-04-25-poc-setup.md): the

@@ -28,6 +28,15 @@ type AddressProvider interface {
 	Addresses() []JoinAddress
 }
 
+// Estimator supplies history-derived prep/wrap duration estimates
+// (internal/subsystems/preprundup, design-log/058). Optional — nil-safe,
+// same shape as AddressProvider — so a caller with no history substrate
+// wired up yet still gets a working projection with both ETAs at 0.
+type Estimator interface {
+	PrepEta() time.Duration
+	WrapEta() time.Duration
+}
+
 // Projection subscribes to the bus and folds events into a single ViewModel.
 // pipelineStage tracks the most recent ritual stage name so onTick can gate
 // network-progress writes: a late progress.Tick arriving after the pipeline
@@ -93,6 +102,28 @@ type Projection struct {
 	// displayed uptime only changes because the backend pushed a new value.
 	playingStartedAt time.Time
 
+	// estimator supplies history-derived durations (design-log/058); nil
+	// when no history substrate is wired up (tests, or a caller that opts
+	// out), in which case every *EtaEstimate stays 0 and both countdown
+	// fields never populate — the frontend's zero-fallback copy covers it.
+	//
+	// prepEtaEstimate is snapshotted once per FlowSession run (at
+	// FlowStartedInfo) rather than read live at Acquiring, so it's already
+	// available to add onto the download beat's EtaSeconds (design-log/058
+	// §Q2) before the prep beat itself even begins. prepEtaStartedAt anchors
+	// the countdown once StateChangedInfo{To: Acquiring} actually arrives;
+	// zero means "countdown not active" (guards the Run ticker branch).
+	//
+	// wrapEtaEstimate is fetched at ServerReadyInfo — a full beat ahead of
+	// ServerStoppingInfo, mirroring how prepEtaEstimate is fetched a full
+	// beat ahead of Acquiring — so a concurrent history write can't leave it
+	// stale mid-wrap.
+	estimator        Estimator
+	prepEtaEstimate  time.Duration
+	prepEtaStartedAt time.Time
+	wrapEtaEstimate  time.Duration
+	wrapEtaStartedAt time.Time
+
 	// nextSeq stamps a strictly increasing ViewModel.Seq on every emit
 	// (design-log/051 Q11). ExecuteScript(script, nil) — the Wails/WebView2
 	// call that delivers each emit to the frontend — is fire-and-forget and
@@ -106,9 +137,9 @@ type Projection struct {
 
 // New subscribes to bus immediately and returns a Projection ready for Run.
 // Subscribing here (not in Run) avoids the race where callers publish before
-// the Run goroutine manages to attach. AddressProvider may be nil; Addresses
-// stays empty if so.
-func New(bus ports.EventBus, emitter Emitter, addresses AddressProvider) *Projection {
+// the Run goroutine manages to attach. AddressProvider and Estimator may
+// both be nil; Addresses stays empty and both ETA fields stay 0 if so.
+func New(bus ports.EventBus, emitter Emitter, addresses AddressProvider, estimator Estimator) *Projection {
 	ch, unsub := bus.Subscribe()
 	return &Projection{
 		ch:         ch,
@@ -116,6 +147,7 @@ func New(bus ports.EventBus, emitter Emitter, addresses AddressProvider) *Projec
 		emitter:    emitter,
 		publish:    bus.Publish,
 		addresses:  addresses,
+		estimator:  estimator,
 		state:      ViewModel{Stage: StageIdle, Phase: PhaseIdle},
 		activeFlow: ritual.FlowSession,
 	}
@@ -169,12 +201,9 @@ func (p *Projection) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-uptimeTicker.C:
-			if p.state.Phase != PhasePlaying {
+			if !p.tickEtaCountdowns() {
 				continue
 			}
-			p.mu.Lock()
-			p.state.UptimeSeconds = int64(time.Since(p.playingStartedAt).Seconds())
-			p.mu.Unlock()
 			p.emit()
 		case evt, ok := <-p.ch:
 			if !ok {
@@ -190,6 +219,42 @@ func (p *Projection) Run(ctx context.Context) {
 	}
 }
 
+// tickEtaCountdowns is the uptimeTicker's 1Hz callback (design-log/050
+// pattern, extended by design-log/058): advances whichever backend-driven
+// countdown applies to the current phase — UptimeSeconds while
+// PhasePlaying, PrepEtaSeconds while PhasePreparing, WrapEtaSeconds while
+// PhaseWrapping — and reports whether anything changed so Run only emits
+// when a ticker branch actually applies. A phase with no active countdown
+// (e.g. PhaseDownloading, PhaseIdle) is a no-op tick, same cost the
+// original PhasePlaying-only gate already paid.
+func (p *Projection) tickEtaCountdowns() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch {
+	case p.state.Phase == PhasePlaying:
+		p.state.UptimeSeconds = int64(time.Since(p.playingStartedAt).Seconds())
+	case p.state.Phase == PhasePreparing && !p.prepEtaStartedAt.IsZero():
+		p.state.PrepEtaSeconds = remainingSeconds(p.prepEtaEstimate, p.prepEtaStartedAt)
+		p.state.Progress = prepProgress(int64(p.prepEtaEstimate.Seconds()), p.state.PrepEtaSeconds)
+	case p.state.Phase == PhaseWrapping && !p.wrapEtaStartedAt.IsZero():
+		p.state.WrapEtaSeconds = remainingSeconds(p.wrapEtaEstimate, p.wrapEtaStartedAt)
+	default:
+		return false
+	}
+	return true
+}
+
+// remainingSeconds floors at 0 rather than going negative — once the real
+// event (ServerReadyInfo / StatusChanged{Done}) fires the beat ends anyway,
+// so a countdown that runs past its estimate just sits at 0 until then.
+func remainingSeconds(estimate time.Duration, startedAt time.Time) int64 {
+	remaining := estimate - time.Since(startedAt)
+	if remaining < 0 {
+		return 0
+	}
+	return int64(remaining.Seconds())
+}
+
 // fold mutates p.state based on evt and reports whether the event was
 // relevant. Irrelevant events return false to avoid emitting duplicates.
 func (p *Projection) fold(evt ports.Event) bool {
@@ -198,6 +263,7 @@ func (p *Projection) fold(evt ports.Event) bool {
 		// Internal-only: records which flow is in flight for onStateChanged.
 		// Paints nothing itself, so report no change (no redundant emit).
 		p.activeFlow = e.Flow
+		p.onFlowStarted(e.Flow)
 		return false
 	case ritual.StateChangedInfo:
 		p.onStateChanged(e.To)
@@ -223,6 +289,7 @@ func (p *Projection) fold(evt ports.Event) bool {
 		if p.addresses != nil {
 			p.state.Addresses = p.addresses.Addresses()
 		}
+		p.onPrepBeatOver()
 	case running.ServerStoppingInfo:
 		// User-driven shutdown begun. Flip bucket to uploading + phase to
 		// wrapping; addresses are no longer useful so drop them.
@@ -230,6 +297,9 @@ func (p *Projection) fold(evt ports.Event) bool {
 		p.state.Phase = PhaseWrapping
 		p.state.Addresses = nil
 		p.state.UptimeSeconds = 0
+		// Seed the backend-driven wrap countdown (design-log/058).
+		p.wrapEtaStartedAt = time.Now()
+		p.state.WrapEtaSeconds = int64(p.wrapEtaEstimate.Seconds())
 	case acquiring.LockHeldInfo:
 		// Lock-held merely records the holder; the actual UI transition fires
 		// when lifecycle reports Failed (the acquiring stage routes to failed
@@ -268,10 +338,20 @@ func (p *Projection) onPlanInfo(e ritual.PlanInfo) {
 	// the duration of the transfer stage. Setting Progress = 100
 	// here gives arcFromBytes a value to fall back on when bytesTotal
 	// is zero, so the dial reads complete-on-arrival immediately.
-	if e.BytesTotal == 0 && e.FilesTotal == 0 {
-		p.state.Progress = 100
-	} else {
+	//
+	// FlowSession with a real prep estimate (design-log/058 addendum): land
+	// at prepSplitPercent instead of 100 — the download beat is "complete"
+	// but the ring still owes the prep beat's 20%, and prepProgress picks
+	// up from here once Acquiring seeds the countdown. No Tick will ever
+	// correct this (empty delta means none fire), so this is the only
+	// place that can anchor it.
+	switch {
+	case e.BytesTotal != 0 || e.FilesTotal != 0:
 		p.state.Progress = 0
+	case p.pipelineStage == ritual.StagePulling && p.activeFlow == ritual.FlowSession && p.prepEtaEstimate > 0:
+		p.state.Progress = prepSplitPercent
+	default:
+		p.state.Progress = 100
 	}
 	// BytesTotal can change here independent of any Tick — the very first
 	// render after a plan arrives, before the first Tick fires. Refresh so
@@ -542,6 +622,27 @@ func (p *Projection) onTick(t progress.Tick) bool {
 	p.state.SpeedMbps = s.Average
 	p.state.LogicalMbps = s.DataAverage
 	p.state.EtaSeconds = p.etaFromSessionAvg(t.Elapsed, done)
+	// Fold the upcoming prep beat's estimate onto the download beat's own
+	// ETA (design-log/058 §Q2), so what's shown while bytes are still
+	// flowing already reads "time until playable," not just "time until
+	// bytes land." FlowSession only — a standalone FlowDownload never
+	// proceeds to a prep beat, and prepEtaEstimate is 0 for every other
+	// flow anyway (FlowStartedInfo only populates it for FlowSession).
+	if p.pipelineStage == ritual.StagePulling && p.state.Phase == PhaseDownloading &&
+		p.activeFlow == ritual.FlowSession && p.state.EtaSeconds > 0 {
+		p.state.EtaSeconds += int64(p.prepEtaEstimate.Seconds())
+	}
+	// Combined download+prep ring fill (design-log/058 addendum): Progress
+	// is normally frontend-derived from BytesDone/BytesTotal for a transfer
+	// beat (design-log/050 §C), but the 0→80→100 handoff across two phases
+	// needs the prep estimate, which only the backend has — so this one
+	// case computes the percentage here instead, and the frontend just
+	// reads vm.progress directly (dumb projection, no ratio math for this).
+	// StagePulling only: StagePushing's Progress stays frontend-derived,
+	// unchanged.
+	if p.pipelineStage == ritual.StagePulling && p.state.BytesTotal > 0 {
+		p.state.Progress = downloadProgress(float64(done)/float64(p.state.BytesTotal), p.prepEtaEstimate > 0)
+	}
 	// Stalled: a heartbeat tick (Instant==0) arriving while bytes are still
 	// owed (BytesDone < BytesTotal) means the transfer is mid-flight but the
 	// link has gone quiet — an R2 PutStream blocked on a TCP retransmit. The
@@ -627,14 +728,25 @@ func (p *Projection) onStateChanged(to string) {
 		// downloading phase.
 		p.state.Stage = StageDownloading
 		p.state.Phase = PhasePreparing
+		p.seedPrepCountdownIfAcquiring(to)
 	case ritual.StageRunning:
 		// Stay in downloading bucket / preparing phase until ServerReady
 		// actually fires — see design-log/017 §Prep→Run boundary. The bucket
 		// flip happens in onFold for ServerReadyInfo, not here.
 		p.state.Stage = StageDownloading
 		p.state.Phase = PhasePreparing
-		p.state.Progress, p.state.BytesDone, p.state.BytesTotal = 0, 0, 0
+		p.state.BytesDone, p.state.BytesTotal = 0, 0
 		p.state.FilesDone, p.state.FilesTotal = 0, 0
+		// Progress is NOT zeroed here (unlike Bytes*/Files* above): Acquiring
+		// already seeded it to prepSplitPercent moments earlier via
+		// seedPrepCountdownIfAcquiring, and Running fires right after —
+		// zeroing it here would flash the ring back to 0% for one frame
+		// before the next tick recomputed it (design-log/058 addendum, the
+		// exact "gitter" this recompute avoids). Recompute from the current
+		// countdown state instead of leaving the seeded value untouched, so
+		// this stays correct even if some time already elapsed between the
+		// two events.
+		p.state.Progress = prepProgress(int64(p.prepEtaEstimate.Seconds()), p.state.PrepEtaSeconds)
 		p.refreshFormattedFields()
 	case ritual.StageCommitting:
 		p.state.Stage = StageUploading
@@ -665,6 +777,7 @@ func (p *Projection) onStatusChanged(e lifecycle.StatusChanged) {
 		p.everReady = false
 		p.pipelineStage = ""
 		p.activeFlow = ritual.FlowSession
+		p.resetEtaEstimates()
 	case lifecycle.Failed:
 		lockHolder := p.state.LockHolder
 		errText := ""
@@ -680,6 +793,111 @@ func (p *Projection) onStatusChanged(e lifecycle.StatusChanged) {
 		p.everReady = false
 		p.pipelineStage = ""
 		p.activeFlow = ritual.FlowSession
+		p.resetEtaEstimates()
 	case lifecycle.Running:
 	}
+}
+
+// seedPrepCountdownIfAcquiring starts the backend-driven prep countdown
+// (design-log/058) when the stage transition landing on PhasePreparing is
+// specifically Acquiring (not Probing) for FlowSession — the only flow that
+// reaches this call site with a real prep beat ahead of it (FlowUpload's own
+// Acquiring returns early in onStateChanged's activeFlow switch, above,
+// before ever reaching this branch) and the only flow prepEtaEstimate is
+// ever populated for (onFlowStarted). Split out of onStateChanged's shared
+// Acquiring/Probing case to keep its cyclomatic complexity down.
+func (p *Projection) seedPrepCountdownIfAcquiring(to string) {
+	if to != ritual.StageAcquiring || p.activeFlow != ritual.FlowSession {
+		return
+	}
+	p.prepEtaStartedAt = time.Now()
+	p.state.PrepEtaSeconds = int64(p.prepEtaEstimate.Seconds())
+	// Seed the ring fill at exactly prepSplitPercent (remaining==total here
+	// -> elapsedFraction 0) so it continues smoothly from wherever the
+	// download beat left off, with no reset/flash (design-log/058 addendum).
+	p.state.Progress = prepProgress(int64(p.prepEtaEstimate.Seconds()), p.state.PrepEtaSeconds)
+}
+
+// onFlowStarted snapshots the prep estimate a full beat ahead of Acquiring
+// (design-log/058 §Q2) so it's already available to add onto the download
+// beat's EtaSeconds in onTick. FlowSession only — no other flow proceeds to
+// a real prep beat afterward. Split out of fold to keep its cyclomatic
+// complexity down.
+func (p *Projection) onFlowStarted(flow ritual.Flow) {
+	p.prepEtaEstimate = 0
+	p.prepEtaStartedAt = time.Time{}
+	if flow == ritual.FlowSession && p.estimator != nil {
+		p.prepEtaEstimate = p.estimator.PrepEta()
+	}
+}
+
+// onPrepBeatOver stops the prep countdown and fetches the wrap estimate a
+// full beat ahead of ServerStoppingInfo, mirroring onFlowStarted's prep
+// fetch (design-log/058). Split out of fold's ServerReadyInfo case to keep
+// its cyclomatic complexity down.
+func (p *Projection) onPrepBeatOver() {
+	p.state.PrepEtaSeconds = 0
+	p.prepEtaStartedAt = time.Time{}
+	p.wrapEtaEstimate = 0
+	if p.estimator != nil {
+		p.wrapEtaEstimate = p.estimator.WrapEta()
+	}
+}
+
+// prepSplitPercent is where the download beat's Progress fill hands off to
+// the prep beat's fill, so the ring reads as one continuous 0→100 climb
+// across both beats instead of two separate plateaus (design-log/058
+// addendum). This whole computation is backend-only — the frontend reads
+// vm.progress as a plain percentage and does no ratio math of its own
+// (user directive: "frontend is just a dumb projection"). It only ever
+// takes effect when p.prepEtaEstimate is a real, previously-measured
+// duration for this machine (never a fabricated placeholder): with no
+// history yet — first FlowSession run ever, or a standalone FlowDownload
+// that never proceeds to a prep beat at all — downloadProgress and
+// prepProgress both fall back to their pre-058 behavior (download climbs
+// the full 0→100 itself; prep holds flat at 100, matching the old
+// `arc: () => 1` plateau).
+const prepSplitPercent = 80
+
+// downloadProgress scales a raw bytesDone/bytesTotal fraction (already
+// clamped to [0,1] by the caller) into the download beat's share of the
+// combined ring.
+func downloadProgress(fraction float64, hasPrepEstimate bool) int {
+	if hasPrepEstimate {
+		return int(fraction * prepSplitPercent)
+	}
+	return int(fraction * 100)
+}
+
+// prepProgress derives the prep beat's fill from the same countdown state
+// PrepEtaSeconds already drives: totalSeconds is the beat's fixed starting
+// estimate (0 = no real history), remainingSeconds ticks down to 0 as the
+// beat proceeds (both already computed elsewhere — this is pure arithmetic
+// on numbers the projection already owns, not a new data source).
+func prepProgress(totalSeconds, remainingSeconds int64) int {
+	if totalSeconds <= 0 {
+		return 100
+	}
+	elapsedFraction := 1.0
+	if remainingSeconds > 0 {
+		elapsedFraction = 1 - float64(remainingSeconds)/float64(totalSeconds)
+	}
+	if elapsedFraction < 0 {
+		elapsedFraction = 0
+	}
+	if elapsedFraction > 1 {
+		elapsedFraction = 1
+	}
+	return prepSplitPercent + int(float64(100-prepSplitPercent)*elapsedFraction)
+}
+
+// resetEtaEstimates clears the prep/wrap countdown anchors alongside the
+// terminal ViewModel resets above — the ViewModel fields already zero
+// through the fresh ViewModel{} literal; these are the internal-only
+// (non-ViewModel) anchors that must not survive into the next run.
+func (p *Projection) resetEtaEstimates() {
+	p.prepEtaEstimate = 0
+	p.prepEtaStartedAt = time.Time{}
+	p.wrapEtaEstimate = 0
+	p.wrapEtaStartedAt = time.Time{}
 }

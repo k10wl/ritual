@@ -37,14 +37,28 @@ type staticAddresses struct{ list []projection.JoinAddress }
 
 func (s staticAddresses) Addresses() []projection.JoinAddress { return s.list }
 
+// fakeEstimator returns fixed durations — stands in for
+// internal/subsystems/preprundup.Estimator so tests can exercise the
+// backend-computed download+prep ring split (design-log/058 addendum)
+// without a real history file.
+type fakeEstimator struct{ prep, wrap time.Duration }
+
+func (f fakeEstimator) PrepEta() time.Duration { return f.prep }
+func (f fakeEstimator) WrapEta() time.Duration { return f.wrap }
+
 func runProjection(t *testing.T, addrs projection.AddressProvider, publish func(bus ports.EventBus)) []projection.ViewModel {
+	t.Helper()
+	return runProjectionWithEstimator(t, addrs, nil, publish)
+}
+
+func runProjectionWithEstimator(t *testing.T, addrs projection.AddressProvider, estimator projection.Estimator, publish func(bus ports.EventBus)) []projection.ViewModel {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer cancel()
 
 	bus := adapters.NewEventBus(64)
 	rec := &recorder{}
-	p := projection.New(bus, rec, addrs)
+	p := projection.New(bus, rec, addrs, estimator)
 
 	done := make(chan struct{})
 	go func() {
@@ -82,7 +96,7 @@ func TestProjection_InitialEmit_IsIdle(t *testing.T) {
 
 	bus := adapters.NewEventBus(16)
 	rec := &recorder{}
-	p := projection.New(bus, rec, nil)
+	p := projection.New(bus, rec, nil, nil)
 
 	done := make(chan struct{})
 	go func() { p.Run(ctx); close(done) }()
@@ -295,6 +309,96 @@ func TestProjection_PlanInfoWithZeroDelta_AnchorsProgressTo100(t *testing.T) {
 	assert.Equal(t, 100, final.Progress, "Empty-delta plan must anchor Progress=100 so arcFromBytes resolves the dial to complete-on-arrival when bytesTotal is zero — without this anchor the dial would stick at 0%% for the duration of the transfer stage (no Ticks fire when no blob streams). Design-log/019.")
 }
 
+// --- design-log/058 addendum: backend-computed download+prep ring split ---
+// Progress is normally left frontend-derived from BytesDone/BytesTotal
+// during a transfer beat (the two tests above); these cover the one case
+// where the backend takes over — a FlowSession run with a real prep
+// history estimate, where Progress must span 0->80 (download) then
+// 80->100 (prep) as one continuous backend-computed percentage.
+
+func TestProjection_DownloadTick_ScalesProgressTo80PercentWhenPrepEstimateExists(t *testing.T) {
+	vms := runProjectionWithEstimator(t, nil, fakeEstimator{prep: 20 * time.Second}, func(bus ports.EventBus) {
+		bus.Publish(ritual.FlowStartedInfo{Flow: ritual.FlowSession})
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(ritual.PlanInfo{Operation: "pull", BytesTotal: 1000})
+		bus.Publish(progress.Tick{Remote: progress.Side{Down: progress.Stream{Data: 500}}})
+	})
+	final := last(vms)
+	assert.Equal(t, 40, final.Progress, "50%% of bytes with a real prep estimate on deck must land at 50%% of the 80%% download share (=40), not 50%% of the full ring")
+}
+
+func TestProjection_DownloadTick_UnscaledProgressWithoutPrepEstimate(t *testing.T) {
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.FlowStartedInfo{Flow: ritual.FlowSession})
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(ritual.PlanInfo{Operation: "pull", BytesTotal: 1000})
+		bus.Publish(progress.Tick{Remote: progress.Side{Down: progress.Stream{Data: 500}}})
+	})
+	final := last(vms)
+	assert.Equal(t, 50, final.Progress, "no estimator wired up (nil, as in every other existing test) must leave Progress unscaled — no invented split without real history")
+}
+
+func TestProjection_DownloadTick_UnscaledProgressForStandaloneDownloadFlow(t *testing.T) {
+	// FlowDownload never proceeds to a prep beat, so even with real prep
+	// history sitting in the estimator (left over from past FlowSession
+	// runs), a standalone Download must not be capped at 80%.
+	vms := runProjectionWithEstimator(t, nil, fakeEstimator{prep: 20 * time.Second}, func(bus ports.EventBus) {
+		bus.Publish(ritual.FlowStartedInfo{Flow: ritual.FlowDownload})
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(ritual.PlanInfo{Operation: "pull", BytesTotal: 1000})
+		bus.Publish(progress.Tick{Remote: progress.Side{Down: progress.Stream{Data: 500}}})
+	})
+	final := last(vms)
+	assert.Equal(t, 50, final.Progress, "FlowDownload must reach 100%% on its own — the split only applies to FlowSession, since only FlowSession proceeds into a prep beat afterward")
+}
+
+func TestProjection_EmptyDeltaPlan_AnchorsToPrepSplitWhenEstimateExists(t *testing.T) {
+	vms := runProjectionWithEstimator(t, nil, fakeEstimator{prep: 20 * time.Second}, func(bus ports.EventBus) {
+		bus.Publish(ritual.FlowStartedInfo{Flow: ritual.FlowSession})
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
+		bus.Publish(ritual.PlanInfo{Operation: "pull", BytesTotal: 0, FilesTotal: 0})
+	})
+	final := last(vms)
+	assert.Equal(t, 80, final.Progress, "empty-delta download with a real prep estimate on deck must anchor at 80, not 100 — the ring still owes the prep beat's 20%%, and no Tick will ever correct this (empty delta means none fire)")
+}
+
+func TestProjection_Acquiring_SeedsProgressAt80WhenPrepEstimateExists(t *testing.T) {
+	vms := runProjectionWithEstimator(t, nil, fakeEstimator{prep: 20 * time.Second}, func(bus ports.EventBus) {
+		bus.Publish(ritual.FlowStartedInfo{Flow: ritual.FlowSession})
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StageAcquiring})
+	})
+	final := last(vms)
+	assert.Equal(t, projection.PhasePreparing, final.Phase)
+	assert.Equal(t, 80, final.Progress, "the prep beat's ring fill must seed at exactly prepSplitPercent (remaining==total at t=0) so it continues smoothly from wherever the download beat left off")
+	assert.Equal(t, int64(20), final.PrepEtaSeconds, "PrepEtaSeconds must seed from the estimator's PrepEta()")
+}
+
+func TestProjection_Acquiring_ProgressStaysAt100WithoutPrepEstimate(t *testing.T) {
+	// No estimator wired up: legacy plateau-at-full behavior (the old
+	// `arc: () => 1` the frontend used before this feature existed) must be
+	// preserved — never a fabricated 80%% split with nothing to animate.
+	vms := runProjection(t, nil, func(bus ports.EventBus) {
+		bus.Publish(ritual.FlowStartedInfo{Flow: ritual.FlowSession})
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StageAcquiring})
+	})
+	final := last(vms)
+	assert.Equal(t, 100, final.Progress, "no real prep history must never produce an invented 80%% split")
+	assert.Equal(t, int64(0), final.PrepEtaSeconds)
+}
+
+func TestProjection_Running_DoesNotResetProgressAfterAcquiringSeededIt(t *testing.T) {
+	// StateChangedInfo{To: Running} fires immediately after Acquiring in a
+	// real run; it must not flash Progress back to 0 before the next tick
+	// recomputes it (the exact glitch this recompute-in-place avoids).
+	vms := runProjectionWithEstimator(t, nil, fakeEstimator{prep: 20 * time.Second}, func(bus ports.EventBus) {
+		bus.Publish(ritual.FlowStartedInfo{Flow: ritual.FlowSession})
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StageAcquiring})
+		bus.Publish(ritual.StateChangedInfo{To: ritual.StageRunning})
+	})
+	final := last(vms)
+	assert.Equal(t, 80, final.Progress, "Running must not zero Progress after Acquiring already seeded it")
+}
+
 func TestProjection_TickInPullingStage_PopulatesSpeedMbps(t *testing.T) {
 	vms := runProjection(t, nil, func(bus ports.EventBus) {
 		bus.Publish(ritual.StateChangedInfo{To: ritual.StagePulling})
@@ -402,7 +506,7 @@ func TestProjection_StageChange_ClearsStalled(t *testing.T) {
 func TestProjection_Snapshot_ReturnsCurrentState(t *testing.T) {
 	bus := adapters.NewEventBus(16)
 	rec := &recorder{}
-	p := projection.New(bus, rec, nil)
+	p := projection.New(bus, rec, nil, nil)
 	snap := p.Snapshot()
 	assert.Equal(t, projection.StageIdle, snap.Stage, "Snapshot before Run must return Idle — consumers rely on this to render the first frame before the subscriber loop starts")
 	assert.Equal(t, projection.PhaseIdle, snap.Phase, "initial Phase must be Idle so the dial chooses the play glyph")
