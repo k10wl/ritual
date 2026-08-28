@@ -152,6 +152,18 @@ type ViewModel struct {
 	// the frontend still decides *how* to render it. Design-log/050.
 	UptimeSeconds int64 `json:"uptimeSeconds"`
 
+	// PrepEtaSeconds / WrapEtaSeconds are backend-ticked countdowns for the
+	// two invisible session beats (design-log/058, superseding 027 §Q8's
+	// static-ETA decision): PrepEtaSeconds counts down once a second while
+	// Phase stays PhasePreparing, WrapEtaSeconds while Phase stays
+	// PhaseWrapping — same "backend pushes, frontend only formats" pattern
+	// as UptimeSeconds above, driven by the same Run ticker. Both seeded
+	// from history-derived estimates (internal/subsystems/preprundup) at
+	// beat entry and floored at 0; 0 outside the relevant phase or when no
+	// history exists yet (frontend falls back to static copy).
+	PrepEtaSeconds int64 `json:"prepEtaSeconds"`
+	WrapEtaSeconds int64 `json:"wrapEtaSeconds"`
+
 	// TargetVersion is the semver the autoupdate is moving to during
 	// PhasePreflight/PhaseUpdating — the dial renders "Updating → v{TargetVersion}".
 	// Empty outside the update flow. Design-log/037.
@@ -194,7 +206,8 @@ type Snap struct{ ViewModel }
 func (s Snap) String() string {
 	vm := s.ViewModel
 	return fmt.Sprintf(
-		"[snap] stage=%s phase=%s eta=%ds done=%d/%d speed=%.2fMbps stalled=%v",
-		vm.Stage, vm.Phase, vm.EtaSeconds, vm.BytesDone, vm.BytesTotal, vm.SpeedMbps, vm.Stalled,
+		"[snap] stage=%s phase=%s progress=%d%% eta=%ds done=%d/%d speed=%.2fMbps stalled=%v prepEta=%ds wrapEta=%ds",
+		vm.Stage, vm.Phase, vm.Progress, vm.EtaSeconds, vm.BytesDone, vm.BytesTotal, vm.SpeedMbps, vm.Stalled,
+		vm.PrepEtaSeconds, vm.WrapEtaSeconds,
 	)
 }

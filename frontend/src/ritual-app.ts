@@ -138,6 +138,20 @@ function arcFromBytes(vm: ViewModel): number {
 	return Math.min(1, Math.max(0, vm.bytesDone / vm.bytesTotal));
 }
 
+// progressArc is a pure unit conversion (percent -> 0..1), nothing more.
+// PhaseDownloading and PhasePreparing together form one continuous 0->100
+// ring fill (download owns 0->80, prep owns 80->100 once a real prep
+// history estimate exists) — but that split, and the elapsed-fraction math
+// driving prep's share of it, is computed entirely backend-side
+// (internal/gui/projection/projection.go's downloadProgress/prepProgress,
+// design-log/058 addendum). The frontend does no ratio math for this at
+// all — vm.progress already IS the answer; this function only rescales it
+// from a percentage to the arc's 0..1 range, same as arcFromBytes's own
+// empty-delta fallback below does for the same field.
+function progressArc(vm: ViewModel): number {
+	return Math.max(0, Math.min(1, vm.progress / 100));
+}
+
 // ETA reads vm.etaSeconds directly — computed Go-side from the beat-wide
 // average rate and already monotone non-increasing within a beat
 // (design-log/028). No division here: deriving it from the volatile
@@ -204,7 +218,7 @@ const PHASE_VIEW: Record<Phase, DialView> = {
 		glyph: "download",
 		label: "Downloading",
 		underSlot: "telemetry",
-		arc: arcFromBytes,
+		arc: progressArc,
 		sub: etaSub,
 	},
 	[Phase.PhasePreparing]: {
@@ -212,8 +226,14 @@ const PHASE_VIEW: Record<Phase, DialView> = {
 		glyph: "brain-cog",
 		label: "Spinning up",
 		underSlot: null,
-		arc: () => 1,
-		sub: () => "Almost live",
+		arc: progressArc,
+		// prepEtaSeconds ticks down once a second, pushed by a backend ticker
+		// (design-log/058, mirrors the PhasePlaying uptimeSeconds pattern
+		// below) — the frontend runs no clock of its own, just formats
+		// whatever was last pushed. 0 means no history yet on this machine —
+		// static "Almost live" copy per design-log/027 §Q4 (honest absence
+		// of data beats a placeholder or a fake number).
+		sub: (vm) => (vm.prepEtaSeconds > 0 ? formatEta(vm.prepEtaSeconds) : "Almost live"),
 	},
 	[Phase.PhasePlaying]: {
 		state: "run",
@@ -229,10 +249,13 @@ const PHASE_VIEW: Record<Phase, DialView> = {
 	[Phase.PhaseWrapping]: {
 		state: "final",
 		glyph: "unplug",
-		label: "Spinning down",
+		label: "Saving worlds",
 		underSlot: null,
 		arc: () => 0,
-		sub: () => "Going offline",
+		// wrapEtaSeconds mirrors prepEtaSeconds above — backend-ticked
+		// countdown, static "Almost done" copy when there's no history yet.
+		// Design-log/027 (label + fallback copy) + design-log/058 (countdown).
+		sub: (vm) => (vm.wrapEtaSeconds > 0 ? formatEta(vm.wrapEtaSeconds) : "Almost done"),
 	},
 	[Phase.PhaseSaving]: {
 		state: "final",

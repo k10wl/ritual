@@ -46,10 +46,13 @@ export class DialCycleDemo extends LitElement {
         });
         tl.to(a, { v: 1, duration: TRANSFER_S, ease: "power2.out", onUpdate: writeProgress });
 
-        // Preparing (apply + acquire + boot; arc plateau at 1)
+        // Preparing (apply + acquire + boot; arc plateau at 1). Real app sub
+        // is a backend-ticked countdown ("prepEtaSeconds", design-log/058)
+        // once history exists; "Almost live" is the first-run fallback
+        // (see PhasePreparingFirstRun below).
         tl.call(() => {
             this.state = "prep"; this.glyph = "brain-cog"; this.label = "Spinning up";
-            this.arc = 1; this.sub = "Almost live";
+            this.arc = 1; this.sub = "0:14";
         });
         tl.to({}, { duration: PHASE_S });
 
@@ -60,10 +63,13 @@ export class DialCycleDemo extends LitElement {
         });
         tl.to({}, { duration: PLATEAU_S });
 
-        // Wrapping (ServerStopping + Committing; arc plateau at 0)
+        // Wrapping (ServerStopping + Committing; arc plateau at 0). Label +
+        // countdown per design-log/027 (copy) + design-log/058 (backend
+        // ticker); "Almost done" is the first-run fallback (see
+        // PhaseWrappingFirstRun below).
         tl.call(() => {
-            this.state = "final"; this.glyph = "unplug"; this.label = "Spinning down";
-            this.arc = 0; this.sub = "Going offline";
+            this.state = "final"; this.glyph = "unplug"; this.label = "Saving worlds";
+            this.arc = 0; this.sub = "0:28";
         });
         tl.to({}, { duration: PHASE_S });
 
@@ -253,7 +259,17 @@ export const PhaseDownloading = () => html`
         label="Downloading" sub="about 1 minute"></ritual-dial>
 `;
 
+// prepEtaSeconds ticking countdown vs. the no-history static fallback
+// (design-log/058 for the countdown; design-log/027 §Q4 for the "Almost
+// live" copy — honest absence of data beats a placeholder or fake number).
+// Both are real states the dial renders, so both get a story rather than
+// picking one.
 export const PhasePreparing = () => html`
+    <ritual-dial state="prep" .arc=${1} glyph="brain-cog"
+        label="Spinning up" sub="0:14"></ritual-dial>
+`;
+
+export const PhasePreparingFirstRun = () => html`
     <ritual-dial state="prep" .arc=${1} glyph="brain-cog"
         label="Spinning up" sub="Almost live"></ritual-dial>
 `;
@@ -263,9 +279,16 @@ export const PhasePlaying = () => html`
         label="Live" sub="0:00:42"></ritual-dial>
 `;
 
+// "Saving worlds" label (design-log/027) + wrapEtaSeconds countdown vs. the
+// no-history static "Almost done" fallback.
 export const PhaseWrapping = () => html`
     <ritual-dial state="final" .arc=${0} glyph="unplug"
-        label="Spinning down" sub="Going offline"></ritual-dial>
+        label="Saving worlds" sub="0:28"></ritual-dial>
+`;
+
+export const PhaseWrappingFirstRun = () => html`
+    <ritual-dial state="final" .arc=${0} glyph="unplug"
+        label="Saving worlds" sub="Almost done"></ritual-dial>
 `;
 
 export const PhaseSaving = () => html`
