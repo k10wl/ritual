@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"path/filepath"
 	"ritual/internal/config"
 	"testing"
 
@@ -20,7 +21,11 @@ func TestResolveWorkRoot_AbsolutePathIsUsedAsIs(t *testing.T) {
 	config.RootPath = "/tmp/ritual-root-fixture"
 	defer func() { config.RootPath = original }()
 
-	assert.Equal(t, "/tmp/ritual-content-fixture", config.ResolveWorkRoot("/tmp/ritual-content-fixture"), "an explicit absolute work_root must be used as-is")
+	// t.TempDir() rather than a hardcoded "/tmp/..." string: filepath.IsAbs
+	// requires a drive letter on Windows, so a Unix-style literal is never
+	// absolute there and this assertion would fail on every Windows runner.
+	absoluteContentPath := filepath.Join(t.TempDir(), "ritual-content-fixture")
+	assert.Equal(t, absoluteContentPath, config.ResolveWorkRoot(absoluteContentPath), "an explicit absolute work_root must be used as-is")
 }
 
 func TestResolveWorkRoot_RelativePathFallsBackToRootPath(t *testing.T) {

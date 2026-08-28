@@ -94,6 +94,13 @@ func TestIntegration_ChangeWorkRoot_NonDefaultDestination_ContentSetMoves_Contro
 
 	oldWorkDir := filepath.Join(t.TempDir(), "old-content")
 	refs := workrootNewRefs(t, oldWorkDir)
+	// A successful ChangeWorkRoot swaps refs.Root to a NEW os.Root opened on
+	// dst — workrootNewRefs' own t.Cleanup only closes the ORIGINAL root it
+	// captured, so the swapped-in root is never closed and Windows' t.TempDir()
+	// cleanup fails to remove dst ("used by another process"). A plain defer
+	// runs before any t.Cleanup-registered TempDir removal, so close whatever
+	// refs.Root currently holds.
+	defer func() { _ = refs.Root.Load().Close() }()
 	config.WorkRoot = oldWorkDir
 	require.NoError(t, (&domain.Settings{Port: 25565, Memory: 4096, MinRAMMB: 1, MinDiskMB: 1, MinJavaVersion: 1, WorkRoot: oldWorkDir}).Save())
 
@@ -118,9 +125,9 @@ func TestIntegration_ChangeWorkRoot_NonDefaultDestination_ContentSetMoves_Contro
 	assert.FileExists(t, filepath.Join(config.RootPath, "lock"), "lock is CONTROL — it must stay at config.RootPath")
 	assert.NoDirExists(t, filepath.Join(dst, "lock"), "lock must never be copied into the content root")
 
-	onDisk, err := os.ReadFile(filepath.Join(config.RootPath, domain.SettingsFilename))
+	onDisk, err := domain.LoadSettings()
 	require.NoError(t, err)
-	assert.Contains(t, string(onDisk), dst, "the persisted settings.json must record the new work_root")
+	assert.Equal(t, dst, onDisk.WorkRoot, "the persisted settings.json must record the new work_root")
 }
 
 func mustOpenRoot(t *testing.T, dir string) *os.Root {
@@ -137,11 +144,18 @@ func TestIntegration_ChangeWorkRoot_EndToEnd_ServerCmdBuilderFollowsTheSwap(t *t
 
 	oldWorkDir := filepath.Join(t.TempDir(), "old-content")
 	refs := workrootNewRefs(t, oldWorkDir)
+	defer func() { _ = refs.Root.Load().Close() }()
 	config.WorkRoot = oldWorkDir
 	workrootWriteWorkdirFile(t, refs, "server/start.bat", []byte("java -jar server.jar %1"))
 	require.NoError(t, (&domain.Settings{Port: 25565, Memory: 4096, MinRAMMB: 1, MinDiskMB: 1, MinJavaVersion: 1, StartScript: "start.bat", WorkRoot: oldWorkDir}).Save())
 
 	svc, cmdBuilderRef := workrootNewControlService(refs, projection.PhaseIdle)
+	// The NEW builder ChangeWorkRoot swaps in below lazily caches an open
+	// os.Root on the new server/ directory the first time Build() is called
+	// (below) — SwappableCmdBuilder.Close() releases it, same reason as the
+	// refs.Root defer above (Windows won't let t.TempDir() remove a directory
+	// that still has an open handle).
+	defer func() { _ = cmdBuilderRef.Close() }()
 	oldBuilder, err := adapters.NewServerCmdBuilder(filepath.Join(oldWorkDir, config.ServerDir), "start.bat", func() (*domain.ServerRuntime, error) {
 		return domain.NewServerRuntime(25565, 4096)
 	})
@@ -209,6 +223,7 @@ func TestIntegration_ChangeWorkRoot_CrashAfterSettingsWrite_NewRootActiveOldOrph
 
 	oldWorkDir := filepath.Join(t.TempDir(), "old-content")
 	refs := workrootNewRefs(t, oldWorkDir)
+	defer func() { _ = refs.Root.Load().Close() }()
 	config.WorkRoot = oldWorkDir
 	objKey := workrootWriteObject(t, refs, []byte("world blob"))
 
@@ -258,6 +273,7 @@ func TestIntegration_ChangeWorkRoot_ConcurrentReadDuringSwap_NeverObservesHalfOl
 
 	oldWorkDir := filepath.Join(t.TempDir(), "old-content")
 	refs := workrootNewRefs(t, oldWorkDir)
+	defer func() { _ = refs.Root.Load().Close() }()
 	config.WorkRoot = oldWorkDir
 	content := []byte("stable server.properties content")
 	workrootWriteWorkdirFile(t, refs, "server/server.properties", content)
@@ -305,6 +321,7 @@ func TestIntegration_ResetWorkRoot_MovesBackToDefaultRootPath(t *testing.T) {
 
 	customWorkDir := filepath.Join(t.TempDir(), "custom-content")
 	refs := workrootNewRefs(t, customWorkDir)
+	defer func() { _ = refs.Root.Load().Close() }()
 	config.WorkRoot = customWorkDir
 	require.NoError(t, (&domain.Settings{Port: 25565, Memory: 4096, MinRAMMB: 1, MinDiskMB: 1, MinJavaVersion: 1, WorkRoot: customWorkDir}).Save())
 	objKey := workrootWriteObject(t, refs, []byte("world blob"))

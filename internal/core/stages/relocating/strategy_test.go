@@ -115,6 +115,15 @@ func TestRelocating_SuccessfulMove_ContentLandsAtDestinationAndOldRootIsRemoved(
 	withScratchWorkRoot(t)
 
 	refs := newSourceRefs(t)
+	// A successful relocate swaps refs.Root to a NEW os.Root opened on dst
+	// (a t.TempDir() subdirectory) — newSourceRefs' own t.Cleanup only closes
+	// the ORIGINAL root it captured, so without this the swapped-in root is
+	// never closed and Windows' t.TempDir() cleanup fails to remove dst
+	// ("used by another process"). A plain defer (not t.Cleanup) runs before
+	// any t.Cleanup-registered TempDir removal, regardless of registration
+	// order, so it must close whatever refs.Root currently holds, not the
+	// value captured at this point in time.
+	defer func() { _ = refs.Root.Load().Close() }()
 	oldDir := refs.Root.Load().Name()
 	objKey := writeObject(t, refs, []byte("blob content"))
 	refKey := writeRef(t, refs, "2026-08-10T00-00-00.000Z")
@@ -183,6 +192,11 @@ func TestRelocating_FirstRelocateFromDefaultRoot_PreservesControlFiles(t *testin
 	workdirRef := adapters.NewSwappableStorage()
 	workdirRef.Store(workdir)
 	refs := relocating.WorkRootRefs{Root: rootRef, Local: localRef, Workdir: workdirRef}
+	// See the comment on the equivalent defer in
+	// TestRelocating_SuccessfulMove_ContentLandsAtDestinationAndOldRootIsRemoved —
+	// a successful relocate swaps refs.Root to a new os.Root that must be
+	// closed before t.TempDir() cleanup tries to remove dst.
+	defer func() { _ = refs.Root.Load().Close() }()
 
 	require.NoError(t, domain.DefaultSettings().Save(), "a real install always has settings.json at RootPath before any relocate")
 	lockPath := filepath.Join(config.RootPath, "lock")
@@ -220,6 +234,7 @@ func TestRelocating_EmptyObjectBlob_PassesVerify(t *testing.T) {
 	withScratchWorkRoot(t)
 
 	refs := newSourceRefs(t)
+	defer func() { _ = refs.Root.Load().Close() }()
 	objKey := writeObject(t, refs, []byte{})
 
 	dst := filepath.Join(t.TempDir(), "content")
@@ -246,6 +261,7 @@ func TestRelocating_EmptyWorldsFile_PassesVerify(t *testing.T) {
 	withScratchWorkRoot(t)
 
 	refs := newSourceRefs(t)
+	defer func() { _ = refs.Root.Load().Close() }()
 	key := writeWorkdirFile(t, refs, "worlds/world/DIM-1/poi/r.-2.-2.mca", []byte{})
 
 	dst := filepath.Join(t.TempDir(), "content")
@@ -434,6 +450,7 @@ func TestRelocating_PublishesStartPlanUpdateFinishEventsOnBus(t *testing.T) {
 	withScratchWorkRoot(t)
 
 	refs := newSourceRefs(t)
+	defer func() { _ = refs.Root.Load().Close() }()
 	writeObject(t, refs, []byte("blob content"))
 
 	dst := filepath.Join(t.TempDir(), "content")

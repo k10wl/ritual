@@ -105,6 +105,13 @@ func TestControlService_ChangeWorkRoot_Success_UpdatesConfigWorkRootAndSettings(
 	withScratchRoots(t, config.RootPath)
 	require.NoError(t, domain.DefaultSettings().Save(), "seed a settings.json so ChangeWorkRoot's internal domain.LoadSettings succeeds")
 	refs := newWorkRootRefs(t)
+	// A successful ChangeWorkRoot swaps refs.Root to a NEW os.Root opened on
+	// dst (a t.TempDir() subdirectory) — newWorkRootRefs' own t.Cleanup only
+	// closes the ORIGINAL root it captured, so the swapped-in root is never
+	// closed and Windows' t.TempDir() cleanup fails to remove dst ("used by
+	// another process"). A plain defer runs before any t.Cleanup-registered
+	// TempDir removal, so close whatever refs.Root currently holds.
+	defer func() { _ = refs.Root.Load().Close() }()
 
 	svc := control.NewControlService(nil, fakeSnapshotSource{phase: projection.PhaseIdle}, nil, nil, nil, nil)
 	svc.SetWorkRoot(refs, adapters.NewSwappableCmdBuilder(), nil)
@@ -113,9 +120,9 @@ func TestControlService_ChangeWorkRoot_Success_UpdatesConfigWorkRootAndSettings(
 	require.NoError(t, svc.ChangeWorkRoot(dst))
 
 	assert.Equal(t, dst, config.WorkRoot, "a successful ChangeWorkRoot must update the in-process config.WorkRoot")
-	onDisk, err := os.ReadFile(domain.SettingsPath())
+	onDisk, err := domain.LoadSettings()
 	require.NoError(t, err)
-	assert.Contains(t, string(onDisk), dst, "a successful ChangeWorkRoot must durably persist the new work_root")
+	assert.Equal(t, dst, onDisk.WorkRoot, "a successful ChangeWorkRoot must durably persist the new work_root")
 }
 
 func TestControlService_ChangeWorkRoot_WhileDownloading_RejectedNoStateChanged(t *testing.T) {
@@ -135,6 +142,7 @@ func TestControlService_ChangeWorkRoot_WhileFailed_Allowed(t *testing.T) {
 	withScratchRoots(t, config.RootPath)
 	require.NoError(t, domain.DefaultSettings().Save())
 	refs := newWorkRootRefs(t)
+	defer func() { _ = refs.Root.Load().Close() }()
 
 	svc := control.NewControlService(nil, fakeSnapshotSource{phase: projection.PhaseFailed}, nil, nil, nil, nil)
 	svc.SetWorkRoot(refs, adapters.NewSwappableCmdBuilder(), nil)
@@ -167,6 +175,7 @@ func TestControlService_ChangeWorkRoot_ConcurrentCalls_SecondRejected(t *testing
 	withScratchRoots(t, config.RootPath)
 	require.NoError(t, domain.DefaultSettings().Save())
 	refs := newWorkRootRefs(t)
+	defer func() { _ = refs.Root.Load().Close() }()
 	putValidObject(t, refs, []byte("blob content"))
 
 	release := make(chan struct{})
@@ -198,6 +207,7 @@ func TestControlService_Start_WhileChangeWorkRootInFlight_Rejected(t *testing.T)
 	withScratchRoots(t, config.RootPath)
 	require.NoError(t, domain.DefaultSettings().Save())
 	refs := newWorkRootRefs(t)
+	defer func() { _ = refs.Root.Load().Close() }()
 	putValidObject(t, refs, []byte("blob content"))
 
 	release := make(chan struct{})
@@ -229,6 +239,7 @@ func TestControlService_ResetWorkRoot_MovesBackToConfigRootPath(t *testing.T) {
 	withScratchRoots(t, config.RootPath)
 	require.NoError(t, (&domain.Settings{WorkRoot: filepath.Join(t.TempDir(), "elsewhere"), MinRAMMB: 1, MinDiskMB: 1, MinJavaVersion: 1, Port: 25565, Memory: 4096}).Save())
 	refs := newWorkRootRefs(t)
+	defer func() { _ = refs.Root.Load().Close() }()
 
 	svc := control.NewControlService(nil, fakeSnapshotSource{phase: projection.PhaseIdle}, nil, nil, nil, nil)
 	svc.SetWorkRoot(refs, adapters.NewSwappableCmdBuilder(), nil)

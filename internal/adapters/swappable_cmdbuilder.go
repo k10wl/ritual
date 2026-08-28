@@ -23,9 +23,33 @@ func NewSwappableCmdBuilder() *SwappableCmdBuilder {
 	return &SwappableCmdBuilder{}
 }
 
-// Store swaps the backing builder. inner must not be nil.
+// Store swaps the backing builder, closing the outgoing one first if it
+// implements io.Closer — ServerCmdBuilder lazily caches an open os.Root on
+// its server/ sandbox (Build's first call), and a relocate replacing it via
+// ChangeWorkRoot must not leak that handle: on Windows an open directory
+// handle blocks removal/relocation of the directory it points at.
 func (s *SwappableCmdBuilder) Store(inner ports.CmdBuilder) {
-	s.p.Store(&inner)
+	old := s.p.Swap(&inner)
+	if old == nil {
+		return
+	}
+	if closer, ok := (*old).(io.Closer); ok {
+		_ = closer.Close()
+	}
+}
+
+// Close releases the currently active builder's resources, if it implements
+// io.Closer. Callers (and tests) that tear this facade down before process
+// exit must call it, for the same reason Store closes the outgoing builder.
+func (s *SwappableCmdBuilder) Close() error {
+	current := s.p.Load()
+	if current == nil {
+		return nil
+	}
+	if closer, ok := (*current).(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 func (s *SwappableCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io.Writer) (*exec.Cmd, error) {
