@@ -608,7 +608,7 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 	// objects/. Uses the same refs.Collector the Retaining stage's GC job uses,
 	// so the cleanup semantics are identical to a normal sync's prune — once
 	// per side, since each side has its own object store.
-	localCollector := refs.NewCollector(localStorage)
+	localCollector := refs.NewCollector(localStorage, runner)
 	localDeleter := func(ctx context.Context, id domain.RefID) error {
 		key := "refs/" + string(id) + ".json"
 		if err := localStorage.Delete(ctx, key); err != nil {
@@ -623,7 +623,7 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 	// anything"). Same shape, distinct store. The collector sweep on remote
 	// objects/ removes blobs no surviving remote ref pins; no remote lock is
 	// held (v1 trade-off — cross-client coordination is deferred).
-	remoteCollector := refs.NewCollector(remoteStorage)
+	remoteCollector := refs.NewCollector(remoteStorage, runner)
 	remoteDeleter := func(ctx context.Context, id domain.RefID) error {
 		key := "refs/" + string(id) + ".json"
 		if err := remoteStorage.Delete(ctx, key); err != nil {
@@ -684,7 +684,7 @@ func buildRuntime() (*guiRuntime, error) { //nolint:gocyclo // composition root 
 
 	readiness := adapters.NewTCPReadinessCheck(fmt.Sprintf("127.0.0.1:%d", settings.Port), bus)
 
-	localRets, remoteRets := retention.Build(localStorage, remoteStorage, bus)
+	localRets, remoteRets := retention.Build(localStorage, remoteStorage, bus, runner)
 
 	// Local + remote lock stack: lock.Both calls the local lease first so
 	// a same-host PID that already grabbed <root>/lock cannot pin a remote
