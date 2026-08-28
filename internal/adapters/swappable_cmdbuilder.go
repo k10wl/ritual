@@ -52,6 +52,7 @@ func (s *SwappableCmdBuilder) Close() error {
 	return nil
 }
 
+// Build forwards to the currently active backing builder.
 func (s *SwappableCmdBuilder) Build(ctx context.Context, stdin io.Reader, stdout io.Writer) (*exec.Cmd, error) {
 	return (*s.p.Load()).Build(ctx, stdin, stdout)
 }

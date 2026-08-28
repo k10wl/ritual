@@ -240,27 +240,7 @@ func (p *Projection) fold(evt ports.Event) bool {
 	case progress.Tick:
 		return p.onTick(e)
 	case ritual.PlanInfo:
-		p.state.BytesTotal = e.BytesTotal
-		p.state.FilesTotal = e.FilesTotal
-		// A fresh plan means more (or different) work: re-baseline the ETA beat
-		// so the monotonic guard re-anchors against the new BytesTotal instead
-		// of clamping to a stale estimate. Design-log/028 §Q4/Q10.
-		p.resetEtaBeat()
-		// Empty delta — everything already present at destination per the
-		// pre-flight list (design-log/019). No Ticks will fire because no
-		// blob streams, so without this anchor the bar would sit at 0/0 for
-		// the duration of the transfer stage. Setting Progress = 100
-		// here gives arcFromBytes a value to fall back on when bytesTotal
-		// is zero, so the dial reads complete-on-arrival immediately.
-		if e.BytesTotal == 0 && e.FilesTotal == 0 {
-			p.state.Progress = 100
-		} else {
-			p.state.Progress = 0
-		}
-		// BytesTotal can change here independent of any Tick — the very first
-		// render after a plan arrives, before the first Tick fires. Refresh so
-		// SizeTotalText isn't stale against the new plan (design-log/050).
-		p.refreshFormattedFields()
+		p.onPlanInfo(e)
 	case lifecycle.StatusChanged:
 		p.onStatusChanged(e)
 	default:
@@ -271,6 +251,32 @@ func (p *Projection) fold(evt ports.Event) bool {
 		return p.foldUpdate(evt)
 	}
 	return true
+}
+
+// onPlanInfo folds a fresh ritual.PlanInfo — split out of fold to keep fold's
+// own cyclomatic complexity under budget (gocyclo).
+func (p *Projection) onPlanInfo(e ritual.PlanInfo) {
+	p.state.BytesTotal = e.BytesTotal
+	p.state.FilesTotal = e.FilesTotal
+	// A fresh plan means more (or different) work: re-baseline the ETA beat
+	// so the monotonic guard re-anchors against the new BytesTotal instead
+	// of clamping to a stale estimate. Design-log/028 §Q4/Q10.
+	p.resetEtaBeat()
+	// Empty delta — everything already present at destination per the
+	// pre-flight list (design-log/019). No Ticks will fire because no
+	// blob streams, so without this anchor the bar would sit at 0/0 for
+	// the duration of the transfer stage. Setting Progress = 100
+	// here gives arcFromBytes a value to fall back on when bytesTotal
+	// is zero, so the dial reads complete-on-arrival immediately.
+	if e.BytesTotal == 0 && e.FilesTotal == 0 {
+		p.state.Progress = 100
+	} else {
+		p.state.Progress = 0
+	}
+	// BytesTotal can change here independent of any Tick — the very first
+	// render after a plan arrives, before the first Tick fires. Refresh so
+	// SizeTotalText isn't stale against the new plan (design-log/050).
+	p.refreshFormattedFields()
 }
 
 // foldUpdate folds the observed.Update* stream into the gray Preflight dial

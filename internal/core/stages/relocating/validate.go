@@ -9,9 +9,13 @@ import (
 )
 
 var (
-	ErrDestNotDirectory  = errors.New("relocating: destination exists and is not a directory")
-	ErrDestNotWritable   = errors.New("relocating: destination is not writable")
+	// ErrDestNotDirectory is returned when the destination exists and is not a directory.
+	ErrDestNotDirectory = errors.New("relocating: destination exists and is not a directory")
+	// ErrDestNotWritable is returned when the destination cannot be written to.
+	ErrDestNotWritable = errors.New("relocating: destination is not writable")
+	// ErrDestIsCurrentRoot is returned when the destination equals the current work root.
 	ErrDestIsCurrentRoot = errors.New("relocating: destination equals the current work root")
+	// ErrDestInsideCurrent is returned when the destination is nested inside the current work root.
 	ErrDestInsideCurrent = errors.New("relocating: destination is inside the current work root")
 )
 
@@ -104,7 +108,7 @@ func isSubPath(parent, child string) bool {
 func checkWritable(dir string) error {
 	f, err := os.CreateTemp(dir, ".relocate-write-test-*")
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDestNotWritable, err)
+		return fmt.Errorf("%w: %w", ErrDestNotWritable, err)
 	}
 	name := f.Name()
 	_ = f.Close()

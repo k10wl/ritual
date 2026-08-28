@@ -46,30 +46,37 @@ func (s *SwappableStorage) String() string {
 	return "swappable::unset"
 }
 
+// GetStream forwards to the currently active backing repository.
 func (s *SwappableStorage) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
 	return s.Current().GetStream(ctx, key)
 }
 
+// PutStream forwards to the currently active backing repository.
 func (s *SwappableStorage) PutStream(ctx context.Context, key string, body io.Reader) error {
 	return s.Current().PutStream(ctx, key, body)
 }
 
+// Exists forwards to the currently active backing repository.
 func (s *SwappableStorage) Exists(ctx context.Context, key string) (bool, error) {
 	return s.Current().Exists(ctx, key)
 }
 
+// Delete forwards to the currently active backing repository.
 func (s *SwappableStorage) Delete(ctx context.Context, key string) error {
 	return s.Current().Delete(ctx, key)
 }
 
+// DeleteBatch forwards to the currently active backing repository.
 func (s *SwappableStorage) DeleteBatch(ctx context.Context, keys []string) error {
 	return s.Current().DeleteBatch(ctx, keys)
 }
 
+// List forwards to the currently active backing repository.
 func (s *SwappableStorage) List(ctx context.Context, prefix string) ([]string, error) {
 	return s.Current().List(ctx, prefix)
 }
 
+// Copy forwards to the currently active backing repository.
 func (s *SwappableStorage) Copy(ctx context.Context, sourceKey string, destKey string) error {
 	return s.Current().Copy(ctx, sourceKey, destKey)
 }
