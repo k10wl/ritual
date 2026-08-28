@@ -1120,13 +1120,14 @@ func TestIntegration_Prune_BothInstancesExecute(t *testing.T) {
 	// test only counts retain StartInfo events, not pruning outcomes, so the
 	// scope-driven engine with whatever rules are on disk runs both jobs either
 	// way. One seeded ref survives any sane KeepLast.
+	pruneRunner := adapters.NewSerialRunner()
 	r.localRetentions = []retaining.Job{
 		retaining.NewRetentionRefsJob("refs-local", retention.NewRefsRetention(r.local, retention.ScopeLocal), r.local),
-		retaining.NewGCRefsJob("gc-refs-local", refs.NewCollector(r.local)),
+		retaining.NewGCRefsJob("gc-refs-local", refs.NewCollector(r.local, pruneRunner)),
 	}
 	r.remoteRetentions = []retaining.Job{
 		retaining.NewRetentionRefsJob("refs-remote", retention.NewRefsRetention(r.local, retention.ScopeRemote), r.local),
-		retaining.NewGCRefsJob("gc-refs-remote", refs.NewCollector(r.local)),
+		retaining.NewGCRefsJob("gc-refs-remote", refs.NewCollector(r.local, pruneRunner)),
 	}
 
 	drain := collectBusEvents(r.bus)
@@ -1167,7 +1168,7 @@ func TestIntegration_Retention_BuildWiresLocalAndRemoteJobs_BothSidesEmitSplitEv
 	}).Save(),
 		"settings.Save must succeed before the run — the prune jobs read rules via domain.LoadSettings at prune time (design-log/039)")
 
-	localJobs, remoteJobs := subretention.Build(r.local, r.local, r.bus)
+	localJobs, remoteJobs := subretention.Build(r.local, r.local, r.bus, adapters.NewSerialRunner())
 	require.Len(t, localJobs, 3,
 		"local side must wire three Jobs in order: refs retention, refs GC, logs retention. Length drift means a slot is missing or duplicated; Strategy iterates the slice verbatim, so a missing Job silently skips a sweep")
 	require.Len(t, remoteJobs, 2,

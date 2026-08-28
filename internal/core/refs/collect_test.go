@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"ritual/internal/adapters"
 	"ritual/internal/core/domain"
 	"ritual/internal/core/refs"
 	"testing"
@@ -41,7 +42,7 @@ func TestCollector_DeletesBlobsNotReferencedByAnyRef(t *testing.T) {
 	orphanKey := "objects/" + hashHex("ORPHAN")
 	store.put(t, orphanKey, []byte("ORPHAN"))
 
-	collector := refs.NewCollector(store.storage)
+	collector := refs.NewCollector(store.storage, adapters.NewSerialRunner())
 	err := collector.Collect(ctx)
 
 	require.NoError(t, err,
@@ -68,7 +69,7 @@ func TestCollector_KeepsBlobsReferencedByAnyRef(t *testing.T) {
 	ref := sampleRef("2026-04-22T10-00-00.000Z", files)
 	seedRemote(t, store, ref, files)
 
-	collector := refs.NewCollector(store.storage)
+	collector := refs.NewCollector(store.storage, adapters.NewSerialRunner())
 	require.NoError(t, collector.Collect(ctx),
 		"GC over a store where every blob is referenced must succeed")
 
@@ -99,7 +100,7 @@ func TestCollector_RetainsBlobStillReferencedAfterAnotherRefDeleted(t *testing.T
 	require.NoError(t, store.storage.Delete(ctx, "refs/"+string(refA.Timestamp)+".json"),
 		"fixture: deleting refA before GC mimics the retention stage picking to drop refA")
 
-	collector := refs.NewCollector(store.storage)
+	collector := refs.NewCollector(store.storage, adapters.NewSerialRunner())
 	require.NoError(t, collector.Collect(ctx),
 		"GC after retention drop must succeed")
 
@@ -128,7 +129,7 @@ func TestCollector_IsIdempotentAcrossReruns(t *testing.T) {
 	seedRemote(t, store, ref, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 	store.put(t, "objects/"+hashHex("ORPHAN"), []byte("ORPHAN"))
 
-	collector := refs.NewCollector(store.storage)
+	collector := refs.NewCollector(store.storage, adapters.NewSerialRunner())
 	require.NoError(t, collector.Collect(ctx),
 		"first GC run must succeed and sweep the orphan")
 
@@ -145,7 +146,7 @@ func TestCollector_IsNoOpOnEmptyStore(t *testing.T) {
 
 	store := newFSBundle(t)
 
-	collector := refs.NewCollector(store.storage)
+	collector := refs.NewCollector(store.storage, adapters.NewSerialRunner())
 	err := collector.Collect(ctx)
 
 	require.NoError(t, err,
@@ -171,7 +172,7 @@ func TestCollector_SweepsAllBlobsWhenOnlyRefReferencesNoObjects(t *testing.T) {
 	orphanKey := "objects/" + hashHex("ORPHAN")
 	store.put(t, orphanKey, []byte("ORPHAN"))
 
-	collector := refs.NewCollector(store.storage)
+	collector := refs.NewCollector(store.storage, adapters.NewSerialRunner())
 	require.NoError(t, collector.Collect(ctx),
 		"GC with a ref that references no objects must succeed — empty Objects is a valid shape even if rare")
 
@@ -194,7 +195,7 @@ func TestCollector_SkipsMalformedRefsAndSweepsFromSurvivingRefsLiveSet(t *testin
 	orphanKey := "objects/" + hashHex("ORPHAN")
 	store.put(t, orphanKey, []byte("ORPHAN"))
 
-	collector := refs.NewCollector(store.storage)
+	collector := refs.NewCollector(store.storage, adapters.NewSerialRunner())
 	require.NoError(t, collector.Collect(ctx),
 		"§Retention and GC fail-continue: a malformed ref must not abort the sweep — the surviving refs' live set still defines reachable blobs")
 
@@ -223,7 +224,7 @@ func TestCollector_SurfacesErrorWhenListingRefsFails(t *testing.T) {
 	store.put(t, orphanKey, []byte("ORPHAN"))
 	store.listFail["refs/"] = errors.New("simulated transient refs list failure")
 
-	collector := refs.NewCollector(store)
+	collector := refs.NewCollector(store, adapters.NewSerialRunner())
 	err := collector.Collect(ctx)
 
 	require.Error(t, err,
@@ -250,7 +251,7 @@ func TestCollector_SurfacesErrorWhenListingObjectsFails(t *testing.T) {
 	seedRemote(t, inner, liveRef, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 	store.listFail["objects/"] = errors.New("simulated transient objects list failure")
 
-	collector := refs.NewCollector(store)
+	collector := refs.NewCollector(store, adapters.NewSerialRunner())
 	err := collector.Collect(ctx)
 
 	require.Error(t, err,
@@ -277,7 +278,7 @@ func TestCollector_ContinuesSweepWhenAnIndividualDeleteFails(t *testing.T) {
 	store.put(t, reapableOrphanKey, []byte("REAPABLE"))
 	store.deleteFail[stuckOrphanKey] = errors.New("simulated delete failure")
 
-	collector := refs.NewCollector(store)
+	collector := refs.NewCollector(store, adapters.NewSerialRunner())
 	require.NoError(t, collector.Collect(ctx),
 		"§Retention and GC line 2842 'Delete failures → fail-continue': one delete error must not surface as Collect's error or halt the sweep")
 
@@ -304,7 +305,7 @@ func TestCollector_PreservesLiveBlobsWhenReadingARefTransientlyFails(t *testing.
 	seedRemote(t, inner, liveRef, map[string][]byte{"worlds/level.dat": []byte("AAAA")})
 	store.getFail["refs/"+string(liveRef.Timestamp)+".json"] = errors.New("simulated transient ref read failure")
 
-	collector := refs.NewCollector(store)
+	collector := refs.NewCollector(store, adapters.NewSerialRunner())
 	err := collector.Collect(ctx)
 
 	require.Error(t, err,
