@@ -31,6 +31,9 @@ type Settings struct {
 	LocalRetention  RetentionRules `json:"local_retention"`
 	RemoteRetention RetentionRules `json:"remote_retention"`
 	LoadedRefID     RefID          `json:"loaded_ref_id"`
+	// WorkRoot is the content root (objects/refs/server/worlds,
+	// design-log/055); empty ⇒ default (= config.RootPath).
+	WorkRoot string `json:"work_root"`
 }
 
 // DefaultStartScript is the launcher filename when settings.start_script is
@@ -97,7 +100,11 @@ func LoadSettings() (*Settings, error) {
 	return &settings, nil
 }
 
-// Save saves settings to the settings file with pretty formatting
+// Save saves settings to the settings file with pretty formatting.
+// Writes atomically (temp file + fsync + rename) so a crash mid-write can
+// never corrupt the on-disk file — settings.WorkRoot is the one durable
+// fact design-log/055's relocate commit step depends on surviving a hard
+// process kill.
 func (s *Settings) Save() error {
 	path := SettingsPath()
 
@@ -106,8 +113,35 @@ func (s *Settings) Save() error {
 		return fmt.Errorf("failed to marshal settings: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, config.FilePermission); err != nil {
-		return fmt.Errorf("failed to write settings file: %w", err)
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".settings-*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temp settings file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("failed to write temp settings file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("failed to fsync temp settings file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to close temp settings file: %w", err)
+	}
+	if err := os.Chmod(tmpPath, config.FilePermission); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to chmod temp settings file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to rename settings file into place: %w", err)
 	}
 
 	return nil
@@ -134,6 +168,9 @@ func (s *Settings) Validate() error {
 	}
 	if s.MinJavaVersion <= 0 {
 		return errors.New("min_java_version must be positive")
+	}
+	if s.WorkRoot != "" && !filepath.IsAbs(s.WorkRoot) {
+		return errors.New("work_root must be an absolute path")
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"ritual/internal/core/ritual"
 	"ritual/internal/core/stages/acquiring"
 	"ritual/internal/core/stages/pulling"
+	"ritual/internal/core/stages/relocating"
 	"ritual/internal/core/stages/running"
 	"ritual/internal/subsystems/lifecycle"
 	"sync"
@@ -239,34 +240,43 @@ func (p *Projection) fold(evt ports.Event) bool {
 	case progress.Tick:
 		return p.onTick(e)
 	case ritual.PlanInfo:
-		p.state.BytesTotal = e.BytesTotal
-		p.state.FilesTotal = e.FilesTotal
-		// A fresh plan means more (or different) work: re-baseline the ETA beat
-		// so the monotonic guard re-anchors against the new BytesTotal instead
-		// of clamping to a stale estimate. Design-log/028 §Q4/Q10.
-		p.resetEtaBeat()
-		// Empty delta — everything already present at destination per the
-		// pre-flight list (design-log/019). No Ticks will fire because no
-		// blob streams, so without this anchor the bar would sit at 0/0 for
-		// the duration of the transfer stage. Setting Progress = 100
-		// here gives arcFromBytes a value to fall back on when bytesTotal
-		// is zero, so the dial reads complete-on-arrival immediately.
-		if e.BytesTotal == 0 && e.FilesTotal == 0 {
-			p.state.Progress = 100
-		} else {
-			p.state.Progress = 0
-		}
-		// BytesTotal can change here independent of any Tick — the very first
-		// render after a plan arrives, before the first Tick fires. Refresh so
-		// SizeTotalText isn't stale against the new plan (design-log/050).
-		p.refreshFormattedFields()
+		p.onPlanInfo(e)
 	case lifecycle.StatusChanged:
 		p.onStatusChanged(e)
 	default:
+		if p.foldRelocate(evt) {
+			return true
+		}
 		// Autoupdate (design-log/037) and anything else the projection ignores.
 		return p.foldUpdate(evt)
 	}
 	return true
+}
+
+// onPlanInfo folds a fresh ritual.PlanInfo — split out of fold to keep fold's
+// own cyclomatic complexity under budget (gocyclo).
+func (p *Projection) onPlanInfo(e ritual.PlanInfo) {
+	p.state.BytesTotal = e.BytesTotal
+	p.state.FilesTotal = e.FilesTotal
+	// A fresh plan means more (or different) work: re-baseline the ETA beat
+	// so the monotonic guard re-anchors against the new BytesTotal instead
+	// of clamping to a stale estimate. Design-log/028 §Q4/Q10.
+	p.resetEtaBeat()
+	// Empty delta — everything already present at destination per the
+	// pre-flight list (design-log/019). No Ticks will fire because no
+	// blob streams, so without this anchor the bar would sit at 0/0 for
+	// the duration of the transfer stage. Setting Progress = 100
+	// here gives arcFromBytes a value to fall back on when bytesTotal
+	// is zero, so the dial reads complete-on-arrival immediately.
+	if e.BytesTotal == 0 && e.FilesTotal == 0 {
+		p.state.Progress = 100
+	} else {
+		p.state.Progress = 0
+	}
+	// BytesTotal can change here independent of any Tick — the very first
+	// render after a plan arrives, before the first Tick fires. Refresh so
+	// SizeTotalText isn't stale against the new plan (design-log/050).
+	p.refreshFormattedFields()
 }
 
 // foldUpdate folds the observed.Update* stream into the gray Preflight dial
@@ -315,6 +325,66 @@ func (p *Projection) foldUpdate(evt ports.Event) bool {
 	return true
 }
 
+// foldRelocate folds relocating's own event stream (internal/core/stages/
+// relocating/events.go) into StageRelocating/PhaseRelocating (design-log/055
+// addendum). Split out of fold the same way foldUpdate is, and reached via
+// the same default-branch delegate chain — relocate publishes dedicated
+// Relocate* types rather than the generic ritual.StartInfo/PlanInfo/
+// UpdateInfo/FinishInfo/ErrorInfo pull/push use, so this can never collide
+// with (or need to filter) the session-flow cases above it.
+func (p *Projection) foldRelocate(evt ports.Event) bool {
+	switch e := evt.(type) {
+	case relocating.RelocateStarted:
+		p.state = ViewModel{Stage: StageRelocating, Phase: PhaseRelocating}
+		p.resetEtaBeat()
+	case relocating.RelocatePlanned:
+		p.state.BytesTotal = e.BytesTotal
+		p.state.FilesTotal = e.FilesTotal
+		p.state.FilesDone = 0
+		// Empty relocate (nothing to copy — e.g. a fresh install with no
+		// content yet): no RelocateProgress will ever fire, so plateau
+		// complete-on-arrival the same way PlanInfo's empty-delta branch
+		// does for pull/push.
+		if e.BytesTotal == 0 && e.FilesTotal == 0 {
+			p.state.Progress = 100
+		} else {
+			p.state.Progress = 0
+		}
+		p.refreshFormattedFields()
+	case relocating.RelocateProgress:
+		p.state.FilesDone = e.FilesDone
+		p.state.FilesTotal = e.FilesTotal
+		// BytesDone reads straight off the event's live CounterStorage tap
+		// (copy.go) rather than an estimate — real bytes actually flushed to
+		// disk, so arcFromBytes/SizeDoneText/EtaSeconds all keep moving
+		// mid-file instead of jumping only at file boundaries (design-log/056
+		// follow-up, 2026-08-15).
+		p.state.BytesDone = e.BytesDone
+		if e.FilesTotal > 0 {
+			p.state.Progress = e.FilesDone * 100 / e.FilesTotal
+		}
+		p.state.EtaSeconds = p.etaFromSessionAvg(e.Elapsed, p.state.BytesDone)
+		p.refreshFormattedFields()
+	case relocating.RelocateVerifying, relocating.RelocateCommitting:
+		// Fixed-cost tail work with no counter of its own — the frontend
+		// detects the copying→tail handoff via FilesDone>=FilesTotal, the
+		// same pattern PhaseSaving already uses for bytesDone>=bytesTotal.
+		// Plateau explicitly rather than relying on the last
+		// RelocateProgress having landed exactly at 100/FilesTotal.
+		p.state.Progress = 100
+		p.state.FilesDone = p.state.FilesTotal
+		p.state.BytesDone = p.state.BytesTotal
+		p.refreshFormattedFields()
+	case relocating.RelocateFinished:
+		p.state = ViewModel{Stage: StageIdle, Phase: PhaseIdle}
+	case relocating.RelocateFailed:
+		p.state = ViewModel{Stage: StageFailed, Phase: PhaseFailed, ErrorText: e.Err.Error()}
+	default:
+		return false
+	}
+	return true
+}
+
 // resetEtaBeat re-anchors the ETA beat and clears the current estimate. Called
 // on every stage change and PlanInfo so the next Tick re-baselines the
 // beat-wide average against the current plan; clearing EtaSeconds to 0 also
@@ -325,17 +395,46 @@ func (p *Projection) resetEtaBeat() {
 	p.state.EtaSeconds = 0
 }
 
-// etaFromSessionAvg derives a stable remaining-time estimate from the beat-wide
+// etaWindowSeconds bounds how far back the beat-wide average in
+// etaFromSessionAvg looks. Chosen to match progress.Ticker's own
+// DefaultWindowN=5 at its 1-tick-per-second cadence — the same "5-ish
+// seconds of history" the rest of the app already treats as the rolling
+// window. Rather than a hard cliff (drop everything older than N seconds),
+// the anchor slides forward once dt crosses this so recent throughput still
+// gets folded in smoothly on the next sample instead of being discarded.
+const etaWindowSeconds = 5.0
+
+// etaFromSessionAvg derives a stable remaining-time estimate from a beat-wide
 // average rate rather than the volatile rolling rate (design-log/028 §Q2). The
 // first Tick of a beat only anchors (elapsed + bytes already counted) and
 // returns 0 — the dial shows the decoder placeholder until a second Tick gives
 // a positive elapsed delta, the ~3-5s grace window of design-log/009 §Q5.
 // Thereafter rate = (done - anchorBytes) / (elapsed - anchorElapsed); ETA =
-// remaining / rate. Monotone non-increasing within a beat (§Q10): never climbs
-// above the previous estimate — only PlanInfo/stage change (via resetEtaBeat)
-// lets it grow, because then there is literally more work. Returns 0 (→ no
-// estimate) for an empty plan, a completed beat, or a non-positive sample so
-// the frontend never renders a fake or infinite number.
+// remaining / rate.
+//
+// The anchor is NOT the beat's absolute start — see design-log/056 follow-up
+// (2026-08-15): relocate's local-disk copy showed the estimate frozen at the
+// same integer for 30+ real seconds while hundreds of MB visibly flowed. Root
+// cause was purely mathematical, not a stale-event bug: an average taken
+// since the operation's absolute start becomes less sensitive to new samples
+// as elapsed grows (each additional second is a shrinking fraction of the
+// total), and a local copy's throughput is naturally bursty — an initial
+// burst into the OS write-back cache reads as a high rate, then real disk I/O
+// throttles it — so the lifetime average decayed slowly enough that
+// remaining/rate kept rounding to the same second for a long stretch. Once
+// accumulated elapsed-since-anchor (dt) crosses etaWindowSeconds, the anchor
+// slides forward to the current (elapsed, done) so the NEXT sample's rate
+// reflects recent throughput, not the whole history — pull/push aren't
+// visibly affected by this (network transfers are comparatively uniform,
+// rarely span the width of one window this unevenly), so widening this to a
+// window rather than a hard lifetime average is a strict improvement shared
+// by both without changing their observed behavior.
+//
+// Monotone non-increasing within a window (§Q10): never climbs above the
+// previous estimate — only PlanInfo/stage change (via resetEtaBeat) lets it
+// grow, because then there is literally more work. Returns 0 (→ no estimate)
+// for an empty plan, a completed beat, or a non-positive sample so the
+// frontend never renders a fake or infinite number.
 func (p *Projection) etaFromSessionAvg(elapsed time.Duration, done int64) int64 {
 	if !p.etaBeatStarted {
 		p.etaBeatStarted = true
@@ -350,12 +449,16 @@ func (p *Projection) etaFromSessionAvg(elapsed time.Duration, done int64) int64 
 	dt := (elapsed - p.etaBeatElapsed).Seconds()
 	flowed := done - p.etaBeatBytes
 	if dt <= 0 || flowed <= 0 {
-		// No measurable progress yet this beat — hold the current estimate
+		// No measurable progress yet this window — hold the current estimate
 		// (still 0 right after the anchor tick) rather than divide by zero.
 		return p.state.EtaSeconds
 	}
 	rateBytesPerSec := float64(flowed) / dt
 	next := int64(float64(remaining) / rateBytesPerSec)
+	if dt >= etaWindowSeconds {
+		p.etaBeatElapsed = elapsed
+		p.etaBeatBytes = done
+	}
 	if prev := p.state.EtaSeconds; prev > 0 && next > prev {
 		return prev
 	}

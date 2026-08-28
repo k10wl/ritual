@@ -187,6 +187,21 @@ export const showLogs = () => Control.ShowLogs();
 export const readServerLog = () => Control.ReadServerLog();
 export const sendConsole = (line: string) => Control.SendConsole(line);
 export const openRootFolder = () => Control.OpenRootFolder();
+// Reveals the fixed CONTROL root (settings.json/lock/logs) — distinct from
+// openRootFolder above, which reveals the (possibly relocated) CONTENT root.
+export const openControlFolder = () => Control.OpenControlFolder();
+// Workroot relocate UI (design-log/056): GetWorkRoot reports the current
+// content root, PickWorkRootFolder opens the native OS dialog (ok=false on
+// cancel/failure — never rejects), ChangeWorkRoot commits the move.
+export const getWorkRoot = () => Control.GetWorkRoot();
+// PickWorkRootFolder's Go signature is (path string, ok bool) — Wails binds
+// multi-return as a tuple; reshape to the {path, ok} object the <work-root>
+// component (and its ChangeWorkRoot follow-up) expects.
+export const pickWorkRootFolder = async () => {
+	const [path, ok] = await Control.PickWorkRootFolder();
+	return { path, ok };
+};
+export const changeWorkRoot = (path: string) => Control.ChangeWorkRoot(path);
 
 export function onView(handler: (vm: ViewModel) => void): () => void {
 	return Events.On("ritual:view", (e) => handler(e.data));

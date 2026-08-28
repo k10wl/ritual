@@ -108,6 +108,98 @@ export class DialCycleDemo extends LitElement {
     }
 }
 
+const RELOCATE_ETA_S = 42;
+
+// Workroot relocate cycle (design-log/055 addendum, ETA/size added as a
+// design-log/056 follow-up): idle → RelocateStarted (moving files, 0%) →
+// RelocatePlanned/RelocateProgress (sub-line carries the ETA countdown —
+// RelocateProgress.Elapsed feeds the same beat-wide-average
+// etaFromSessionAvg math onTick uses for pull/push, projection.go's
+// foldRelocate; size itself renders in the underSlot "telemetry-size" block
+// in the real app, which this bare-dial demo can't show — <ritual-dial> has
+// no underSlot of its own) → RelocateVerifying/RelocateCommitting (plateau,
+// "Finishing up") → RelocateFinished (idle) → failure overlay → idle.
+// Mirrors DialCycleDemo's shape one-for-one against relocate's actual event
+// sequence (internal/core/stages/relocating/strategy.go).
+@customElement("relocate-cycle-demo")
+export class RelocateCycleDemo extends LitElement {
+    @state() private state: DialState = "idle";
+    @state() private arc = 0;
+    @state() private glyph: DialGlyph = "play";
+    @state() private label = "Start";
+    @state() private sub = "";
+
+    private tl?: gsap.core.Timeline;
+
+    connectedCallback() {
+        super.connectedCallback();
+        const f = { v: 0 };
+        const writeProgress = () => {
+            this.arc = f.v;
+            const remainingS = Math.round(RELOCATE_ETA_S * (1 - f.v));
+            this.sub = remainingS >= 60
+                ? `about ${Math.round(remainingS / 60)} minute${remainingS >= 120 ? "s" : ""}`
+                : `about ${remainingS} seconds`;
+        };
+        const tl = gsap.timeline({ repeat: -1 });
+
+        // Idle
+        tl.call(() => {
+            this.state = "idle"; this.arc = 0; this.glyph = "play";
+            this.label = "Start"; this.sub = "";
+        });
+        tl.to({}, { duration: PLATEAU_S });
+
+        // RelocateStarted + RelocatePlanned: dial flips, sub appears at 0/total
+        tl.call(() => {
+            this.state = "prep"; this.glyph = "folder-input"; this.label = "Moving files";
+            f.v = 0; writeProgress();
+        });
+        tl.to({}, { duration: PHASE_S * 0.5 });
+
+        // RelocateProgress: ETA counts down (estimated from beat-wide average server-side)
+        tl.to(f, { v: 1, duration: TRANSFER_S, ease: "power2.out", onUpdate: writeProgress });
+
+        // RelocateVerifying + RelocateCommitting: fixed-cost tail, plateau
+        tl.call(() => {
+            this.arc = 1; this.sub = "Finishing up";
+        });
+        tl.to({}, { duration: PHASE_S });
+
+        // RelocateFinished
+        tl.call(() => {
+            this.state = "idle"; this.arc = 0; this.glyph = "play";
+            this.label = "Start"; this.sub = "";
+        });
+        tl.to({}, { duration: PLATEAU_S });
+
+        // RelocateFailed overlay (dismiss-to-idle copy)
+        tl.call(() => {
+            this.state = "fail"; this.arc = 0.6; this.glyph = "x";
+            this.label = "Couldn't move files"; this.sub = "Tap to dismiss";
+        });
+        tl.to({}, { duration: PLATEAU_S });
+        this.tl = tl;
+    }
+
+    disconnectedCallback() {
+        super.disconnectedCallback();
+        this.tl?.kill();
+    }
+
+    render() {
+        return html`
+            <ritual-dial
+                .state=${this.state}
+                .arc=${this.arc}
+                .glyph=${this.glyph}
+                .label=${this.label}
+                .sub=${this.sub}
+            ></ritual-dial>
+        `;
+    }
+}
+
 interface Args {
     state: DialState;
     arc: number;
@@ -130,7 +222,7 @@ export default {
         sub: { control: { type: "text" } },
         glyph: {
             control: { type: "select" },
-            options: ["", "play", "stop", "x", "download", "upload", "brain-cog", "unplug"],
+            options: ["", "play", "stop", "x", "download", "upload", "brain-cog", "unplug", "folder-input"],
         },
         disabled: { control: { type: "boolean" } },
     },
@@ -186,6 +278,24 @@ export const PhaseSavingTail = () => html`
         label="Wrapping up" sub="Almost done"></ritual-dial>
 `;
 
+// Workroot relocate (design-log/055 addendum, ETA follow-up design-log/056):
+// files copying, ETA sub-line (relocateSub — same beat-wide-average shape as
+// etaSub) rather than a size caption; size itself renders separately in the
+// app's underSlot "telemetry-size" block (see dial-telemetry.stories.ts'
+// SizeOnlyNoSpeedRow), which this bare-dial story doesn't include.
+export const PhaseRelocating = () => html`
+    <ritual-dial state="prep" .arc=${0.42} glyph="folder-input"
+        label="Moving files" sub="about 24 seconds"></ritual-dial>
+`;
+
+// Copying done, fixed-cost verify/commit tail — same arc-plateau +
+// "Finishing up" pattern PhaseSavingTail uses for the equivalent moment in
+// the save beat.
+export const PhaseRelocatingTail = () => html`
+    <ritual-dial state="prep" .arc=${1} glyph="folder-input"
+        label="Moving files" sub="Finishing up"></ritual-dial>
+`;
+
 export const PhaseFailed = () => html`
     <ritual-dial state="fail" .arc=${0.42} glyph="x"
         label="Couldn't finish saving" sub="Tap to dismiss"></ritual-dial>
@@ -214,3 +324,8 @@ export const FailedUpdate = () => html`
 `;
 
 export const Cycle = () => html`<dial-cycle-demo></dial-cycle-demo>`;
+
+// Workroot relocate, animated end-to-end (design-log/055 addendum): plays
+// RelocateStarted → RelocatePlanned/RelocateProgress → RelocateVerifying/
+// RelocateCommitting → RelocateFinished → RelocateFailed → idle, on repeat.
+export const RelocateCycle = () => html`<relocate-cycle-demo></relocate-cycle-demo>`;
